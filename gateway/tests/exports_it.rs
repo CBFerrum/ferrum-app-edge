@@ -236,10 +236,10 @@ async fn a_table_of_someone_elses_takes_a_batch_once() {
     let to = format!("postgres://{}@{}:{}{}?table={table}", url.username(), url.host_str().unwrap(), url.port().unwrap_or(5432), url.path());
     let e = export(&to, None, Some("password"));
     let secrets = json!({"password": url.password().unwrap_or_default()});
-    sender().deliver(&e, &readings(4), &secrets).await.expect("taken");
-    sender().deliver(&e, &readings(4), &secrets).await.expect("a batch sent twice");
+    sender().deliver(&e, &readings(3), &secrets).await.expect("taken");
+    sender().deliver(&e, &readings(3), &secrets).await.expect("a batch sent twice");
     let count: i64 = client.query_one(&format!("select count(*) from {table}"), &[]).await.unwrap().get(0);
-    assert_eq!(count, 4, "lands once");
+    assert_eq!(count, 3, "lands once");
     let value: f64 = client
         .query_one(&format!("select value from {table} where device = 'PRESS-0' and metric = 'temp.c' order by value limit 1"), &[])
         .await
