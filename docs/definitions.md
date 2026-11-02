@@ -54,6 +54,8 @@ A definition can come from the platform, so the site decides what one may do the
 OPC UA takes `security=Basic256Sha256&mode=SignAndEncrypt` and `user=…&password=…`. With security on,
 the site makes its own certificate under `state_dir/tls/opcua`, and a server is believed only once a
 person has moved its certificate from `rejected` to `trusted` there.
+The RSA behind this comes from a library with an unfixed timing weakness ([the record](advisories.yaml)),
+so keep OPC UA on a segmented network.
 
 ## Cutting a stream into messages
 

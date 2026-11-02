@@ -2,8 +2,9 @@
 # docs/advisories.yaml, which CI checks against this list. Re-check when dependencies change.
 [advisories]
 ignore = [
-  # rsa and crypto-bigint come with the platform's crates, which this app builds on, through
-  # jsonwebtoken's RSA/ECDSA support. A gateway links neither: it depends on the contracts alone.
+  # rsa comes with the platform's crates through jsonwebtoken, and in the gateway through async-opcua,
+  # where a secure channel does use an RSA private key. crypto-bigint comes with the platform's crates
+  # alone. docs/advisories.yaml says why these stand.
   "RUSTSEC-2023-0071",
   "RUSTSEC-2026-0387",
   # rustls-webpki 0.102 arrives through rumqttc, which uses only its error type. Certificates are
