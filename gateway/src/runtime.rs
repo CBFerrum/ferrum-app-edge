@@ -26,7 +26,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::Duration as StdDuration;
 use tokio::sync::watch;
 use tokio::time::timeout;
@@ -139,6 +139,7 @@ pub struct Runtime {
     signing: tokio::sync::Mutex<()>,
     exports: Mutex<Vec<Export>>,
     sender: Sender,
+    held_back: AtomicBool,
     /// What was read lately, for the console.
     pub recent: Mutex<crate::console::Recent>,
     export_shed: AtomicI64,
@@ -225,6 +226,7 @@ impl Runtime {
             signing: tokio::sync::Mutex::new(()),
             exports: Mutex::default(),
             sender: Sender::new(exporting),
+            held_back: AtomicBool::new(false),
             recent: Mutex::default(),
             export_shed: AtomicI64::new(0),
         });
@@ -973,7 +975,18 @@ impl Runtime {
         let refused: Vec<Uuid> = r.reports_refused.iter().map(|(id, _)| *id).collect();
         let _ = self.journal.reports_gone(&refused);
         let _ = self.journal.facts_gone(&r.facts_done);
-        let _ = self.journal.samples_gone(samples_upto);
+        // Over a workspace's allowance nothing was taken: they stay here, within the budget, for later.
+        if !r.measurements_held {
+            let _ = self.journal.samples_gone(samples_upto);
+        }
+        if self.held_back.swap(r.measurements_held, Ordering::Relaxed) != r.measurements_held {
+            let said = if r.measurements_held {
+                "This workspace has used today's allowance of readings, so they are being kept here."
+            } else {
+                "There is room for readings again."
+            };
+            let _ = self.journal.notice(at, said);
+        }
         if r.fenced {
             if self.journal.get("fenced").ok().flatten().is_none() {
                 let _ = self.journal.notice(at, "This gateway no longer holds its domain. Dispatch has stopped.");
