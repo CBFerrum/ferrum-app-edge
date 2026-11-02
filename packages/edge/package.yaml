@@ -20,6 +20,11 @@ overlays:
       - {op: add_field, column: true, field: {name: edge_settings, type: json, label: Settings, description: "What {settings.name} stands for in its definition"}}
       - {op: add_field, column: true, field: {name: edge_concurrency, type: int, min: "1", default: 1, label: Commands at Once}}
       - {op: add_field, column: true, field: {name: edge_token_hash, type: data, read_only: true, no_copy: true, hidden: true}}
+      - {op: add_field, column: true, field: {name: edge_client_id, type: data, read_only: true, no_copy: true, label: MQTT Client Id}}
+      - {op: add_field, column: true, field: {name: edge_username, type: data, read_only: true, no_copy: true, label: MQTT User}}
+      - {op: add_field, column: true, field: {name: edge_password_hash, type: data, read_only: true, no_copy: true, hidden: true}}
+      - {op: add_field, column: true, field: {name: edge_certificate, type: data, read_only: true, no_copy: true, label: Certificate Fingerprint}}
+      - {op: add_field, column: true, field: {name: edge_via, type: link, to: Device, label: Reached Through, description: "A gateway of its own, for a device that sits behind one"}}
 
 roles:
   - name: Edge Viewer

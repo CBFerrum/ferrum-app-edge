@@ -11,7 +11,6 @@ use crate::adapters::hub::{Hub, Proof};
 use crate::adapters::transport::{Message, Out, Transport};
 use async_trait::async_trait;
 use ferrum_edge_contract::device_api;
-use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -266,29 +265,6 @@ struct Live {
     count: AtomicUsize,
 }
 
-/// What a device says, with its name on it. A device that fills the queue waits, and everyone gets
-/// the same treatment: a slow gateway slows those talking to it.
-async fn said(live: &Live, device: &str, topic: String, body: Vec<u8>) -> bool {
-    live.tx.send(Message { topic, body, status: None, from: Some(device.to_string()) }).await.is_ok()
-}
-
-fn asked_attributes<'a>(topic: &'a str, device: &str) -> Option<&'a str> {
-    topic.strip_prefix("v1/devices/")?.strip_prefix(device)?.strip_prefix("/attributes/request/")
-}
-
-/// Answers a device asking for attributes, which needs nobody but this gateway.
-fn answer_attributes(hub: &Hub, device: &str, id: &str, body: &[u8]) {
-    let asked: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
-    let keys = |k: &str| asked[k].as_str();
-    let found = hub.attributes(device, keys("clientKeys"), keys("sharedKeys"));
-    let answer = if asked.is_object() && keys("clientKeys").is_some() != keys("sharedKeys").is_some() && asked.get("sharedKeys").is_none() {
-        json!({"client": found["client"]})
-    } else {
-        found
-    };
-    hub.deliver(&format!("v1/devices/{device}/attributes/response/{id}"), answer.to_string().as_bytes());
-}
-
 async fn session<S>(stream: S, certificate: Option<String>, live: Arc<Live>)
 where
     S: AsyncRead + AsyncWrite + Send + 'static,
@@ -310,7 +286,8 @@ where
         live.hub.close(id);
         return;
     }
-    said(&live, &device, device_api::session(&device, true), Vec::new()).await;
+    let online = Message { topic: device_api::session(&device, true), body: Vec::new(), status: None, from: Some(device.clone()) };
+    let _ = live.tx.send(online).await;
     let mut held: HashSet<u16> = HashSet::new();
     loop {
         tokio::select! {
@@ -330,17 +307,9 @@ where
                         if live.api && !device_api::may_say(p.topic) {
                             break;
                         }
-                        let topic = device_api::named(p.topic, &device);
                         let repeat = p.qos == 2 && p.id.is_some_and(|i| held.contains(&i));
-                        if !repeat {
-                            match asked_attributes(&topic, &device) {
-                                Some(request) => answer_attributes(&live.hub, &device, request, p.payload),
-                                None => {
-                                    if !said(&live, &device, topic, p.payload.to_vec()).await {
-                                        break;
-                                    }
-                                }
-                            }
+                        if !repeat && !live.hub.said(&live.tx, &device, p.topic, p.payload.to_vec()).await {
+                            break;
                         }
                         match (p.qos, p.id) {
                             (1, Some(i)) => ack(PUBACK, 0, i),
@@ -429,11 +398,7 @@ impl Transport for MqttServer {
     }
 
     async fn send(&self, out: Out) -> Result<Option<Message>, Failure> {
-        let Out::Publish { topic, body, .. } = out else { return Err(Failure::NotSent("a device hears what is published to it".into())) };
-        match self.hub.deliver(&topic, &body) {
-            0 => Err(Failure::NotSent(format!("nothing connected is listening for {topic}"))),
-            _ => Ok(None),
-        }
+        self.hub.publish(out)
     }
 }
 

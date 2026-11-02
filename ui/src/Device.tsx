@@ -7,7 +7,8 @@ import { useId, useState } from "react";
 import { Link, useParams } from "react-router";
 import { refusal, relativeTime } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
-import { type Attribute, desire, device, deviceRecord, newToken, sendCommand } from "./data";
+import { tries } from "./connecting";
+import { type Attribute, connection, desire, device, deviceRecord, type Issued, issueCredentials, revokeCredentials, sendCommand } from "./data";
 import { Acknowledge } from "./Alarms";
 import { History } from "./History";
 import { Tabs } from "./Tabs";
@@ -120,22 +121,96 @@ function Send({ id, operations, onClose }: { id: string; operations: string[]; o
   );
 }
 
-function Token({ id, onClose }: { id: string; onClose: () => void }) {
-  const q = useQuery({ queryKey: ["edge", "token", id], queryFn: () => newToken(id), staleTime: Infinity, gcTime: 0 });
+/** How a device proves who it is, and the commands that try it. A secret is shown once. */
+function Connect({ id, onClose }: { id: string; onClose: () => void }) {
+  const form = useId();
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["edge", "connection", id], queryFn: () => connection(id) });
+  const [issued, setIssued] = useState<Issued | null>(null);
+  const [kind, setKind] = useState<"token" | "password" | "certificate">("token");
+  const [client, setClient] = useState("");
+  const [user, setUser] = useState("");
+  const [certificate, setCertificate] = useState("");
+  const done = () => void qc.invalidateQueries({ queryKey: ["edge", "connection", id] });
+  const issue = useMutation({
+    mutationFn: () => issueCredentials(id, kind === "token" ? { kind } : kind === "password" ? { kind, client_id: client, username: user } : { kind, certificate }),
+    onSuccess: (made) => {
+      setIssued(made);
+      done();
+    },
+    onError: (e) => toast(refusal(e), "error"),
+  });
+  const revoke = useMutation({
+    mutationFn: () => revokeCredentials(id, kind),
+    onSuccess: () => {
+      setIssued(null);
+      toast("Taken away. Its gateway ends the connection at its next exchange.");
+      done();
+    },
+    onError: (e) => toast(refusal(e), "error"),
+  });
+  const has = q.data ? (kind === "token" ? q.data.token : kind === "password" ? q.data.password : Boolean(q.data.certificate)) : false;
   return (
-    <Dialog open title="A token for this device" onClose={onClose} footer={<Button onClick={onClose}>Done</Button>}>
+    <Dialog open title="Connect this device" onClose={onClose} footer={<Button onClick={onClose}>Done</Button>}>
       <div className="stack">
-        {q.isPending ? (
-          <PageLoading />
-        ) : q.isError ? (
-          <ErrorState error={q.error} />
-        ) : (
+        {q.isPending ? <PageLoading /> : null}
+        {q.isError ? <ErrorState error={q.error} /> : null}
+        {q.data && !q.data.calls_in ? <Alert tone="warning">Its definition reaches out to it. For a device that calls in, give it a definition with api: device, such as the template Devices that call in. A token still works for posting to this workspace directly.</Alert> : null}
+        <div className="edge-choice" role="group" aria-label="How it proves who it is">
+          {(["token", "password", "certificate"] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              aria-pressed={k === kind}
+              onClick={() => {
+                setKind(k);
+                setIssued(null);
+              }}
+            >
+              {{ token: "Token", password: "Password", certificate: "Certificate" }[k]}
+            </button>
+          ))}
+        </div>
+        {kind === "password" ? (
+          <>
+            <Field label="MQTT client id" htmlFor={`${form}-c`} hint="Either of these, or both">
+              <input id={`${form}-c`} className="input" value={client} onChange={(e) => setClient(e.target.value)} />
+            </Field>
+            <Field label="MQTT user" htmlFor={`${form}-u`}>
+              <input id={`${form}-u`} className="input" value={user} onChange={(e) => setUser(e.target.value)} />
+            </Field>
+          </>
+        ) : null}
+        {kind === "certificate" ? (
+          <Field label="Its certificate" htmlFor={`${form}-x`} hint="In PEM, or its SHA-256 fingerprint. Never its private key.">
+            <textarea id={`${form}-x`} className="input edge-code" rows={5} value={certificate} onChange={(e) => setCertificate(e.target.value)} />
+          </Field>
+        ) : null}
+        <div className="edge-bar">
+          <Button variant="primary" loading={issue.isPending} disabled={kind === "certificate" && !certificate.trim()} onClick={() => issue.mutate()}>
+            {has ? "Replace it" : kind === "certificate" ? "Use this certificate" : "Make one"}
+          </Button>
+          {has ? (
+            <Button loading={revoke.isPending} onClick={() => revoke.mutate()}>
+              Take it away
+            </Button>
+          ) : null}
+        </div>
+        {issued?.token || issued?.password ? (
           <>
             <Alert tone="warning">This is the only time it is shown, and it replaces the one before.</Alert>
-            <code className="edge-token">{q.data.token}</code>
-            <p className="muted">For a device with no gateway: it posts to this tenant's ingest address with this in the header x-ferrum-device-token.</p>
+            <code className="edge-token">{issued.token ?? issued.password}</code>
           </>
-        )}
+        ) : null}
+        {issued?.fingerprint ? <code className="edge-token">{issued.fingerprint}</code> : null}
+        {issued?.token && q.data?.calls_in
+          ? tries(q.data.addresses, issued.token).map((t) => (
+              <div key={t.how}>
+                <div className="faint">{t.how}</div>
+                <code className="edge-token">{t.command}</code>
+              </div>
+            ))
+          : null}
       </div>
     </Dialog>
   );
@@ -167,7 +242,7 @@ export function DevicePage() {
           </Button>
         ) : null}
         <Button onClick={() => setAsking("new")}>Ask for a value…</Button>
-        <Button onClick={() => setToken(true)}>New token…</Button>
+        <Button onClick={() => setToken(true)}>Connect…</Button>
       </div>
       {d.alarms.length ? (
         <section className="card card-pad stack" aria-label="Open alarms">
@@ -246,7 +321,7 @@ export function DevicePage() {
         )}
       </section>
       {asking ? <Ask id={id} attribute={asking === "new" ? null : asking} onClose={() => setAsking(null)} /> : null}
-      {token ? <Token id={id} onClose={() => setToken(false)} /> : null}
+      {token ? <Connect id={id} onClose={() => setToken(false)} /> : null}
       {sending ? <Send id={id} operations={operations} onClose={() => setSending(false)} /> : null}
     </div>
   );

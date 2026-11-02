@@ -37,7 +37,7 @@ use std::time::Duration;
 
 /// The schemes a site can open. Anything else is an error when the definition is saved, not when it
 /// reaches a gateway at three in the morning.
-pub const SCHEMES: [&str; 18] = [
+pub const SCHEMES: [&str; 21] = [
     "tcp",
     "udp",
     "serial",
@@ -56,7 +56,13 @@ pub const SCHEMES: [&str; 18] = [
     "webhook",
     "listen+mqtt",
     "listen+mqtts",
+    "listen+http",
+    "listen+https",
+    "listen+coap",
 ];
+
+/// What devices can prove themselves on.
+const DEVICE_SERVERS: [&str; 5] = ["listen+mqtt", "listen+mqtts", "listen+http", "listen+https", "listen+coap"];
 
 /// The longest message a site will assemble. A stream that never frames costs this much, not memory.
 pub const MAX_FRAME: usize = 1 << 20;
@@ -86,6 +92,9 @@ pub struct Definition {
     /// `device`: what arrives is the device API (`crate::device_api`), and needs no rules of its own.
     #[serde(default)]
     pub api: Option<Api>,
+    /// Other ways in for the same devices, for a definition with an `api`.
+    #[serde(default)]
+    pub also: Vec<String>,
     /// Said once on each new connection: a login, a subscription.
     #[serde(default)]
     pub on_connect: Vec<Step>,
@@ -1262,14 +1271,25 @@ pub fn parse(text: &str) -> Result<Compiled, String> {
         Some(c) if !c.contains('{') => Some(scheme(c).ok_or_else(|| format!("connect: {c} is not an address this can open. Schemes: {}", SCHEMES.join(", ")))?),
         _ => None,
     };
-    if d.api.is_some() && !matches!(scheme_of, Some("listen+mqtt" | "listen+mqtts")) {
+    if d.api.is_some() && !scheme_of.is_some_and(|s| DEVICE_SERVERS.contains(&s)) {
         return Err("api: this is for a gateway devices call: connect: listen+mqtt://".into());
+    }
+    if !d.also.is_empty() && d.api.is_none() {
+        return Err("also: this is for a definition with an api".into());
+    }
+    for other in &d.also {
+        if !scheme(other).is_some_and(|s| DEVICE_SERVERS.contains(&s)) {
+            return Err(format!("also: {other} is not a way for devices to call in"));
+        }
+    }
+    if matches!(scheme_of, Some("listen+http" | "listen+https" | "listen+coap")) && d.api.is_none() {
+        return Err("connect: this speaks the device API: say api: device".into());
     }
     if let Some(s) = scheme_of {
         if d.checksum.is_some() && !matches!(s, "tcp" | "udp" | "serial" | "listen" | "listen+udp") {
             return Err(format!("checksum: {s} has checks of its own"));
         }
-        if !d.on_connect.is_empty() && matches!(s, "listen" | "listen+udp" | "webhook" | "listen+mqtt" | "listen+mqtts") {
+        if !d.on_connect.is_empty() && (matches!(s, "listen" | "listen+udp" | "webhook") || DEVICE_SERVERS.contains(&s)) {
             return Err(format!("on_connect: nothing is connected to at {s}: equipment calls in"));
         }
     }
