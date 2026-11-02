@@ -26,19 +26,67 @@
 
 use crate::sparkplug;
 use chrono::{DateTime, Utc};
+use ferrum_calc::formula::Formula;
 use regex::Regex;
 use serde::Deserialize;
 use serde::de::{self, Deserializer};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use std::cell::OnceCell;
-use std::collections::BTreeMap;
+use std::cell::{OnceCell, RefCell};
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 /// The schemes a site can open. Anything else is an error when the definition is saved, not when it
 /// reaches a gateway at three in the morning.
-pub const SCHEMES: [&str; 16] =
-    ["tcp", "udp", "serial", "http", "https", "ws", "wss", "mqtt", "mqtts", "modbus+tcp", "modbus+rtu", "process", "opcua", "listen", "listen+udp", "webhook"];
+pub const SCHEMES: &[&str] = &[
+    "tcp",
+    "udp",
+    "serial",
+    "http",
+    "https",
+    "ws",
+    "wss",
+    "mqtt",
+    "mqtts",
+    "modbus+tcp",
+    "modbus+rtu",
+    "process",
+    "opcua",
+    "listen",
+    "listen+udp",
+    "webhook",
+    "listen+mqtt",
+    "listen+mqtts",
+    "listen+http",
+    "listen+https",
+    "listen+coap",
+    "s7",
+    "enip",
+    "ads",
+    "bacnet",
+    "snmp",
+    "listen+snmp",
+    "listen+ocpp",
+    "listen+ocpps",
+    "knx",
+    "iec104",
+    "mbus",
+    "coap",
+    "nats",
+    "file",
+    "ftp",
+    "listen+lwm2m",
+    "mtconnect",
+    "mtconnects",
+    "postgres",
+    "sqlite",
+];
+
+/// What is read and written a named thing at a time, with `node`.
+const TAGGED: &[&str] = &["opcua", "s7", "enip", "ads", "bacnet", "snmp", "knx", "iec104", "mbus", "listen+lwm2m", "postgres", "sqlite"];
+
+/// What devices can prove themselves on.
+const DEVICE_SERVERS: [&str; 7] = ["listen+mqtt", "listen+mqtts", "listen+http", "listen+https", "listen+coap", "listen+ocpp", "listen+ocpps"];
 
 /// The longest message a site will assemble. A stream that never frames costs this much, not memory.
 pub const MAX_FRAME: usize = 1 << 20;
@@ -65,6 +113,12 @@ pub struct Definition {
     /// Certificates for a plant's own authority, by name in the site's `tls` directory.
     #[serde(default)]
     pub tls: Option<Tls>,
+    /// `device`: what arrives is the device API (`crate::device_api`), and needs no rules of its own.
+    #[serde(default)]
+    pub api: Option<Api>,
+    /// Other ways in for the same devices, for a definition with an `api`.
+    #[serde(default)]
+    pub also: Vec<String>,
     /// Said once on each new connection: a login, a subscription.
     #[serde(default)]
     pub on_connect: Vec<Step>,
@@ -72,8 +126,40 @@ pub struct Definition {
     pub poll: Vec<Poll>,
     #[serde(default)]
     pub read: Vec<ReadRule>,
+    /// Numbers worked out from others, at the gateway, so that they work with the link down.
+    #[serde(default)]
+    pub derive: Vec<Derive>,
+    /// Devices of this kind can be sent new firmware. It has to be said, and it needs an `api`.
+    #[serde(default)]
+    pub firmware: bool,
+    /// This link is a Sparkplug primary host, by this id: it says it is there, follows each node's
+    /// sequence, asks for what it missed, and says when a node or device goes away.
+    #[serde(default)]
+    pub primary_host: Option<String>,
     #[serde(default)]
     pub commands: BTreeMap<String, CommandDef>,
+}
+
+/// `{metric: power.kw, formula: "[volts] * [amps] / 1000", unit: kW}`. It is reported whenever one of
+/// its inputs is, once all of them have been heard, and each may use those listed before it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Derive {
+    pub metric: String,
+    pub formula: String,
+    #[serde(default)]
+    pub unit: Option<String>,
+    /// An input older than this does not count: a stale reading is not a reading.
+    #[serde(default, deserialize_with = "maybe_duration")]
+    pub fresh: Option<Duration>,
+}
+
+/// A protocol that needs no rules of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Api {
+    Device,
+    Ocpp,
 }
 
 /// What a message is written in, when that is not JSON or plain bytes.
@@ -773,6 +859,7 @@ pub struct Compiled {
     reads: Vec<CompiledRead>,
     /// By operation: the patterns of a status and of each of its `also`, in order.
     statuses: BTreeMap<String, Vec<Option<Regex>>>,
+    derived: Vec<(Formula, BTreeSet<String>)>,
 }
 
 /// What a decoder remembers between messages on one link.
@@ -1014,16 +1101,37 @@ impl Compiled {
         self.decode_with(topic, body, &mut Memory::default())
     }
 
+    /// What a new number makes possible. `newest` says a device's newest value of a metric, no older
+    /// than `fresh` if it is given, and nothing is worked out until all of a rule's inputs have one.
+    pub fn derive(&self, heard: &str, newest: impl Fn(&str, Option<Duration>) -> Option<f64>) -> Vec<(String, f64, Option<String>)> {
+        let mut out: Vec<(String, f64, Option<String>)> = Vec::new();
+        for (rule, (formula, inputs)) in self.definition.derive.iter().zip(&self.derived) {
+            if !inputs.contains(heard) && !out.iter().any(|(metric, ..)| inputs.contains(metric)) {
+                continue;
+            }
+            let value_of = |name: &String| out.iter().find(|(metric, ..)| metric == name).map(|(_, v, _)| *v).or_else(|| newest(name, rule.fresh));
+            let Some(row) = inputs.iter().map(|name| Some((name.clone(), json!(value_of(name)?)))).collect::<Option<Map<_, _>>>() else { continue };
+            if let Some(value) = formula.eval(&row).and_then(|d| rust_decimal::prelude::ToPrimitive::to_f64(&d)) {
+                out.push((rule.metric.clone(), value, rule.unit.clone()));
+            }
+        }
+        out
+    }
+
     /// As [`Self::decode`], for a link that keeps what earlier messages taught it.
     pub fn decode_with(&self, topic: &str, body: &[u8], memory: &mut Memory) -> Vec<Decoded> {
         let mut seen = Seen::new(topic, body);
+        let mut changed = Vec::new();
         if self.definition.read.iter().any(|r| r.format == Format::Sparkplug)
             && let Some(mut payload) = sparkplug::decode(body)
         {
             memory.resolve(topic, &mut payload);
+            if self.definition.primary_host.is_some() {
+                changed = memory.follow(topic, &payload);
+            }
             seen.sparkplug = OnceCell::from(Some(payload));
         }
-        let mut out = Vec::new();
+        let mut out: Vec<Decoded> = changed.into_iter().map(|(device, state)| Decoded::State { device: Some(device), state: state.to_string() }).collect();
         for (rule, compiled) in self.definition.read.iter().zip(&self.reads) {
             seen.format = rule.format;
             let wild = match &rule.topic {
@@ -1148,9 +1256,10 @@ fn check_step(what: &str, step: &Step, scheme: Option<&str>) -> Result<(), Strin
         return Err(format!("{what}: read is holding, input, coil or discrete"));
     }
     let Some(scheme) = scheme else { return Ok(()) };
-    let http = matches!(scheme, "http" | "https");
+    let http = matches!(scheme, "http" | "https" | "coap");
     let modbus = matches!(scheme, "modbus+tcp" | "modbus+rtu");
     let opcua = scheme == "opcua";
+    let tagged = TAGGED.contains(&scheme);
     let mqtt = matches!(scheme, "mqtt" | "mqtts");
     if step.method().is_some() && !http {
         return Err(format!("{what}: get, post, put, patch and delete are for http, and this connects by {scheme}"));
@@ -1161,13 +1270,19 @@ fn check_step(what: &str, step: &Step, scheme: Option<&str>) -> Result<(), Strin
     if (step.read.is_some() || !step.write.is_empty() || step.unit.is_some()) && !modbus {
         return Err(format!("{what}: read, write and unit are for Modbus, and this connects by {scheme}"));
     }
-    if (step.node.is_some() || step.call.is_some()) && !opcua {
-        return Err(format!("{what}: node and call are for opcua, and this connects by {scheme}"));
+    if step.node.is_some() && !tagged {
+        return Err(format!("{what}: node is for {}, and this connects by {scheme}", TAGGED.join(", ")));
+    }
+    if step.call.is_some() && !opcua {
+        return Err(format!("{what}: call is for opcua, and this connects by {scheme}"));
+    }
+    if let Some(node) = step.node.as_deref().filter(|n| !n.contains('{')) {
+        crate::tags::check(scheme, node).map_err(|why| format!("{what}: {why}"))?;
     }
     if step.call.is_some() && step.node.is_none() {
         return Err(format!("{what}: call needs the node it belongs to"));
     }
-    if opcua && step.node.is_none() && (step.send.is_some() || step.hex.is_some()) {
+    if tagged && step.node.is_none() && (step.send.is_some() || step.hex.is_some()) {
         return Err(format!("{what}: say which node this is for"));
     }
     if step.retain && !mqtt {
@@ -1222,23 +1337,64 @@ pub fn scheme(connect: &str) -> Option<&str> {
     connect.split_once("://").map(|(s, _)| s).filter(|s| SCHEMES.contains(s))
 }
 
+/// `tags:` is the short way to say what most equipment needs: a thing to read, how often, and what it
+/// is. Each one becomes a poll and a read rule, so nothing past here knows about them.
+fn expand_tags(raw: &mut Value) -> Result<(), String> {
+    let Some(tags) = raw.as_object_mut().and_then(|d| d.remove("tags")) else { return Ok(()) };
+    let tags = tags.as_array().cloned().ok_or("tags: this is a list")?;
+    for mut tag in tags {
+        let rule = tag.as_object_mut().ok_or("tags: each is a node and what it is")?;
+        let node = rule.remove("node").ok_or("tags: each needs a node")?;
+        let every = rule.remove("every").unwrap_or(json!("10s"));
+        rule.insert("topic".into(), node.clone());
+        rule.insert("json".into(), json!("$.value"));
+        let poll = raw.as_object_mut().ok_or("a definition is a map")?.entry("poll").or_insert(json!([]));
+        poll.as_array_mut().ok_or("poll: this is a list")?.push(json!({"every": every, "node": node}));
+        let read = raw.as_object_mut().ok_or("a definition is a map")?.entry("read").or_insert(json!([]));
+        read.as_array_mut().ok_or("read: this is a list")?.push(tag);
+    }
+    Ok(())
+}
+
 /// Reads and checks a definition. Every error names where it is, so a person can fix it from the
 /// message, and a definition that passes here cannot fail for its shape on a gateway.
 pub fn parse(text: &str) -> Result<Compiled, String> {
-    let definition: Definition = serde_yaml::from_str(text).map_err(|e| e.to_string())?;
+    let mut raw: Value = serde_yaml::from_str(text).map_err(|e| e.to_string())?;
+    expand_tags(&mut raw)?;
+    let definition: Definition = serde_json::from_value(raw).map_err(|e| e.to_string())?;
     let d = &definition;
     if d.name.trim().is_empty() {
         return Err("a definition needs a name".into());
+    }
+    if d.firmware && d.api != Some(Api::Device) {
+        return Err("firmware reaches devices through the device API: say api: device".into());
     }
     let scheme_of = match &d.connect {
         Some(c) if !c.contains('{') => Some(scheme(c).ok_or_else(|| format!("connect: {c} is not an address this can open. Schemes: {}", SCHEMES.join(", ")))?),
         _ => None,
     };
+    if d.api.is_some() && !scheme_of.is_some_and(|s| DEVICE_SERVERS.contains(&s)) {
+        return Err("api: this is for a gateway devices call: connect: listen+mqtt://".into());
+    }
+    if !d.also.is_empty() && d.api.is_none() {
+        return Err("also: this is for a definition with an api".into());
+    }
+    for other in &d.also {
+        if !scheme(other).is_some_and(|s| DEVICE_SERVERS.contains(&s)) {
+            return Err(format!("also: {other} is not a way for devices to call in"));
+        }
+    }
+    if matches!(scheme_of, Some("listen+http" | "listen+https" | "listen+coap")) && d.api != Some(Api::Device) {
+        return Err("connect: this speaks the device API: say api: device".into());
+    }
+    if matches!(scheme_of, Some("listen+ocpp" | "listen+ocpps")) != (d.api == Some(Api::Ocpp)) {
+        return Err("api: ocpp and connect: listen+ocpp:// go together".into());
+    }
     if let Some(s) = scheme_of {
         if d.checksum.is_some() && !matches!(s, "tcp" | "udp" | "serial" | "listen" | "listen+udp") {
             return Err(format!("checksum: {s} has checks of its own"));
         }
-        if !d.on_connect.is_empty() && matches!(s, "listen" | "listen+udp" | "webhook") {
+        if !d.on_connect.is_empty() && (matches!(s, "listen" | "listen+udp" | "webhook") || DEVICE_SERVERS.contains(&s)) {
             return Err(format!("on_connect: nothing is connected to at {s}: equipment calls in"));
         }
     }
@@ -1250,6 +1406,10 @@ pub fn parse(text: &str) -> Result<Compiled, String> {
             return Err(format!("poll[{i}]: say what to send"));
         }
         check_step(&format!("poll[{i}]"), &p.step, scheme_of)?;
+        // Anything that changes equipment is a command, and goes through the ledger.
+        if !p.step.write.is_empty() || p.step.call.is_some() || (p.step.node.is_some() && p.step.send.is_some()) {
+            return Err(format!("poll[{i}]: a poll only reads: writing is a command"));
+        }
     }
     let mut reads = Vec::new();
     for (i, r) in d.read.iter().enumerate() {
@@ -1297,8 +1457,21 @@ pub fn parse(text: &str) -> Result<Compiled, String> {
             chain.map(|s| s.pattern.as_deref().map(Regex::new).transpose()).collect::<Result<Vec<_>, _>>().map_err(|e| format!("{what}.status: {e}"))?;
         statuses.insert(name.clone(), patterns);
     }
+    let mut derived = Vec::new();
+    for rule in &definition.derive {
+        let inputs = RefCell::new(BTreeSet::new());
+        let formula = Formula::parse(&rule.formula, &|name| {
+            inputs.borrow_mut().insert(name.to_string());
+            Ok(name.to_string())
+        })
+        .map_err(|e| format!("{}: {e}", rule.metric))?;
+        if inputs.borrow().contains(&rule.metric) {
+            return Err(format!("{}: it cannot be worked out from itself", rule.metric));
+        }
+        derived.push((formula, inputs.into_inner()));
+    }
     let digest = hex::encode(Sha256::digest(text.as_bytes()));
-    Ok(Compiled { definition, digest, reads, statuses })
+    Ok(Compiled { definition, digest, reads, statuses, derived })
 }
 
 #[cfg(test)]
@@ -1688,6 +1861,54 @@ commands:
         fails("name: x\nread:\n  - {metric: 'no spaces', json: $.a}", "not a metric");
         fails("name: x\nconnect: modbus+tcp://a:502\npoll:\n  - {every: 1s, send: hi}", "Modbus takes");
         fails("name: x\nconnect: tcp://a:1\npoll:\n  - {every: 1s, read: holding, at: 1}", "are for Modbus");
+    }
+
+    #[test]
+    fn a_poll_only_reads() {
+        for step in ["{every: 1s, write: [{at: 1, value: 1}]}", "{every: 1s, node: M0.0, send: true}"] {
+            let connect = if step.contains("write") { "modbus+tcp://x:502" } else { "s7://x:102" };
+            let bad = parse(&format!("name: a\nconnect: {connect}\npoll:\n  - {step}\n")).err().unwrap();
+            assert!(bad.contains("only reads"), "{bad}");
+        }
+        assert!(parse("name: a\nconnect: opcua://x:4840\npoll:\n  - {every: 1s, node: a, call: b}\n").err().unwrap().contains("only reads"));
+        assert!(parse("name: a\nconnect: s7://x:102\npoll:\n  - {every: 1s, node: M0.0}\n").is_ok());
+    }
+
+    #[test]
+    fn tags_are_the_short_way_to_say_it() {
+        let c = parse("name: a\nconnect: s7://plc:102\ntags:\n  - {node: \"DB1.DBD0:real\", every: 2s, metric: temp.c, unit: C}\n  - {node: M0.1, state: true, map: {\"true\": Running, \"false\": Idle}}\n").unwrap();
+        assert_eq!(c.definition.poll.len(), 2);
+        assert_eq!(c.definition.poll[0].every, Duration::from_secs(2));
+        assert_eq!(c.definition.poll[1].every, Duration::from_secs(10), "unless it says");
+        assert_eq!(c.definition.poll[0].step.node.as_deref(), Some("DB1.DBD0:real"));
+        let got = c.decode("DB1.DBD0:real", br#"{"value": 21.5}"#);
+        assert!(matches!(&got[0], Decoded::Metric { metric, value, .. } if metric == "temp.c" && *value == 21.5), "{got:?}");
+        let bad = parse("name: a\nconnect: s7://plc:102\ntags:\n  - {node: Z1, metric: x}\n").err().unwrap();
+        assert!(bad.contains("S7 address"), "a wrong address is found when it is saved: {bad}");
+        assert!(parse("name: a\nconnect: tcp://x:1\ntags:\n  - {node: a, metric: x}\n").is_err(), "and tags are for what reads by name");
+    }
+
+    #[test]
+    fn numbers_can_be_worked_out_from_others() {
+        let c = parse(
+            "name: a\nconnect: tcp://x:1\nderive:\n  - {metric: power.kw, formula: '[volts] * [amps] / 1000', unit: kW}\n  - {metric: cost, formula: '[power.kw] * 2'}\n  - {metric: left, formula: '[amps]', fresh: 5s}\n",
+        )
+        .unwrap();
+        let newest = |name: &str, fresh: Option<Duration>| match name {
+            "volts" => Some(230.0),
+            "amps" => fresh.is_none().then_some(10.0),
+            _ => None,
+        };
+        let out = c.derive("amps", newest);
+        assert_eq!(
+            out,
+            vec![("power.kw".to_string(), 2.3, Some("kW".to_string())), ("cost".to_string(), 4.6, None)],
+            "one follows from another, and a stale input does not count"
+        );
+        assert_eq!(c.derive("other", newest), vec![], "only what it depends on brings it up");
+        assert_eq!(c.derive("volts", |n, _| (n == "volts").then_some(230.0)), vec![], "it waits for everything it needs");
+        assert!(parse("name: a\nconnect: tcp://x:1\nderive:\n  - {metric: x, formula: '[x] + 1'}\n").err().unwrap().contains("from itself"));
+        assert!(parse("name: a\nconnect: tcp://x:1\nderive:\n  - {metric: x, formula: '[y] +'}\n").err().unwrap().starts_with("x:"));
     }
 
     #[test]

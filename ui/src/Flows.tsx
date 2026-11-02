@@ -7,7 +7,7 @@ import { refusal } from "@ferrum/client";
 import { Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { can, useEntityMeta } from "@ferrum/records";
 import { type FlowDoc, flowList, newFlow } from "./data";
-import { arrange, type Flow, STARTS } from "./drawing";
+import { arrange, type Flow, parseFlow, STARTS } from "./drawing";
 import { Tabs } from "./Tabs";
 
 const EMPTY: Flow = { nodes: [], edges: [] };
@@ -17,8 +17,9 @@ function Start({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [choice, setChoice] = useState<number | null>(null);
+  const [file, setFile] = useState<{ name: string; body: string } | null>(null);
   const make = useMutation({
-    mutationFn: () => newFlow(name.trim(), JSON.stringify(choice === null ? EMPTY : arrange(STARTS[choice]!.flow))),
+    mutationFn: () => newFlow(name.trim(), file ? file.body : JSON.stringify(choice === null ? EMPTY : arrange(STARTS[choice]!.flow))),
     onSuccess: (made) => navigate(`/flows/${made.id}`),
     onError: (e) => toast(refusal(e), "error"),
   });
@@ -40,7 +41,23 @@ function Start({ onClose }: { onClose: () => void }) {
         <Field label="Name" htmlFor={`${id}-n`} required>
           <input id={`${id}-n`} className="input" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <fieldset className="edge-templates">
+        <Field label="Or from a file" htmlFor={`${id}-f`} hint={file ? `Starting from ${file.name}.` : "A flow someone downloaded. It starts as a draft here, and goes through review like any other."}>
+          <input
+            id={`${id}-f`}
+            type="file"
+            accept=".json,application/json"
+            onChange={(e) => {
+              const picked = e.target.files?.[0];
+              if (!picked) return setFile(null);
+              void picked.text().then((body) => {
+                if (parseFlow(body).nodes.length === 0) return toast("That file has no flow in it.", "error");
+                setFile({ name: picked.name, body });
+                setName((n) => n || picked.name.replace(/\.flow\.json$|\.json$/, ""));
+              });
+            }}
+          />
+        </Field>
+        <fieldset className="edge-templates" disabled={file !== null}>
           <legend>Begin with</legend>
           <label className={choice === null ? "edge-template edge-on" : "edge-template"}>
             <input type="radio" name={`${id}-s`} checked={choice === null} onChange={() => setChoice(null)} />

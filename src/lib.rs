@@ -1,18 +1,38 @@
 //! IoT Edge (Ferrum docs/plan/edge.md): equipment reached by definitions, through gateways that keep
 //! working on their own.
 //!
+//! * [`alarms`]: what people do about an alarm;
+//! * [`bundles`]: a solution in one file;
 //! * [`config`]: what each gateway should be, worked out from the records;
+//! * [`data`]: numbers over time, and what a dashboard shows;
 //! * [`facts`]: what gateways report, arriving when the link allows;
+//! * [`firmware`]: new firmware for devices, a few at a time;
+//! * [`fleet`]: many devices at once;
+//! * [`notices`]: telling people, in steps;
+//! * [`platform_flows`]: flows that run here, for what has to see across sites;
+//! * [`reports`]: availability, alarms and readings on paper;
+//! * [`schedules`]: asking devices for something by the clock;
 //! * [`site`]: the HTTP endpoints;
-//! * [`templates`]: definitions to start from.
+//! * [`templates`]: definitions to start from;
+//! * [`twins`]: a device as a twin, a Thing Description and an Asset Administration Shell.
 //!
 //! Commands, identity, telemetry and authority are Operations'. This adds how devices are described
 //! and looked after. Rules raise alarms and move nothing: anything physical goes through the ledger.
 
+pub mod alarms;
+pub mod bundles;
 pub mod config;
+pub mod data;
 pub mod facts;
+pub mod firmware;
+pub mod fleet;
+pub mod notices;
+pub mod platform_flows;
+pub mod reports;
+pub mod schedules;
 pub mod site;
 pub mod templates;
+pub mod twins;
 
 use async_trait::async_trait;
 use ferrum_domain::reports::ReportSource;
@@ -21,6 +41,7 @@ use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, HookRegistry, Kernel, Result};
 use serde_json::{Value, json};
 use std::sync::Arc;
+use uuid::Uuid;
 
 include!(concat!(env!("OUT_DIR"), "/packages.rs"));
 include!(concat!(env!("OUT_DIR"), "/ui.rs"));
@@ -38,13 +59,50 @@ pub fn register(h: &mut HookRegistry) {
     h.register("DeviceDefinition", Arc::new(DefinitionHook));
     h.register("EdgeRule", Arc::new(RuleHook));
     h.register("EdgeFlow", Arc::new(FlowHook));
+    h.register("EdgeDashboard", Arc::new(BoardHook));
+    h.register("EdgeExport", Arc::new(ExportHook));
+    h.register("EdgeFirmware", Arc::new(firmware::FirmwareHook));
+    h.register("EdgeRollout", Arc::new(firmware::RolloutHook));
+    h.register("EdgeSchedule", Arc::new(schedules::ScheduleHook));
     h.add_event_sink(Arc::new(Facts));
     h.add_site("edge", Arc::new(site::EdgeSite));
+    h.add_job_handler(Arc::new(notices::Notices));
 }
 
 /// This app's reports.
 pub fn reports() -> Vec<Arc<dyn ReportSource>> {
-    vec![]
+    vec![Arc::new(reports::EdgeReports)]
+}
+
+/// A dashboard is checked when it is saved, so that nothing is left for a person looking at it to find.
+struct BoardHook;
+
+#[async_trait]
+impl DocHook for BoardHook {
+    fn name(&self) -> &'static str {
+        "edge.dashboard"
+    }
+
+    async fn validate_change(&self, _hc: &mut HookCtx<'_>, _old: Option<&Doc>, doc: &Doc) -> Result<()> {
+        match s(doc, "body") {
+            Some(body) => data::check(body).map(drop).map_err(|why| Error::field("body", why)),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Where an export sends is checked when it is saved, and not by a gateway that can only fail quietly.
+struct ExportHook;
+
+#[async_trait]
+impl DocHook for ExportHook {
+    fn name(&self) -> &'static str {
+        "edge.export"
+    }
+
+    async fn validate_change(&self, _hc: &mut HookCtx<'_>, _old: Option<&Doc>, doc: &Doc) -> Result<()> {
+        ferrum_edge_contract::edge::check_export(s(doc, "send_to").unwrap_or_default()).map_err(|why| Error::field("send_to", why))
+    }
 }
 
 /// A definition is checked when it is saved, with its reason, so a mistake is a person's to fix at a
@@ -139,7 +197,7 @@ impl DocHook for FlowHook {
     async fn validate_change(&self, _hc: &mut HookCtx<'_>, old: Option<&Doc>, doc: &Doc) -> Result<()> {
         if let Some(old) = old
             && s(old, "status").is_some_and(|status| status != "Draft")
-            && s(old, "body") != s(doc, "body")
+            && (s(old, "body") != s(doc, "body") || s(old, "runs_at") != s(doc, "runs_at"))
         {
             return Err(Error::field("body", "what is under review cannot change: choose Change It to draft it again"));
         }
@@ -152,12 +210,22 @@ impl DocHook for FlowHook {
         let body = s(doc, "body").unwrap_or_default().to_string();
         let me = hc.ctx.email.clone();
         let now = chrono::Utc::now().to_rfc3339();
-        let parsed = |body: &str| ferrum_edge_contract::flow::parse(body).map_err(|why| Error::field("body", why));
+        let platform = s(doc, "runs_at") == Some("Platform");
+        let used = usable_flows(hc.tx, hc.ctx.tenant, record).await?;
+        let whole = whole_flow(&body, &used).map_err(|why| Error::field("body", why))?;
+        // A step that needs a gateway is found here and not by a flow that quietly does nothing.
+        let parsed = |body: &str| {
+            let flow = ferrum_edge_contract::flow::parse(body).map_err(|why| Error::field("body", why))?;
+            match flow.needs_a_gateway() {
+                Some(node) if platform => Err(Error::field("runs_at", format!("{node} needs a gateway to run on"))),
+                _ => Ok(flow),
+            }
+        };
         let mut values = Doc::new();
         match name {
             "submit_for_review" => {
                 flow_step(&status, &["Draft"], "sent for review")?;
-                let flow = parsed(&body)?;
+                let flow = parsed(&whole)?;
                 if s(doc, "simulated_digest") != Some(flow.digest.as_str()) {
                     return Err(Error::invalid("simulate this version first: a reviewer should see what it does, not only what it says"));
                 }
@@ -178,7 +246,7 @@ impl DocHook for FlowHook {
                 if s(doc, "submitted_by") == Some(me.as_str()) {
                     return Err(Error::Forbidden("someone else has to review what you sent".into()));
                 }
-                parsed(&body)?;
+                parsed(&whole)?;
                 values.insert("status".into(), json!("Approved"));
                 values.insert("approved_by".into(), json!(me));
                 values.insert("approved_at".into(), json!(now));
@@ -186,12 +254,31 @@ impl DocHook for FlowHook {
             "activate" => {
                 reviewer(hc.ctx)?;
                 flow_step(&status, &["Approved"], "run")?;
-                parsed(&body)?;
-                values.insert("published_body".into(), json!(body));
-                values.insert("revision".into(), json!(doc.get("revision").and_then(Value::as_i64).unwrap_or(0) + 1));
+                // What it uses may have changed since it was seen. What runs has to be what was seen.
+                if s(doc, "simulated_digest") != Some(parsed(&whole)?.digest.as_str()) {
+                    return Err(Error::invalid("a flow this uses has changed: draft it again, and simulate it"));
+                }
+                let revision = doc.get("revision").and_then(Value::as_i64).unwrap_or(0) + 1;
+                sqlx::query("insert into edge_flow_version (tenant_id, flow_id, revision, body, by_whom) values ($1, $2, $3, $4, $5)")
+                    .bind(hc.ctx.tenant)
+                    .bind(record)
+                    .bind(revision)
+                    .bind(&whole)
+                    .bind(&me)
+                    .execute(&mut **hc.tx)
+                    .await?;
+                values.insert("published_body".into(), json!(whole));
+                values.insert("revision".into(), json!(revision));
                 values.insert("live".into(), json!(true));
                 values.insert("activated_by".into(), json!(me));
                 values.insert("activated_at".into(), json!(now));
+            }
+            // Looking changes nothing that runs, so it needs no review. It has an end, because what
+            // passes through costs something and a person forgets.
+            "watch" => {
+                let minutes = params.get("minutes").and_then(Value::as_i64).unwrap_or(10).clamp(0, 60);
+                let until = (minutes > 0).then(|| (chrono::Utc::now() + chrono::Duration::minutes(minutes)).to_rfc3339());
+                values.insert("debug_until".into(), json!(until));
             }
             // Stopping is never a question of review: whoever may work on flows may stop one.
             "stop" => {
@@ -209,6 +296,25 @@ impl DocHook for FlowHook {
         ferrum_kernel::audit::record(hc.tx, hc.ctx, "EdgeFlow", record, &format!("edge.flow.{name}"), None, json!({"by": me})).await?;
         Ok(Some(json!({"done": name})))
     }
+}
+
+/// What flows may use: those that have been reviewed. A flow does not use itself.
+pub(crate) async fn usable_flows(tx: &mut ferrum_kernel::Tx, tenant: Uuid, not: Uuid) -> Result<Vec<(String, String)>> {
+    Ok(sqlx::query_as("select flow_name, body from e_edge_flow where tenant_id = $1 and id <> $2 and status = 'Approved' and body is not null")
+        .bind(tenant)
+        .bind(not)
+        .fetch_all(&mut **tx)
+        .await?)
+}
+
+/// A flow with what it uses copied in, which is what is checked, reviewed and run.
+pub(crate) fn whole_flow(body: &str, used: &[(String, String)]) -> std::result::Result<String, String> {
+    if !body.contains("\"use\"") {
+        return Ok(body.to_string());
+    }
+    let parsed: Value = serde_json::from_str(body).map_err(|e| e.to_string())?;
+    let find = |name: &str| used.iter().find(|(n, _)| n == name).and_then(|(_, b)| serde_json::from_str(b).ok());
+    ferrum_edge_contract::subflow::expand(&parsed, &find).map(|whole| whole.to_string())
 }
 
 /// What gateways report, in any order and at least once, which [`facts`] is written for.
@@ -230,6 +336,32 @@ impl EventSink for Facts {
 pub async fn maintenance(k: &Kernel) -> Result<()> {
     let mut tx = k.db.system_tx().await?;
     sqlx::query("delete from edge_event where at < now() - interval '90 days'").execute(&mut *tx).await?;
+    sqlx::query("delete from edge_notice where status in ('Sent', 'Dropped', 'Failed') and due_at < now() - interval '90 days'").execute(&mut *tx).await?;
+    sqlx::query("delete from edge_flow_trace where at < now() - interval '1 hour'").execute(&mut *tx).await?;
+    let tenants: Vec<Uuid> = sqlx::query_scalar("select id from tenant where status = 'active' order by id").fetch_all(&mut *tx).await?;
     tx.commit().await?;
-    Ok(())
+    let mut first_error = None;
+    for tenant in tenants {
+        let schema = match k.registry.schema(tenant).await {
+            Ok(schema) if schema.packages.iter().any(|p| p == "edge") => schema,
+            Ok(_) => continue,
+            Err(e) => {
+                first_error.get_or_insert(e);
+                continue;
+            }
+        };
+        let ctx = Ctx::system(tenant, schema);
+        for outcome in [
+            facts::watch_gateways(k, &ctx).await,
+            notices::send_due(k, &ctx).await.map(drop),
+            platform_flows::run(k, &ctx).await,
+            firmware::advance(k, &ctx).await,
+        ] {
+            if let Err(e) = outcome {
+                tracing::warn!(%tenant, "edge maintenance failed: {e}");
+                first_error.get_or_insert(e);
+            }
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }

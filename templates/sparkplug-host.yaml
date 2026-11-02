@@ -1,0 +1,17 @@
+# about: A Sparkplug B primary host: it says it is there, follows every node, and asks for what it missed.
+# group: Machines
+# Nodes wait for a primary host by this id before they publish, if they are set to. A node or device
+# that goes away is Offline here by its own death certificate.
+name: sparkplug-host
+connect: mqtt://broker:1883
+primary_host: ferrum
+subscribe:
+  - spBv1.0/plant/+/+
+  - spBv1.0/plant/+/+/+
+read:
+  - topic: spBv1.0/plant/+/+/+
+    format: sparkplug
+    device: "{topic.3}"
+    each: $.metrics
+    metric: "{each.name}"
+    json: $.value

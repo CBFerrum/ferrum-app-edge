@@ -62,6 +62,7 @@ through its gateway**, commission it, and list what it may be asked to do.
 | `allow` | any | What hosts a definition may reach, by how they start |
 | `listen` | none | Addresses a definition may listen on, exactly |
 | `drivers_dir` | none | The only place an external driver can run from |
+| `files_dir` | none | The only place a definition can read files and SQLite databases from |
 | `secrets` | none | What `{secret.x}` stands for. They stay here |
 | `peers` | none | Boxes this one works through: `{name, url, devices, concurrency}` |
 | `peer_only`, `listen_peers`, `trusted_peers` | off | For such a box: no platform of its own, where to answer, and whose keys to believe |
@@ -140,10 +141,37 @@ unchanged, since the path and body are what is signed. It holds no keys and can 
 
 ## Exports
 
-An Edge Export sends what a gateway reads somewhere else as well: `https://…` by batches, signed with
-an HMAC of the body when `sign_with` names a secret, or `mqtt://…` by a message per measurement.
-What is waiting stays in the journal through an outage, within a budget, and the newest stays when the
-budget runs out.
+An Edge Export sends what a gateway reads somewhere else as well. Each keeps its own queue in the
+journal, so one that is down holds up nothing and catches up when it is back, up to 200,000 readings,
+past which the oldest go and are counted. Delivery is at least once: a receiver that cares uses
+`device`, `metric` and `at` as the key. A batch is 500 readings at most, and it is only taken off the
+queue when the far end has said yes.
+
+| Send to | What happens | Topic or key | Secret |
+|---|---|---|---|
+| `https://historian/in` | A batch by POST | | Signs it: `x-ferrum-signature` is `sha256=` and an HMAC |
+| `mqtts://broker:8883` | A message each | `ferrum/{device}/{metric}` | |
+| `nats://bus:4222`, `nats+tls://` | A message each. `PONG` is the yes | `ferrum.{device}.{metric}` | A token, or a password with `user@` |
+| `kafka://bus:9092`, `kafkas://` | Keyed by device, so a device stays in order. The topic must exist | The topic, `ferrum` by default | A SASL PLAIN password with `user@` |
+| `amqp://user@broker:5672/vhost?exchange=x`, `amqps://` | Persistent, and confirmed by the broker | The routing key | The password |
+| `influx://host:8086/?org=o&bucket=b`, `influxs://` | Line protocol, with the metric as the measurement and the device as a tag. InfluxDB 2 and 3 | | The token |
+| `clickhouse://user@host:8123/table`, `clickhouses://` | Rows with `device`, `metric`, `value`, `at`, and `unit` | | The password |
+| `s3://bucket/prefix?region=r` | One object per batch, one reading to a line, named by what is in it, so a batch sent twice is the same object. `&endpoint=` for anything else that speaks S3 | | `ACCESS_KEY:SECRET_KEY` |
+| `sqs://sqs.region.amazonaws.com/account/queue` | Ten to a call | | `ACCESS_KEY:SECRET_KEY` |
+| `sns://sns.region.amazonaws.com/?topic=arn` | Ten to a call | | `ACCESS_KEY:SECRET_KEY` |
+| `pubsub://project/topic` | Google Cloud Pub/Sub. `?endpoint=` for its emulator | | A service account's key, as JSON |
+| `azure://hub.azure-devices.net/device` | Azure IoT Hub, as that device | | The device's key |
+| `eventhub://namespace.servicebus.windows.net/hub` | Azure Event Hubs | | `policy:key` |
+| `sparkplug://broker:1883/group/node`, `sparkplugs://` | This gateway as a Sparkplug edge node: births, data in sequence, and everything again if a host asks | | |
+
+A secret is named by the export and kept in the site's `secrets`. An address with a password in it is
+refused when it is saved, because an export travels to every gateway and every backup. `allow` limits
+where these can go, as it does for anything a definition opens.
+
+NATS, Kafka, RabbitMQ, InfluxDB and ClickHouse run as real services in this repository's CI, and S3,
+SQS and SNS against moto, a stand-in for AWS. The signatures match Amazon's published examples. Google
+and Azure are checked against the documented shape of the calls only: nothing here has been sent to
+their real services.
 
 ## A broker on site
 

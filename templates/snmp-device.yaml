@@ -1,0 +1,10 @@
+# about: Network equipment or a UPS over SNMP v1 or v2c, read by OID.
+# group: Infrastructure
+# OIDs are the standard interface ones. A community is a password sent in the clear.
+name: snmp-device
+connect: snmp://device:161?community=public&version=2c
+tags:
+  - {node: 1.3.6.1.2.1.1.3.0, every: 60s, metric: uptime.ticks}
+  - {node: 1.3.6.1.2.1.2.2.1.10.1, every: 60s, metric: if1.in.octets}
+  - {node: 1.3.6.1.2.1.2.2.1.16.1, every: 60s, metric: if1.out.octets}
+  - {node: 1.3.6.1.2.1.1.5.0, every: 1h, attribute: name}

@@ -2,7 +2,7 @@
 //! content, so an unchanged configuration costs one short answer.
 
 use chrono::{DateTime, Utc};
-use ferrum_edge_contract::edge::{Comparison, DeviceLink, EdgeConfig, Export, FlowSpec, Release, Rule};
+use ferrum_edge_contract::edge::{Basic, Comparison, Credentials, DeviceLink, EdgeConfig, Export, FlowSpec, Provisioning, Release, Rule};
 use ferrum_kernel::{Result, Tx};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -22,6 +22,12 @@ struct DeviceRow {
     edge_connect: Option<String>,
     edge_settings: Option<Value>,
     edge_concurrency: Option<i64>,
+    edge_token_hash: Option<String>,
+    edge_client_id: Option<String>,
+    edge_username: Option<String>,
+    edge_password_hash: Option<String>,
+    edge_certificate: Option<String>,
+    via: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -66,24 +72,47 @@ fn bucket(gateway: Uuid) -> f64 {
 /// What `gateway` should be. Only what it reaches, and only what it needs.
 pub async fn for_gateway(tx: &mut Tx, tenant: Uuid, gateway: Uuid, site: Option<Uuid>) -> Result<EdgeConfig> {
     let rows: Vec<DeviceRow> = sqlx::query_as(
-        "select d.device_code, f.definition_name, f.published_body, d.edge_connect, d.edge_settings, d.edge_concurrency \
+        "select d.device_code, f.definition_name, f.published_body, d.edge_connect, d.edge_settings, d.edge_concurrency, \
+                d.edge_token_hash, d.edge_client_id, d.edge_username, d.edge_password_hash, d.edge_certificate, v.device_code as via \
          from e_device d join e_device_definition f on f.tenant_id = d.tenant_id and f.id = d.edge_definition \
+         left join e_device v on v.tenant_id = d.tenant_id and v.id = d.edge_via \
          where d.tenant_id = $1 and d.gateway = $2 and d.lifecycle not in ('Retired', 'Quarantined') and f.published_body is not null order by d.device_code",
     )
     .bind(tenant)
     .bind(gateway)
     .fetch_all(&mut **tx)
     .await?;
+    // What each was last asked to be, for a device to ask for after it restarts.
+    let wanted: Vec<(String, String, Value)> = sqlx::query_as(
+        "select d.device_code, a.key, a.desired from edge_attribute a join e_device d on d.tenant_id = a.tenant_id and d.id = a.device_id \
+         where a.tenant_id = $1 and d.gateway = $2 and a.desired is not null order by d.device_code, a.key",
+    )
+    .bind(tenant)
+    .bind(gateway)
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut shared: BTreeMap<String, BTreeMap<String, Value>> = BTreeMap::new();
+    for (code, key, value) in wanted {
+        shared.entry(code).or_default().insert(key, value);
+    }
     let mut definitions = BTreeMap::new();
     let mut devices = Vec::new();
     for r in rows {
         definitions.insert(r.definition_name.clone(), r.published_body);
+        let basic = r.edge_password_hash.map(|password| Basic {
+            client_id: r.edge_client_id.filter(|c| !c.is_empty()),
+            username: r.edge_username.filter(|u| !u.is_empty()),
+            password,
+        });
         devices.push(DeviceLink {
+            shared: shared.remove(&r.device_code).unwrap_or_default(),
             code: r.device_code,
             definition: r.definition_name,
             connect: r.edge_connect.filter(|c| !c.trim().is_empty()),
             settings: r.edge_settings.unwrap_or(Value::Null),
             concurrency: r.edge_concurrency.unwrap_or(1).clamp(1, 100) as u32,
+            credentials: Credentials { token: r.edge_token_hash, basic, certificate: r.edge_certificate },
+            via: r.via,
         });
     }
     let by_definition: BTreeMap<Uuid, Vec<String>> = {
@@ -151,15 +180,15 @@ pub async fn for_gateway(tx: &mut Tx, tenant: Uuid, gateway: Uuid, site: Option<
             sign_with: e.sign_with.filter(|s| !s.is_empty()),
         })
         .collect();
-    let flows: Vec<(Uuid, String, i64, String)> = sqlx::query_as(
-        "select id, flow_name, revision, published_body from e_edge_flow \
-         where tenant_id = $1 and live and published_body is not null and (site is null or site = $2) order by flow_name",
+    let flows: Vec<(Uuid, String, i64, String, bool)> = sqlx::query_as(
+        "select id, flow_name, revision, published_body, coalesce(debug_until > now(), false) from e_edge_flow \
+         where tenant_id = $1 and live and published_body is not null and (site is null or site = $2) and runs_at = 'Gateway' order by flow_name",
     )
     .bind(tenant)
     .bind(site)
     .fetch_all(&mut **tx)
     .await?;
-    let flows = flows.into_iter().map(|(id, name, revision, body)| FlowSpec { id, name, revision, body }).collect();
+    let flows = flows.into_iter().map(|(id, name, revision, body, debug)| FlowSpec { id, name, revision, body, debug }).collect();
     let release: Option<ReleaseRow> = sqlx::query_as(
         "select release_version as version, url, sha256, signature, expires_at, percent::text as percent from e_edge_release \
          where tenant_id = $1 and status = 'Rolling Out' and (site is null or site = $2) and expires_at > now() order by created_at desc limit 1",
@@ -171,7 +200,18 @@ pub async fn for_gateway(tx: &mut Tx, tenant: Uuid, gateway: Uuid, site: Option<
     let release = release
         .filter(|r| number(r.percent.as_deref()).unwrap_or(0.0) > bucket(gateway) || number(r.percent.as_deref()) == Some(100.0))
         .map(|r| Release { version: r.version, url: r.url, sha256: r.sha256, signature: r.signature, expires_at: r.expires_at });
-    let mut config = EdgeConfig { version: String::new(), definitions, devices, rules, flows, exports, release };
+    let provisioning: Vec<(String, String, String)> = sqlx::query_as(
+        "select definition_name, provision_key, provision_hash from e_device_definition where tenant_id = $1 and provision_key is not null and provision_hash is not null and published_body is not null order by definition_name",
+    )
+    .bind(tenant)
+    .fetch_all(&mut **tx)
+    .await?;
+    let provisioning: Vec<Provisioning> = provisioning
+        .into_iter()
+        .filter(|(name, ..)| definitions.contains_key(name))
+        .map(|(definition, key, secret)| Provisioning { definition, key, secret })
+        .collect();
+    let mut config = EdgeConfig { version: String::new(), definitions, devices, rules, flows, exports, release, provisioning, gateway: Some(gateway) };
     config.version = hex::encode(Sha256::digest(serde_json::to_vec(&config).unwrap_or_default()));
     Ok(config)
 }

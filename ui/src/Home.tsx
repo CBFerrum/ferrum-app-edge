@@ -7,7 +7,7 @@ import { Link, useNavigate } from "react-router";
 import { refusal, relativeTime } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { LinkInput } from "@ferrum/records";
-import { claim, type Gateway, type LinkHealth, overview, type Stranger } from "./data";
+import { claim, fleet, type Gateway, type LinkHealth, overview, type Stranger } from "./data";
 import { Tabs } from "./Tabs";
 
 const count = (n: number) => n.toLocaleString();
@@ -132,6 +132,42 @@ function Strangers({ list }: { list: Stranger[] }) {
   );
 }
 
+function FleetHealth() {
+  const q = useQuery({ queryKey: ["edge", "fleet"], queryFn: fleet, refetchInterval: 60_000 });
+  const rows = q.data?.definitions ?? [];
+  if (rows.length === 0) return null;
+  return (
+    <section className="card card-pad stack" aria-label="How the fleet stands">
+      <h2 className="edge-section">How the fleet stands</h2>
+      <div className="edge-scroll">
+        <table className="edge-table">
+          <thead>
+            <tr>
+              <th>Read by</th>
+              <th>Devices</th>
+              <th>In service</th>
+              <th>Heard lately</th>
+              <th>Alarms</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.name}>
+                <td>{r.name}</td>
+                <td>{r.devices}</td>
+                <td>{r.in_service}</td>
+                <td>{r.heard}</td>
+                <td>{r.alarms}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {q.data?.versions.length ? <p className="faint">Firmware running: {q.data.versions.map((v) => `${v.version} on ${v.devices}`).join(", ")}.</p> : null}
+    </section>
+  );
+}
+
 export function Home() {
   useShellTitle("IoT Edge");
   const q = useQuery({ queryKey: ["edge", "overview"], queryFn: overview, refetchInterval: 15_000 });
@@ -164,6 +200,7 @@ export function Home() {
               ))}
             </div>
           )}
+          <FleetHealth />
         </>
       )}
     </div>

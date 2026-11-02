@@ -33,7 +33,25 @@ start and not a promise: none has been tried on the equipment it names ([compati
 | `mqtt://user:pw@host:1883?client=id`, `mqtts://…` | MQTT 5. `subscribe` lists the topics to hold open |
 | `modbus+tcp://host:502?unit=1` | Modbus registers |
 | `modbus+rtu:///dev/ttyUSB0?baud=9600&parity=E&unit=1` | Modbus on a serial line, shared by several units |
-| `opcua://host:4840/path?interval=500` | OPC UA. `subscribe` lists the nodes to watch |
+| `opcua://host:4840/path?interval=500` | OPC UA. `subscribe` lists the nodes to watch, and `events:i=2253` a node's events. `node: browse:i=85` says what is under one |
+| `s7://plc:102?rack=0&slot=1` | Siemens S7: `DB1.DBD0:real`, `MW10`, `M0.1`, `I0.1` |
+| `enip://plc:44818?slot=0` | EtherNet/IP, by tag: `Line.Speed`, `Temps[3]` |
+| `ads://plc:48898?target=…&port=851&source=…` | TwinCAT ADS, by name and type: `MAIN.speed:real` |
+| `bacnet://controller:47808?priority=16` | BACnet/IP: `analog-input:1`, `binary-value:2/present-value` |
+| `snmp://device:161?community=public&version=2c` | SNMP v1 and v2c: an OID, or `walk:` and one |
+| `snmp://device:161?version=3&user=u&auth={secret.a}&priv={secret.p}&auth_hash=sha256` | SNMP v3: SHA-1 or SHA-256, and AES if `priv` is given |
+| `listen+snmp://0.0.0.0:162` | Traps and informs |
+| `knx://interface:3671` | KNX over IP. `subscribe` and `node` say `1/2/3:dpt9` |
+| `iec104://rtu:2404?ca=1` | IEC 60870-5-104: `interrogate`, `single:4001`, `double:4002`, `setpoint:4003` |
+| `mbus://bridge:9000` | M-Bus meters through a TCP bridge. `node` is a primary address |
+| `coap://sensor:5683` | A device that serves CoAP. `get`, `put`, `post`, `delete`, and `subscribe` to watch with Observe |
+| `listen+lwm2m://0.0.0.0:5683` | LwM2M devices register here. `subscribe` lists what to watch on each |
+| `listen+ocpp://0.0.0.0:9000/ocpp?open=1`, `listen+ocpps://…` | EV chargers, with `api: ocpp`. `open=1` lets a charger with no token in |
+| `mtconnect://agent:5000?interval=1000` | An MTConnect agent: everything, then its sample stream |
+| `nats://bus:4222` | NATS subjects in `subscribe` |
+| `postgres://user:pw@host/db`, `sqlite:///path` | A query in `node`, read only |
+| `file:///data/out?every=30&match=.csv` | New files in a folder, line by line |
+| `ftp://user:pw@host/out?every=60` | The same on an FTP server |
 | `listen://0.0.0.0:5020` | Equipment calls in over TCP |
 | `listen+udp://0.0.0.0:5020` | Equipment sends datagrams here |
 | `webhook://0.0.0.0:8088?token={secret.x}` | Another system posts here |
@@ -47,6 +65,7 @@ A definition can come from the platform, so the site decides what one may do the
 - `allow` limits hosts, by what they start with. Empty means any.
 - `listen` names addresses a definition may listen on, exactly. Empty means none.
 - `drivers_dir` is the only place a driver can be run from.
+- `files_dir` is the only place a definition can read files and SQLite databases from.
 - A serial port must be under `/dev`.
 - `tls: {ca, cert, key}` names files in the site's `state_dir/tls`, and nowhere else. It works for
   `https` and `mqtts`. `wss` uses public authorities only.
@@ -56,6 +75,24 @@ the site makes its own certificate under `state_dir/tls/opcua`, and a server is 
 person has moved its certificate from `rejected` to `trusted` there.
 The RSA behind this comes from a library with an unfixed timing weakness ([the record](advisories.yaml)),
 so keep OPC UA on a segmented network.
+
+Whatever reads by a name inside the equipment says it the same way, with `tags`, which is the short
+way to say what most equipment needs:
+
+```yaml
+name: oven
+connect: s7://10.0.0.7:102?rack=0&slot=1
+tags:
+  - {node: "DB1.DBD0:real", every: 1s, metric: temp.c, unit: C, deadband: 0.2}
+  - {node: DB1.DBX4.0, every: 1s, state: true, map: {"true": Running, "false": Idle}}
+```
+
+Each becomes a poll and a read rule. A wrong address is refused when a definition is saved, and a poll
+only ever reads: writing to equipment is a command, and goes through the ledger.
+
+`primary_host: an-id` on a Sparkplug definition makes the link a primary host: it says it is there on
+`spBv1.0/STATE/an-id`, follows each node's sequence, asks for a rebirth after a gap, and says when a
+node or device goes away.
 
 ## Cutting a stream into messages
 
@@ -125,6 +162,18 @@ read:
 
 This makes a device with hundreds of values one line. A name a device chose is made fit to be a
 metric's, and one link keeps track of at most 20,000 of them.
+
+## Numbers worked out from others
+
+```yaml
+derive:
+  - {metric: power.kw, formula: "[volts] * [amps] / 1000", unit: kW}
+  - {metric: cost.hour, formula: "[power.kw] * 0.2", fresh: 30s}
+```
+
+A derived number is worked out at the gateway whenever one of its inputs is reported, once all of
+them have been heard, so it works with the link down. Each can use those listed before it. An input
+older than `fresh` does not count: a stale reading is not a reading.
 
 ## Commands
 

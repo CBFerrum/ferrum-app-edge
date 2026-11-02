@@ -577,3 +577,511 @@ a.edge-row-main:hover strong {
       fill 120ms;
   }
 }
+
+/* Charts */
+.edge-chart {
+  position: relative;
+}
+
+.edge-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: pan-y;
+}
+
+.edge-chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.edge-chart-tick {
+  fill: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.edge-chart-line {
+  fill: none;
+  stroke-width: 1.75;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.edge-chart-band {
+  opacity: 0.12;
+}
+
+.edge-chart-mark {
+  stroke: var(--destructive);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+.edge-chart-cursor {
+  stroke: var(--muted-foreground);
+  stroke-width: 1;
+}
+
+.edge-chart-tip {
+  position: absolute;
+  top: 0.5rem;
+  z-index: 1;
+  max-width: 60%;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  font-size: 0.75rem;
+  pointer-events: none;
+}
+
+.edge-chart-key {
+  display: inline-block;
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 2px;
+}
+
+.edge-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.edge-choice button {
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.edge-choice button[aria-pressed="true"] {
+  border-color: var(--primary);
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.edge-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.edge-table th,
+.edge-table td {
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.edge-table th:first-child,
+.edge-table td:first-child {
+  text-align: left;
+}
+
+.edge-table thead th {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.edge-chart[data-fill] {
+  height: 100%;
+}
+
+/* Dashboards */
+.edge-tiles {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+
+.edge-widget {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.edge-widget-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem 0;
+}
+
+.edge-widget-title h2 {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edge-widget-tools {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.edge-widget-tools button {
+  padding: 0 0.375rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  cursor: pointer;
+}
+
+.edge-widget-grip {
+  touch-action: none;
+  cursor: move !important;
+}
+
+.edge-widget-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0.5rem 0.75rem;
+  overflow: auto;
+}
+
+.edge-widget-size {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 1rem;
+  height: 1rem;
+  border-right: 3px solid var(--border-strong);
+  border-bottom: 3px solid var(--border-strong);
+  touch-action: none;
+  cursor: nwse-resize;
+}
+
+.edge-widget-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--muted-foreground);
+  font-size: 0.8125rem;
+  text-align: center;
+}
+
+.edge-widget-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+.edge-widget-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.25rem;
+  height: 100%;
+  align-content: center;
+}
+
+.edge-widget-value strong {
+  font-size: 2rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.edge-widget-value small {
+  flex-basis: 100%;
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  text-align: center;
+}
+
+[data-tone="warn"] {
+  --edge-tone: var(--color-amber-500, #f59e0b);
+}
+
+[data-tone="bad"] {
+  --edge-tone: var(--destructive, #dc2626);
+}
+
+.edge-widget-value[data-tone="warn"] strong,
+.edge-widget-value[data-tone="bad"] strong {
+  color: var(--edge-tone);
+}
+
+[data-stale] {
+  opacity: 0.55;
+}
+
+.edge-gauge {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.edge-gauge-track,
+.edge-gauge-fill {
+  fill: none;
+  stroke-width: 10;
+  stroke-linecap: round;
+}
+
+.edge-gauge-track {
+  stroke: var(--border);
+}
+
+.edge-gauge-fill {
+  stroke: var(--edge-tone, var(--primary));
+}
+
+.edge-gauge-value {
+  fill: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.edge-gauge-unit {
+  fill: var(--muted-foreground);
+  font-size: 9px;
+}
+
+.edge-level {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.375rem;
+  height: 100%;
+}
+
+.edge-level-tank {
+  position: relative;
+  flex: 1;
+  width: 60%;
+  min-height: 0;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.edge-level-fill {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--edge-tone, var(--primary));
+  transition: height 300ms;
+}
+
+.edge-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 100%;
+}
+
+.edge-state-lamp {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.edge-state[data-on="true"] .edge-state-lamp {
+  background: var(--color-emerald-500, #10b981);
+}
+
+.edge-symbol-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+}
+
+.edge-symbol-box small {
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+}
+
+.edge-symbol {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  fill: none;
+  stroke: var(--muted-foreground);
+  stroke-width: 3;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.edge-symbol text {
+  fill: currentColor;
+  stroke: none;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.edge-symbol[data-on="true"] {
+  stroke: var(--color-emerald-500, #10b981);
+  color: var(--color-emerald-500, #10b981);
+}
+
+.edge-symbol-level {
+  fill: var(--primary);
+  stroke: none;
+  opacity: 0.6;
+}
+
+.edge-symbol-spin {
+  transform-origin: 50px 50px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .edge-symbol[data-on="true"] .edge-symbol-spin {
+    animation: edge-spin 1.5s linear infinite;
+  }
+}
+
+@keyframes edge-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.edge-bars {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.edge-setpoint {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.edge-line-source {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 0.25rem;
+}
+
+.edge-variable {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+}
+
+.edge-add {
+  width: auto;
+}
+
+.edge-shared {
+  padding: 1rem;
+}
+
+.edge-shared h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+@media (max-width: 720px) {
+  .edge-tiles {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .edge-widget {
+    min-height: 10rem;
+  }
+
+  .edge-line-source {
+    grid-template-columns: 1fr;
+  }
+}
+
+.edge-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--border);
+  font-size: 0.8125rem;
+}
+
+.edge-fields {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.edge-scroll {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.edge-said {
+  font-family: var(--font-mono);
+  max-width: 320px;
+  overflow-wrap: anywhere;
+}
+
+.edge-step-link {
+  background: none;
+  border: 0;
+  color: var(--primary);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.edge-versions {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.edge-versions li {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.edge-refused {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  padding-left: 18px;
+}
+
+.edge-check {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+}
+
+.edge-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.edge-rows-left th,
+.edge-rows-left td {
+  text-align: left;
+}

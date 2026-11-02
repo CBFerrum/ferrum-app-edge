@@ -1,0 +1,14 @@
+# about: A building controller over BACnet/IP: objects and their properties.
+# group: Buildings
+# Object numbers are examples. A write goes at the priority in the address.
+name: bacnet-building
+connect: bacnet://controller:47808?priority=16
+tags:
+  - {node: analog-input:1, every: 30s, metric: temp.c, unit: C, deadband: 0.1}
+  - {node: analog-input:2, every: 30s, metric: humidity.pct, unit: "%"}
+  - {node: binary-input:1, every: 30s, state: true, map: {"1": Occupied, "0": Empty}}
+commands:
+  hvac.setpoint:
+    node: analog-value:1
+    send: "{payload.value}"
+    once: true

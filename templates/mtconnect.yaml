@@ -1,10 +1,9 @@
 # about: A machine tool through an MTConnect agent: every sample, event and condition. Read only.
 # group: Machines
-# MTConnect has no commands, and this adds none. Every data item comes through by its own id.
+# MTConnect has no commands, and this adds none. Every data item comes through by its own id, from
+# the agent's sample stream, so nothing between two looks is lost.
 name: mtconnect
-connect: http://agent:5000
-poll:
-  - {every: 2s, get: /current}
+connect: mtconnect://agent:5000?interval=1000
 read:
   - {format: xml, each: $, when: {json: $.parent, is: Samples}, device: "{each.of.DeviceStream.name}", metric: "{each.attrs.dataItemId}", json: $.text, time: $.attrs.timestamp}
   - {format: xml, each: $, when: {json: $.parent, is: Events}, device: "{each.of.DeviceStream.name}", attribute: "{each.attrs.dataItemId}", json: $.text}

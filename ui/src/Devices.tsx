@@ -1,59 +1,282 @@
-// What the gateways reach. The search lives in the URL, so a link to it works.
+// What the gateways reach. The search lives in the URL, so a link to it works. Choosing some of them
+// asks for the same thing of each: one command to a device, through the ledger.
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useId, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { Badge, EmptyState, ErrorState, PageLoading, statusTone, useDebounced, useShellTitle } from "@ferrum/kit";
-import { devices } from "./data";
+import { refusal, relativeTime } from "@ferrum/client";
+import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, statusTone, toast, useDebounced, useShellTitle } from "@ferrum/kit";
+import { askAll, type DeviceRow, devices, type Imported, importDevices, type Outcome, type Selection, setAll } from "./data";
 import { Tabs } from "./Tabs";
+
+function Outcomes({ outcomes }: { outcomes: Outcome[] }) {
+  const refused = outcomes.filter((o) => o.refused);
+  return (
+    <div className="stack" role="status">
+      <p>
+        {outcomes.length - refused.length} of {outcomes.length} asked.
+      </p>
+      {refused.length ? (
+        <ul className="edge-refused">
+          {refused.map((o) => (
+            <li key={o.device}>
+              {o.refused?.includes(o.device) ? null : <strong>{o.device} </strong>}
+              {o.refused}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function AskAll({ select, count, onClose }: { select: Selection; count: number; onClose: () => void }) {
+  const id = useId();
+  const [what, setWhat] = useState<"command" | "setting">("command");
+  const [name, setName] = useState("");
+  const [value, setValue] = useState("{}");
+  const [outcomes, setOutcomes] = useState<Outcome[] | null>(null);
+  const parsed = (() => {
+    try {
+      return { value: JSON.parse(value) as unknown };
+    } catch {
+      return null;
+    }
+  })();
+  const ask = useMutation({
+    mutationFn: async () => (what === "command" ? askAll(select, name.trim(), parsed?.value) : setAll(select, name.trim(), parsed?.value)),
+    onSuccess: (r) => setOutcomes(r.outcomes),
+    onError: (e) => toast(refusal(e), "error"),
+  });
+  return (
+    <Dialog
+      open
+      title={`Ask ${count === 1 ? "1 device" : `${count} devices`}`}
+      onClose={onClose}
+      footer={
+        outcomes ? (
+          <Button variant="primary" onClick={onClose}>
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button onClick={onClose}>Back</Button>
+            <Button variant="primary" disabled={!name.trim() || parsed === null} loading={ask.isPending} onClick={() => ask.mutate()}>
+              Ask each of them
+            </Button>
+          </>
+        )
+      }
+    >
+      {outcomes ? (
+        <Outcomes outcomes={outcomes} />
+      ) : (
+        <div className="stack">
+          <p className="muted">One request goes to each device through the ledger, under your name, and each is checked as if you had asked it alone.</p>
+          <Field label="Ask for" htmlFor={`${id}-w`}>
+            <select id={`${id}-w`} className="input" value={what} onChange={(e) => setWhat(e.target.value as "command" | "setting")}>
+              <option value="command">A command</option>
+              <option value="setting">A setting</option>
+            </select>
+          </Field>
+          <Field label={what === "command" ? "Operation" : "Setting"} htmlFor={`${id}-n`} required>
+            <input id={`${id}-n`} className="input" value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label={what === "command" ? "With (JSON)" : "Value (JSON)"} htmlFor={`${id}-v`} error={parsed === null ? "That is not JSON." : undefined}>
+            <textarea id={`${id}-v`} className="input edge-code" rows={3} value={value} onChange={(e) => setValue(e.target.value)} />
+          </Field>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+const SAMPLE = "code,name,kind,site,definition,tags\nPRESS-7,Press seven,Machine,north,acme-press,line-1;hot";
+
+function Import({ onClose }: { onClose: () => void }) {
+  const id = useId();
+  const qc = useQueryClient();
+  const [csv, setCsv] = useState("");
+  const [tokens, setTokens] = useState(false);
+  const [done, setDone] = useState<Imported | null>(null);
+  const run = useMutation({
+    mutationFn: () => importDevices(csv, tokens),
+    onSuccess: (r) => {
+      setDone(r);
+      void qc.invalidateQueries({ queryKey: ["edge", "devices"] });
+    },
+    onError: (e) => toast(refusal(e), "error"),
+  });
+  const download = () => {
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([`code,token\n${done!.tokens.map((t) => `${t.code},${t.token}`).join("\n")}\n`], { type: "text/csv" }));
+    link.download = "device-tokens.csv";
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+  return (
+    <Dialog
+      open
+      title="Import devices"
+      onClose={onClose}
+      footer={
+        done ? (
+          <Button variant="primary" onClick={onClose}>
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button onClick={onClose}>Back</Button>
+            <Button variant="primary" disabled={!csv.trim()} loading={run.isPending} onClick={() => run.mutate()}>
+              Import them
+            </Button>
+          </>
+        )
+      }
+    >
+      {done ? (
+        <div className="stack" role="status">
+          <p>
+            {done.created} added{done.failed.length ? `, ${done.failed.length} not` : ""}.
+          </p>
+          {done.failed.length ? (
+            <ul className="edge-refused">
+              {done.failed.map((f) => (
+                <li key={f.line}>
+                  <strong>Line {f.line}</strong> {f.why}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {done.tokens.length ? (
+            <>
+              <Alert tone="warning">These tokens are shown once. Keep them now: only a hash of each is stored.</Alert>
+              <Button onClick={download}>Download the tokens</Button>
+            </>
+          ) : null}
+        </div>
+      ) : (
+        <div className="stack">
+          <p className="muted">The first line says what each column is: code and name at least, and kind, site, gateway, definition, tags or address if you have them. Separate tags with semicolons.</p>
+          <Field label="A file" htmlFor={`${id}-f`}>
+            <input id={`${id}-f`} type="file" accept=".csv,text/csv" onChange={(e) => void e.target.files?.[0]?.text().then(setCsv)} />
+          </Field>
+          <Field label="Or the rows themselves" htmlFor={`${id}-c`}>
+            <textarea id={`${id}-c`} className="input edge-code" rows={6} placeholder={SAMPLE} value={csv} onChange={(e) => setCsv(e.target.value)} />
+          </Field>
+          <label className="edge-check">
+            <input type="checkbox" checked={tokens} onChange={(e) => setTokens(e.target.checked)} /> Give each an access token
+          </label>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+function Row({ d, chosen, choose }: { d: DeviceRow; chosen: boolean; choose: (on: boolean) => void }) {
+  return (
+    <li>
+      <input type="checkbox" aria-label={`Choose ${d.name}`} checked={chosen} onChange={(e) => choose(e.target.checked)} />
+      <Link to={`/d/${d.id}`} className="edge-row-main">
+        <strong>{d.name}</strong>
+        <div className="faint">
+          {d.code}
+          {d.definition ? `, read by ${d.definition}` : ""}
+          {d.gateway ? `, through ${d.gateway}` : ""}
+          {d.last_seen ? `, heard ${relativeTime(d.last_seen)}` : ", not heard yet"}
+        </div>
+      </Link>
+      {d.tags ? (
+        <span className="edge-tags">
+          {d.tags
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean)
+            .map((t) => (
+              <Badge key={t}>{t}</Badge>
+            ))}
+        </span>
+      ) : null}
+      {d.active === true ? <Badge tone="green">Connected</Badge> : null}
+      {d.alarms ? <Badge tone="red">{d.alarms === 1 ? "1 alarm" : `${d.alarms} alarms`}</Badge> : null}
+      <Badge tone={statusTone(d.lifecycle)}>{d.lifecycle}</Badge>
+    </li>
+  );
+}
 
 export function Devices() {
   useShellTitle("Devices");
   const [params, setParams] = useSearchParams();
   const text = params.get("q") ?? "";
+  const tagged = params.get("tag") ?? "";
   const q = useDebounced(text, 250);
-  const list = useQuery({ queryKey: ["edge", "devices", q], queryFn: () => devices(q), refetchInterval: 30_000 });
+  const tag = useDebounced(tagged, 250);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [dialog, setDialog] = useState<"ask" | "import" | null>(null);
+  const select: Selection = { ...(q ? { q } : {}), ...(tag ? { tag } : {}) };
+  const list = useQuery({ queryKey: ["edge", "devices", q, tag], queryFn: () => devices(select), refetchInterval: 30_000 });
+  const set = (key: string, value: string) => {
+    const next = new URLSearchParams(params);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setParams(next, { replace: true });
+  };
+  const shown = list.data?.devices ?? [];
+  const everything = shown.length > 0 && shown.every((d) => picked.has(d.id));
   return (
     <div className="edge-page">
       <Tabs />
       <div className="edge-bar">
-        <input
-          className="input edge-search"
-          type="search"
-          aria-label="Find a device"
-          placeholder="Find a device"
-          value={text}
-          onChange={(e) => setParams(e.target.value ? { q: e.target.value } : {}, { replace: true })}
-        />
-        <Link className="btn btn-default" to="/e/Device/new">
+        <input className="input edge-search" type="search" aria-label="Find a device" placeholder="Find a device" value={text} onChange={(e) => set("q", e.target.value)} />
+        <input className="input edge-search" type="search" aria-label="With the tag" placeholder="With the tag" value={tagged} onChange={(e) => set("tag", e.target.value)} />
+        <Button onClick={() => setDialog("import")}>Import</Button>
+        <Link className="btn btn-md" to="/e/Device/new">
           Add a device
         </Link>
       </div>
+      {picked.size ? (
+        <div className="edge-bar" role="status">
+          <span>{picked.size === 1 ? "1 device chosen" : `${picked.size} devices chosen`}</span>
+          <Button variant="primary" onClick={() => setDialog("ask")}>
+            Ask them…
+          </Button>
+          <Button onClick={() => setPicked(new Set())}>Clear</Button>
+        </div>
+      ) : null}
       {list.isPending ? (
         <PageLoading />
       ) : list.isError ? (
         <ErrorState error={list.error} onRetry={() => void list.refetch()} />
-      ) : list.data.devices.length === 0 ? (
-        <EmptyState title={text ? "Nothing matches that" : "No devices yet"} icon="dashboard">
-          {text ? null : <Link to="/e/Device/new">Add your first device</Link>}
+      ) : shown.length === 0 ? (
+        <EmptyState title={text || tagged ? "Nothing matches that" : "No devices yet"} icon="dashboard">
+          {text || tagged ? null : <Link to="/e/Device/new">Add your first device</Link>}
         </EmptyState>
       ) : (
-        <ul className="card edge-rows edge-rows-pad">
-          {list.data.devices.map((d) => (
-            <li key={d.id}>
-              <Link to={`/d/${d.id}`} className="edge-row-main">
-                <strong>{d.name}</strong>
-                <div className="faint">
-                  {d.code}
-                  {d.definition ? `, read by ${d.definition}` : ""}
-                  {d.gateway ? `, through ${d.gateway}` : ""}
-                </div>
-              </Link>
-              {d.alarms ? <Badge tone="red">{d.alarms === 1 ? "1 alarm" : `${d.alarms} alarms`}</Badge> : null}
-              <Badge tone={statusTone(d.lifecycle)}>{d.lifecycle}</Badge>
-            </li>
-          ))}
-        </ul>
+        <>
+          <label className="edge-check">
+            <input type="checkbox" checked={everything} onChange={(e) => setPicked(e.target.checked ? new Set(shown.map((d) => d.id)) : new Set())} /> All shown
+          </label>
+          <ul className="card edge-rows edge-rows-pad">
+            {shown.map((d) => (
+              <Row
+                key={d.id}
+                d={d}
+                chosen={picked.has(d.id)}
+                choose={(on) =>
+                  setPicked((p) => {
+                    const next = new Set(p);
+                    if (on) next.add(d.id);
+                    else next.delete(d.id);
+                    return next;
+                  })
+                }
+              />
+            ))}
+          </ul>
+        </>
       )}
+      {dialog === "ask" ? <AskAll select={{ ids: [...picked] }} count={picked.size} onClose={() => setDialog(null)} /> : null}
+      {dialog === "import" ? <Import onClose={() => setDialog(null)} /> : null}
     </div>
   );
 }

@@ -1,0 +1,16 @@
+# about: A substation or RTU over IEC 60870-5-104: measurements as they change, and commands.
+# group: Energy
+# Addresses are examples. It is plain TCP, so it belongs on a control network.
+name: iec104-station
+connect: iec104://rtu:2404?ca=1
+poll:
+  - {every: 5m, node: interrogate}
+read:
+  - {topic: "1001", metric: voltage.kv, json: $.value, unit: kV}
+  - {topic: "1002", metric: current.a, json: $.value, unit: A}
+  - {topic: "2001", state: true, json: $.value, map: {"true": Closed, "false": Open}}
+commands:
+  breaker.close:
+    node: single:5001
+    send: true
+    once: true

@@ -15,6 +15,7 @@ pub mod link;
 pub mod peer;
 pub mod relay;
 pub mod runtime;
+pub mod sinks;
 pub mod update;
 
 /// A deliberate crash at a named point, for the recovery tests: set `FERRUM_SITE_CRASH_AT`.

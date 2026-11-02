@@ -24,11 +24,38 @@ ADAPTERS = ("-p", "ferrum-site", "--test", "adapters_it")
 PROTOCOLS = ("-p", "ferrum-site", "--test", "protocols_it")
 LINKS = ("-p", "ferrum-site", "--test", "links_it")
 EDGE = ("-p", "ferrum-app-edge", "--test", "edge_it")
+FLOWS = ("-p", "ferrum-app-edge", "--test", "flows_it")
+FLEET = ("-p", "ferrum-app-edge", "--test", "fleet_it")
+FIRMWARE = ("-p", "ferrum-app-edge", "--test", "firmware_it")
+APP_UNIT = ("-p", "ferrum-app-edge", "--lib")
+DEVICES = ("-p", "ferrum-site", "--test", "devices_it")
+OCPP = ("-p", "ferrum-site", "--test", "ocpp_it")
 # Generous enough to compile and run; passing it means the mutant hung the test.
 TIMEOUT = 600
 
 # name, file, text to replace, what breaks it, test
 MUTANTS = [
+    ("firmware-reaches-a-robot", "src/firmware.rs", ".bind(UPDATABLE.iter().map(|k| k.to_string()).collect::<Vec<_>>())", '.bind(vec!["Sensor".to_string(), "Robot".to_string(), "Controller".to_string()])', FIRMWARE),
+    ("rollout-never-stops", "src/firmware.rs", "    if failed >= stop_after {", "    if false {", FIRMWARE),
+    ("firmware-needs-no-leave", "src/firmware.rs", ".is_some_and(|c| c.definition.firmware)", ".is_some()", FIRMWARE),
+    ("firmware-hash-not-checked", "gateway/src/adapters/defined.rs", "if hex::encode(hash.finalize()) != sha256.to_lowercase() {", "if false {", DEVICES),
+    ("firmware-for-the-asking", "gateway/src/adapters/hub.rs", "if title.is_some_and(|t| t != offered.title) || version.is_some_and(|v| v != offered.version) {", "if false {", DEVICES),
+    ("platform-flow-hears-a-minute-again", "src/platform_flows.rs", "        from = to;\n", "", FLOWS),
+    ("platform-flow-with-nobody-to-answer", "src/lib.rs", "Some(node) if platform => Err(", "Some(node) if false && platform => Err(", FLOWS),
+    ("trace-nobody-asked-for", "src/platform_flows.rs", " and f.debug_until > now()", "", FLOWS),
+    ("gateway-runs-a-platform-flow", "src/config.rs", " and runs_at = 'Gateway'", "", FLOWS),
+    ("flow-uses-what-nobody-reviewed", "src/lib.rs", "and status = 'Approved' and body is not null", "and body is not null", FLOWS),
+    ("flow-runs-what-nobody-saw", "src/lib.rs", 'if s(doc, "simulated_digest") != Some(parsed(&whole)?.digest.as_str()) {', 'if false && s(doc, "simulated_digest") != Some(parsed(&whole)?.digest.as_str()) {', FLOWS),
+    ("flow-uses-itself", "contract/src/subflow.rs", "if !above.insert(name.clone()) {", "if false && !above.insert(name.clone()) {", CONTRACT),
+    ("poll-writes-to-equipment", "contract/src/driver.rs", "if !p.step.write.is_empty() || p.step.call.is_some() || (p.step.node.is_some() && p.step.send.is_some()) {", "if false {", CONTRACT),
+    ("file-from-anywhere", "gateway/src/adapters/transport.rs", 'if !path.starts_with(&dir) {\n            return Err(format!("{name} is outside the files directory"));', 'if false {\n            return Err(format!("{name} is outside the files directory"));', SITE_UNIT),
+    ("sql-may-write", "contract/src/tags.rs", 'matches!(first.as_str(), "select" | "with" | "values") && !sql.trim_end().trim_end_matches(\';\').contains(\';\')', "true", SITE_UNIT),
+    ("export-keeps-a-password", "contract/src/edge.rs", "if authority.rsplit_once('@').is_some_and(|(login, _)| login.contains(':')) {", "if false {", CONTRACT),
+    ("charger-with-anyones-password", "gateway/src/adapters/ocpp.rs", ".is_some_and(|code| code == station)", ".is_some()", OCPP),
+    ("charger-charges-any-card", "contract/src/ocpp.rs", 'Some(list) if !list.iter().any(|t| t.as_str() == Some(tag)) => "Invalid",', 'Some(list) if false && !list.iter().any(|t| t.as_str() == Some(tag)) => "Invalid",', CONTRACT),
+    ("sparkplug-gap-goes-unnoticed", "contract/src/sparkplug.rs", "(Some(want), Some(got)) if want == got => {", "(Some(_), Some(got)) => {", CONTRACT),
+    ("nothing-chosen-means-everything", "src/fleet.rs", '    if s.is_empty() {\n        return Err(Error::invalid("say which devices"));\n    }\n', "", FLEET),
+    ("schedule-fires-all-morning", "src/schedules.rs", "\n        && last.is_none_or(|l| local(l).date_naive() != here.date_naive())", "", APP_UNIT),
     ("flow-may-go-in-a-circle", "contract/src/flow.rs", "    if ordered != nodes.len() {", "    if false {", CONTRACT),
     ("flow-hold-never-starts-again", "contract/src/flow.rs", "                    (m.since, m.on, m.last) = (None, false, None);\n                    return vec![];", "                    return vec![];", CONTRACT),
     ("flow-alarm-said-every-time", "contract/src/flow.rs", "                if m.on == raised {\n                    return vec![];\n                }\n", "", CONTRACT),
@@ -39,7 +66,7 @@ MUTANTS = [
     ("sparkplug-old-aliases-kept", "contract/src/sparkplug.rs", '        if *kind == "NBIRTH" {\n            names.clear();\n        }\n', "", CONTRACT),
     ("frame-check-ignored", "contract/src/driver.rs", "(self.over(body) == check).then_some(body)", "Some(body)", CONTRACT),
     ("replaced-link-keeps-running", "gateway/src/adapters/defined.rs", "            if !wanted {\n                link.close();\n            }\n", "            let _ = link;\n", PROTOCOLS),
-    ("listen-on-any-port", "gateway/src/adapters/transport.rs", "if !limits.listen.iter().any(|a| a == bind) {", "if false {", SITE_UNIT),
+    ("listen-on-any-port", "gateway/src/adapters/transport.rs", "if !limits.listen.iter().any(|a| a == bind || a == port) {", "if false {", SITE_UNIT),
     ("certificate-from-anywhere", "gateway/src/adapters/transport.rs", 'if !path.starts_with(&dir) {\n            return Err(format!("{name} is outside the certificates directory"));', 'if false {\n            return Err(format!("{name} is outside the certificates directory"));', SITE_UNIT),
     ("webhook-open-to-anyone", "gateway/src/adapters/transport.rs", "if Sha256::digest(said) != Sha256::digest(want) {", "if false {", PROTOCOLS),
     ("called-in-goes-to-the-last-caller", "gateway/src/adapters/defined.rs", "let peer = device.and_then(|d| locked(&self.shared).routes.get(d).cloned());", "let peer = locked(&self.shared).routes.values().next().cloned();", PROTOCOLS),

@@ -1,0 +1,8 @@
+# about: A machine that writes results to a folder: each new file is read and moved aside.
+# group: Files
+# Each line arrives by itself, under the file's name. An FTP server works the same way, as
+# ftp://user:{secret.ftp}@host/out?every=60, and there files are remembered, not moved.
+name: file-drop
+connect: file:///data/results?every=30&match=.csv
+read:
+  - {match: '^(?P<part>[A-Z0-9-]+),(?P<weight>[0-9.]+)$', metric: weight.kg, group: weight, unit: kg}

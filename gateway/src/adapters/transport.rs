@@ -7,6 +7,10 @@
 //! and a port to listen on only if `listen` names it. See [`Limits`].
 
 use crate::adapter::Failure;
+use crate::adapters::coap::{CoapClient, CoapServer};
+use crate::adapters::http_server::HttpServer;
+use crate::adapters::hub::Hub;
+use crate::adapters::mqtt_server::MqttServer;
 use async_trait::async_trait;
 use ferrum_edge_contract::driver::{Frame, MAX_FRAME, Tls};
 use serde_json::Value;
@@ -17,6 +21,12 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::{Mutex, mpsc};
+use tokio_rustls::rustls;
+use tokio_rustls::rustls::DigitallySignedStruct;
+use tokio_rustls::rustls::client::danger::HandshakeSignatureValid;
+use tokio_rustls::rustls::pki_types::pem::PemObject;
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, UnixTime};
+use tokio_rustls::rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 
 /// Connections a listener holds. Past this a caller is turned away, not queued.
 const MAX_PEERS: usize = 1024;
@@ -33,6 +43,8 @@ pub struct Message {
     pub body: Vec<u8>,
     /// An HTTP status, where there is one.
     pub status: Option<u16>,
+    /// The device that said this, where it proved who it is. Nothing it says can be anyone else's.
+    pub from: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,6 +105,15 @@ pub trait Transport: Send + Sync {
     }
 }
 
+/// Two of our libraries bring different cryptography, and with both present rustls will not choose
+/// one: the first TLS connection of a library that leaves it the choice would panic. So it is chosen here.
+pub fn crypto() {
+    static CRYPTO: std::sync::Once = std::sync::Once::new();
+    CRYPTO.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 /// What this site lets a definition open.
 #[derive(Debug, Clone, Default)]
 pub struct Limits {
@@ -105,6 +126,11 @@ pub struct Limits {
     pub listen: Vec<String>,
     /// Certificates a definition can name, and OPC UA's own store.
     pub tls_dir: Option<PathBuf>,
+    /// Where firmware waits for devices to fetch it.
+    pub firmware_dir: Option<PathBuf>,
+    /// Where a definition may read files. Without it, nowhere: a definition comes from the platform,
+    /// and must not be able to read whatever it likes on a gateway.
+    pub files_dir: Option<PathBuf>,
 }
 
 impl Limits {
@@ -125,6 +151,17 @@ impl Limits {
         let path = dir.join(name).canonicalize().map_err(|e| format!("{name}: {e}"))?;
         if !path.starts_with(&dir) {
             return Err(format!("{name} is outside the drivers directory"));
+        }
+        Ok(path)
+    }
+
+    /// A file or folder a definition reads, which must be in `files_dir`, however it is written.
+    pub fn local_file(&self, name: &str) -> Result<PathBuf, String> {
+        let dir = self.files_dir.as_ref().ok_or("this site lets no definition read its files: set files_dir")?;
+        let dir = dir.canonicalize().map_err(|e| format!("{}: {e}", dir.display()))?;
+        let path = PathBuf::from(format!("/{}", name.trim_start_matches('/'))).canonicalize().map_err(|e| format!("{name}: {e}"))?;
+        if !path.starts_with(&dir) {
+            return Err(format!("{name} is outside the files directory"));
         }
         Ok(path)
     }
@@ -182,17 +219,39 @@ pub struct Options<'a> {
     pub subscribe: &'a [String],
     pub headers: &'a [(String, String)],
     pub tls: Option<&'a Tls>,
+    /// Who may call, for a port devices prove themselves on.
+    pub hub: Option<Arc<Hub>>,
+    /// What arrives is the device API, and devices keep to it.
+    pub api: bool,
+    /// Other ways in for the same devices.
+    pub also: &'a [String],
+    /// What a broker says for this link if it goes away: a topic and a body, kept for whoever comes.
+    pub will: Option<(String, Vec<u8>)>,
 }
 
 /// Opens what an address names, within what this site allows.
 pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<dyn Transport>, String> {
-    let Options { frame, subscribe, headers, tls } = options;
+    crypto();
+    let Options { frame, subscribe, headers, tls, hub, api, also, will } = options;
     let (scheme, rest) = address.split_once("://").ok_or_else(|| format!("{address} has no scheme"))?;
     let bind = rest.split('?').next().unwrap_or(rest);
-    if matches!(scheme, "listen" | "listen+udp" | "webhook") {
-        if !limits.listen.iter().any(|a| a == bind) {
+    if !also.is_empty() {
+        let hub = hub.ok_or("nothing here can check who calls")?;
+        let mut parts = Vec::with_capacity(also.len() + 1);
+        for one in std::iter::once(address).chain(also.iter().map(String::as_str)) {
+            let options = Options { frame: None, subscribe: &[], headers: &[], tls, hub: Some(hub.clone()), api, also: &[], will: None };
+            parts.push(open(one, options, limits)?);
+        }
+        return Ok(Arc::new(Together { parts, hub }));
+    }
+    // Opening a port is the site's decision, whichever protocol it is for.
+    if scheme.starts_with("listen") || scheme == "webhook" {
+        let port = bind.split('/').next().unwrap_or(bind);
+        if !limits.listen.iter().any(|a| a == bind || a == port) {
             return Err(format!("{bind} is not in this site's listen list"));
         }
+    } else if matches!(scheme, "file" | "sqlite") {
+        limits.local_file(bind)?;
     } else if !matches!(scheme, "serial" | "process" | "modbus+rtu") && !limits.host_allowed(host_of(rest)) {
         return Err(format!("{} is not in this site's allow list", host_of(rest)));
     }
@@ -209,6 +268,20 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
         "listen" => Arc::new(Listen { address: bind.to_string(), frame, peers: Arc::default() }),
         "listen+udp" => Arc::new(ListenUdp { address: bind.to_string(), socket: Mutex::new(None) }),
         "webhook" => Arc::new(Webhook { address: bind.to_string(), token: query(rest, "token") }),
+        "listen+mqtt" | "listen+mqtts" | "listen+http" | "listen+https" => {
+            let secured = match (scheme.ends_with('s'), tls) {
+                (true, Some(tls)) => Some(acceptor(tls, limits)?),
+                (true, None) => return Err(format!("{scheme} needs tls: cert and key, by name in the site's certificates")),
+                _ => None,
+            };
+            let hub = hub.ok_or("nothing here can check who calls")?;
+            if scheme.starts_with("listen+mqtt") {
+                Arc::new(MqttServer { address: bind.to_string(), tls: secured, hub, api })
+            } else {
+                Arc::new(HttpServer { address: bind.to_string(), tls: secured, hub })
+            }
+        }
+        "listen+coap" => Arc::new(CoapServer { address: bind.to_string(), hub: hub.ok_or("nothing here can check who calls")?, socket: Mutex::new(None) }),
         "http" | "https" => Arc::new(Http::new(address, headers, tls, limits)?),
         #[cfg(feature = "ws")]
         "ws" | "wss" => {
@@ -218,7 +291,7 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
             Arc::new(Ws { address: address.to_string(), headers: headers.to_vec(), writer: Mutex::new(None) })
         }
         #[cfg(feature = "mqtt")]
-        "mqtt" | "mqtts" => Arc::new(Mqtt::new(address, subscribe, tls, limits)?),
+        "mqtt" | "mqtts" => Arc::new(Mqtt::new(address, subscribe, tls, will, limits)?),
         #[cfg(feature = "modbus")]
         "modbus+tcp" => Arc::new(Modbus {
             target: ModbusTarget::Tcp(bind.to_string()),
@@ -233,12 +306,147 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
         }),
         #[cfg(feature = "opcua")]
         "opcua" => Arc::new(super::opcua::Opcua::new(rest, subscribe, limits)?),
+        "coap" => {
+            let (host, port) = super::tags::host_port(rest, 5683);
+            Arc::new(CoapClient::new(format!("{host}:{port}"), subscribe))
+        }
+        "mtconnect" | "mtconnects" => Arc::new(super::mtconnect::Mtconnect::new(scheme, rest)),
+        "nats" => Arc::new(super::nats::Nats::new(rest, subscribe)),
+        "file" => Arc::new(super::files::Folder::new(rest)),
+        "ftp" => Arc::new(super::files::Ftp::new(rest)),
+        "listen+lwm2m" => Arc::new(super::lwm2m::Lwm2m::new(bind.to_string(), subscribe, hub.ok_or("nothing here can check who calls")?)),
+        "knx" => Arc::new(super::knx::Knx::new(rest, subscribe)),
+        "iec104" => Arc::new(super::iec104::Iec104::new(rest)),
+        "s7" | "enip" | "ads" | "bacnet" | "snmp" | "mbus" | "postgres" | "sqlite" => {
+            let (scheme, rest, address) = (scheme.to_string(), rest.to_string(), address.to_string());
+            Arc::new(super::tags::Tagged::new(move || {
+                let (scheme, rest, address) = (scheme.clone(), rest.clone(), address.clone());
+                Box::pin(async move {
+                    match scheme.as_str() {
+                        "postgres" => super::sql::Postgres::connect(&address).await,
+                        "sqlite" => super::sql::Sqlite::connect(&rest).await,
+                        "s7" => super::s7::S7::connect(&rest).await,
+                        "enip" => super::enip::Enip::connect(&rest).await,
+                        "ads" => super::ads::Ads::connect(&rest).await,
+                        "bacnet" => super::bacnet::Bacnet::connect(&rest).await,
+                        "mbus" => super::mbus::Mbus::connect(&rest).await,
+                        _ if query(&rest, "version").as_deref() == Some("3") => super::snmp3::Snmp3::connect(&rest).await,
+                        _ => super::snmp::Snmp::connect(&rest).await,
+                    }
+                })
+            }))
+        }
+        "listen+snmp" => Arc::new(super::snmp::Traps { address: bind.to_string() }),
+        #[cfg(feature = "ws")]
+        "listen+ocpp" | "listen+ocpps" => {
+            let address = bind.split('/').next().unwrap_or(bind).to_string();
+            let tls = if scheme == "listen+ocpps" { Some(acceptor(tls.ok_or("tls: a port needs a cert and a key")?, limits)?) } else { None };
+            Arc::new(super::ocpp::OcppServer {
+                address,
+                open: query(rest, "open").as_deref() == Some("1"),
+                tls,
+                hub: hub.ok_or("nothing here can check who calls")?,
+                stations: Default::default(),
+                transactions: Arc::new(std::sync::atomic::AtomicU32::new(chrono::Utc::now().timestamp() as u32)),
+            })
+        }
         other => return Err(format!("this build cannot open {other}")),
     })
 }
 
 type Reader = Box<dyn AsyncRead + Send + Unpin>;
 type Writer = Box<dyn AsyncWrite + Send + Unpin>;
+
+/// Several ways in for the same devices. They stand and fall together: a port that cannot open is
+/// said plainly, not left for a device to discover.
+struct Together {
+    parts: Vec<Arc<dyn Transport>>,
+    hub: Arc<Hub>,
+}
+
+#[async_trait]
+impl Transport for Together {
+    async fn run(&self, tx: mpsc::Sender<Message>, ready: mpsc::Sender<()>) -> Result<(), String> {
+        let (up, mut ups) = mpsc::channel(self.parts.len());
+        let mut running = tokio::task::JoinSet::new();
+        for part in &self.parts {
+            let (part, tx, up) = (part.clone(), tx.clone(), up.clone());
+            running.spawn(async move { part.run(tx, up).await });
+        }
+        let count = self.parts.len();
+        let all_up = async move {
+            for _ in 0..count {
+                let _ = ups.recv().await;
+            }
+            let _ = ready.send(()).await;
+            std::future::pending::<()>().await;
+        };
+        tokio::select! {
+            () = all_up => Ok(()),
+            done = running.join_next() => match done {
+                Some(Ok(result)) => result,
+                Some(Err(e)) => Err(e.to_string()),
+                None => Ok(()),
+            },
+        }
+    }
+
+    async fn send(&self, out: Out) -> Result<Option<Message>, Failure> {
+        self.hub.publish(out)
+    }
+}
+
+/// Takes any certificate a device presents. It proves the device holds that key, which the handshake
+/// checks, and whether that key is one we know is for the directory to say, by its fingerprint. A
+/// device with no certificate may still prove itself some other way.
+#[derive(Debug)]
+struct AnyCertificate(Arc<rustls::crypto::CryptoProvider>);
+
+impl ClientCertVerifier for AnyCertificate {
+    fn offer_client_auth(&self) -> bool {
+        true
+    }
+
+    fn client_auth_mandatory(&self) -> bool {
+        false
+    }
+
+    fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
+        &[]
+    }
+
+    fn verify_client_cert(&self, _: &CertificateDer<'_>, _: &[CertificateDer<'_>], _: UnixTime) -> Result<ClientCertVerified, rustls::Error> {
+        Ok(ClientCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    }
+
+    fn verify_tls13_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+/// What a port secured for devices presents, from the site's own store.
+fn acceptor(tls: &Tls, limits: &Limits) -> Result<tokio_rustls::TlsAcceptor, String> {
+    let (Some(cert), Some(key)) = (&tls.cert, &tls.key) else { return Err("tls: a port needs a cert and a key".into()) };
+    let chain: Vec<CertificateDer<'static>> =
+        CertificateDer::pem_slice_iter(&limits.certificate(cert)?).collect::<Result<_, _>>().map_err(|e| format!("{cert}: {e}"))?;
+    let key = PrivateKeyDer::from_pem_slice(&limits.certificate(key)?).map_err(|e| format!("{key}: {e}"))?;
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ServerConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .map_err(|e| e.to_string())?
+        .with_client_cert_verifier(Arc::new(AnyCertificate(provider)))
+        .with_single_cert(chain, key)
+        .map_err(|e| e.to_string())?;
+    Ok(tokio_rustls::TlsAcceptor::from(Arc::new(config)))
+}
 
 enum Opener {
     Tcp(String),
@@ -308,7 +516,7 @@ impl Stream {
 /// latter, and `Err` says how the stream ended.
 async fn pump(mut reader: Reader, frame: Option<&Frame>, topic: &str, idle: Option<Duration>, tx: &mpsc::Sender<Message>) -> Result<(), String> {
     let (mut buf, mut chunk) = (Vec::new(), vec![0u8; 8192]);
-    let message = |body| Message { topic: topic.to_string(), body, status: None };
+    let message = |body| Message { topic: topic.to_string(), body, status: None, from: None };
     loop {
         let read = reader.read(&mut chunk);
         let n = match idle {
@@ -481,7 +689,7 @@ impl Transport for ListenUdp {
         let mut buf = vec![0u8; 65536];
         loop {
             let (n, peer) = socket.recv_from(&mut buf).await.map_err(|e| e.to_string())?;
-            if tx.send(Message { topic: peer.to_string(), body: buf[..n].to_vec(), status: None }).await.is_err() {
+            if tx.send(Message { topic: peer.to_string(), body: buf[..n].to_vec(), status: None, from: None }).await.is_err() {
                 return Ok(());
             }
         }
@@ -522,7 +730,7 @@ async fn hook(
             return StatusCode::UNAUTHORIZED;
         }
     }
-    match s.tx.try_send(Message { topic: uri.path().to_string(), body: body.to_vec(), status: None }) {
+    match s.tx.try_send(Message { topic: uri.path().to_string(), body: body.to_vec(), status: None, from: None }) {
         Ok(()) => StatusCode::ACCEPTED,
         Err(_) => StatusCode::SERVICE_UNAVAILABLE,
     }
@@ -594,7 +802,7 @@ impl Transport for Http {
         };
         let status = response.status().as_u16();
         let body = response.bytes().await.map_err(|e| Failure::Unknown(e.to_string()))?.to_vec();
-        Ok(Some(Message { topic: path, body, status: Some(status) }))
+        Ok(Some(Message { topic: path, body, status: Some(status), from: None }))
     }
 }
 
@@ -674,7 +882,7 @@ struct Mqtt {
 #[cfg(feature = "mqtt")]
 impl Mqtt {
     /// `mqtt://user:password@host:port`, and `?client=` for the id a broker's rules expect.
-    fn new(address: &str, subscribe: &[String], tls: Option<&Tls>, limits: &Limits) -> Result<Mqtt, String> {
+    fn new(address: &str, subscribe: &[String], tls: Option<&Tls>, will: Option<(String, Vec<u8>)>, limits: &Limits) -> Result<Mqtt, String> {
         use rumqttc::v5::{AsyncClient, MqttOptions};
         let (scheme, rest) = address.split_once("://").ok_or("no scheme")?;
         let (auth, tail) = rest.rsplit_once('@').map_or((None, rest), |(a, t)| (Some(a), t));
@@ -690,6 +898,9 @@ impl Mqtt {
         let client = query(rest, "client").unwrap_or_else(|| format!("ferrum-site-{}", uuid::Uuid::now_v7().simple()));
         let mut options = MqttOptions::new(client, host, port);
         options.set_keep_alive(Duration::from_secs(30));
+        if let Some((topic, body)) = will {
+            options.set_last_will(rumqttc::v5::mqttbytes::v5::LastWill::new(topic, body, rumqttc::v5::mqttbytes::QoS::AtLeastOnce, true, None));
+        }
         if let Some((user, password)) = auth.and_then(|a| a.split_once(':')) {
             options.set_credentials(user, password);
         }
@@ -731,7 +942,7 @@ impl Transport for Mqtt {
                 }
                 Ok(Event::Incoming(Incoming::Publish(p))) => {
                     let topic = String::from_utf8_lossy(&p.topic).to_string();
-                    if tx.send(Message { topic, body: p.payload.to_vec(), status: None }).await.is_err() {
+                    if tx.send(Message { topic, body: p.payload.to_vec(), status: None, from: None }).await.is_err() {
                         return Ok(());
                     }
                 }
@@ -837,7 +1048,7 @@ impl Transport for Modbus {
                 })
                 .await;
                 match read {
-                    Ok(Ok(Ok(body))) => Ok(Some(Message { topic: format!("{table}/{at}"), body, status: None })),
+                    Ok(Ok(Ok(body))) => Ok(Some(Message { topic: format!("{table}/{at}"), body, status: None, from: None })),
                     Ok(Ok(Err(code))) => Err(Failure::NotSent(format!("the device refused: {code:?}"))),
                     Ok(Err(e)) => {
                         *guard = None;
@@ -988,6 +1199,30 @@ mod serial {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_definition_opens_no_port_and_reads_no_file_a_site_did_not_offer() {
+        let dir = std::env::temp_dir().join(format!("files-{}", uuid::Uuid::now_v7().simple()));
+        std::fs::create_dir_all(dir.join("in")).unwrap();
+        let outside = dir.with_extension("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        let open_with = |address: &str, limits: &Limits| open(address, Options { hub: Some(Default::default()), ..Options::default() }, limits).err();
+        let none = Limits::default();
+        for port in ["listen+snmp://0.0.0.0:162", "listen+ocpp://0.0.0.0:9000/ocpp", "listen+lwm2m://0.0.0.0:5683"] {
+            assert!(open_with(port, &none).is_some_and(|e| e.contains("listen list")), "{port}");
+        }
+        let listed = Limits { listen: vec!["127.0.0.1:9000".into()], ..Limits::default() };
+        assert_eq!(open_with("listen+ocpp://127.0.0.1:9000/ocpp", &listed), None, "a path is not part of a port");
+
+        let inside = dir.join("in");
+        for address in ["file:///etc", "sqlite:///etc/passwd"] {
+            assert!(open_with(address, &none).is_some_and(|e| e.contains("files_dir")), "{address}");
+        }
+        let limits = Limits { files_dir: Some(dir.clone()), ..Limits::default() };
+        assert_eq!(open_with(&format!("file://{}", inside.display()), &limits), None);
+        let escape = format!("file://{}/../{}", dir.display(), outside.file_name().unwrap().to_string_lossy());
+        assert!(open_with(&escape, &limits).is_some_and(|e| e.contains("outside")), "however it is written");
+    }
 
     #[test]
     fn a_definition_opens_only_what_the_site_allows() {

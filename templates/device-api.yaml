@@ -1,0 +1,11 @@
+# about: Any device with a token, over MQTT, HTTP or CoAP, in the shapes ThingsBoard's devices speak
+# group: Devices that call in
+# Give each device this definition and a credential from its page. It needs no rules: what it says
+# goes where it should. The ports must be in the site's `listen` list. On any network that is not the
+# site's own, use listen+mqtts and listen+https, with `tls: {cert: ..., key: ...}`.
+name: devices
+connect: listen+mqtt://0.0.0.0:1883
+api: device
+also:
+  - listen+http://0.0.0.0:8080
+  - listen+coap://0.0.0.0:5683

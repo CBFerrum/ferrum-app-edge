@@ -5,13 +5,14 @@
 //! A rule watches a number here, at the edge, so an alarm is raised with the link down. It says only
 //! that something is wrong. Rules raise alarms and do not move equipment.
 
+use crate::flow::Trace;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DeviceLink {
     pub code: String,
     /// The definition's name.
@@ -24,6 +25,45 @@ pub struct DeviceLink {
     /// Commands it may run at once.
     #[serde(default = "one")]
     pub concurrency: u32,
+    /// How it proves who it is when it calls in.
+    #[serde(default, skip_serializing_if = "Credentials::is_empty")]
+    pub credentials: Credentials,
+    /// The device it is reached through, for one behind a gateway of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
+    /// Values kept here for it to ask for: what it was last asked to be.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub shared: BTreeMap<String, Value>,
+}
+
+/// What a device can prove itself with. Only hashes come here, so a gateway that is lost gives
+/// nothing away, and checking one needs no link to the platform.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Credentials {
+    /// SHA-256 of an access token, sent as the MQTT user name or in an HTTP or CoAP path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// An MQTT client id, user and SHA-256 of a password, any of the first two of which can be empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basic: Option<Basic>,
+    /// SHA-256 of the device's certificate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificate: Option<String>,
+}
+
+impl Credentials {
+    pub fn is_empty(&self) -> bool {
+        self.token.is_none() && self.basic.is_none() && self.certificate.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Basic {
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    pub password: String,
 }
 
 fn one() -> u32 {
@@ -69,17 +109,59 @@ fn warning() -> String {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Export {
     pub name: String,
-    /// `http(s)://…` takes batches by POST. `mqtt(s)://…` takes a message per measurement.
+    /// One of [`EXPORT_SCHEMES`]. `docs/definitions.md` says what each takes.
     pub to: String,
-    /// `{device}` and `{metric}` work here. MQTT only.
+    /// A topic, subject or routing key. `{device}` and `{metric}` work here.
     #[serde(default)]
     pub topic: Option<String>,
     /// Only these metrics, with `*` for the rest of a name. Empty means all.
     #[serde(default)]
     pub only: Vec<String>,
-    /// Signs each HTTP batch, by the name of a secret held at the site.
+    /// The name of a secret held at the site: what signs an HTTP batch, or logs in anywhere else.
     #[serde(default)]
     pub sign_with: Option<String>,
+}
+
+pub const EXPORT_SCHEMES: &[&str] = &[
+    "http",
+    "https",
+    "mqtt",
+    "mqtts",
+    "nats",
+    "nats+tls",
+    "kafka",
+    "kafkas",
+    "amqp",
+    "amqps",
+    "influx",
+    "influxs",
+    "clickhouse",
+    "clickhouses",
+    "s3",
+    "sqs",
+    "sns",
+    "pubsub",
+    "azure",
+    "eventhub",
+    "sparkplug",
+    "sparkplugs",
+];
+
+/// Whether an export's address can work, for saying so when it is saved. A password has no place
+/// in one: it would reach every gateway and every backup. It belongs to the site, as a secret.
+pub fn check_export(to: &str) -> Result<(), String> {
+    let (scheme, rest) = to.split_once("://").ok_or("say where: https://historian/in, nats://bus:4222")?;
+    if !EXPORT_SCHEMES.contains(&scheme) {
+        return Err(format!("{scheme} is not a place to send to: try {}", EXPORT_SCHEMES.join(", ")));
+    }
+    let authority = rest.split(['/', '?']).next().unwrap_or_default();
+    if authority.is_empty() {
+        return Err("say which host".into());
+    }
+    if authority.rsplit_once('@').is_some_and(|(login, _)| login.contains(':')) {
+        return Err("a password goes in a secret at the site, not here".into());
+    }
+    Ok(())
 }
 
 /// A build of the site runtime, and how to know it is the real one.
@@ -119,6 +201,31 @@ pub struct FlowSpec {
     pub name: String,
     pub revision: i64,
     pub body: String,
+    /// Someone is watching it, so what passes through is reported.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub debug: bool,
+}
+
+/// A message passing through a step of a flow someone is watching.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FlowTrace {
+    pub flow: Uuid,
+    pub at: DateTime<Utc>,
+    #[serde(flatten)]
+    pub step: Trace,
+}
+
+/// Longest value kept in a trace. Past that it is only said how long it was.
+const MAX_TRACED: usize = 2_000;
+
+impl FlowTrace {
+    pub fn new(flow: Uuid, at: DateTime<Utc>, mut step: Trace) -> FlowTrace {
+        let length = step.value.to_string().len();
+        if length > MAX_TRACED {
+            step.value = serde_json::json!({"too_long_to_show": length});
+        }
+        FlowTrace { flow, at, step }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -136,6 +243,22 @@ pub struct EdgeConfig {
     pub exports: Vec<Export>,
     #[serde(default)]
     pub release: Option<Release>,
+    /// Definitions a device can add itself to, with a key and secret every device of the kind holds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provisioning: Vec<Provisioning>,
+    /// Who this gateway is, for what it reports about devices the platform has not met.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<Uuid>,
+}
+
+/// A way for a device of one definition to add itself. The key says which, and the secret, kept here
+/// as a hash, is what lets it. It adds a device and nothing more: it reports, and takes no command
+/// until a person commissions it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Provisioning {
+    pub definition: String,
+    pub key: String,
+    pub secret: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -155,6 +278,9 @@ pub struct ConfigRequest {
     /// The release it is running.
     #[serde(default)]
     pub runtime: String,
+    /// What passed through the flows someone is watching, since the last exchange.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub traces: Vec<FlowTrace>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -252,6 +378,17 @@ impl Watch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_export_says_where_and_keeps_its_password_to_itself() {
+        assert!(check_export("https://historian/in").is_ok());
+        assert!(check_export("nats://bus:4222/x").is_ok());
+        assert!(check_export("amqp://user@broker:5672/plant?exchange=readings").is_ok());
+        assert!(check_export("amqp://user:hunter2@broker:5672/").unwrap_err().contains("secret"));
+        assert!(check_export("ftp://x").unwrap_err().contains("not a place"));
+        assert!(check_export("kafka://").unwrap_err().contains("host"));
+        assert!(check_export("historian").is_err());
+    }
 
     fn rule(when: Comparison, value: f64, hold: i64, clear: Option<f64>) -> Rule {
         Rule { id: Uuid::nil(), name: "r".into(), devices: vec![], metric: "m".into(), when, value, hold_secs: hold, clear, severity: "Warning".into() }
