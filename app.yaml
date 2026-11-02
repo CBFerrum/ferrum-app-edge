@@ -1,6 +1,6 @@
 id: edge
 name: IoT Edge
-version: 0.2.0
+version: 0.3.0
 publisher: cbferrum
 summary: Devices described instead of programmed, flows drawn and reviewed, gateways that keep working offline, alarms and robots
 description: README.md
@@ -20,6 +20,9 @@ contributes:
     - {id: edge, package: edge, path: "edge/e/{entity}/{id}", list: "edge/e/{entity}"}
   shell.public:
     - {id: shared, path: edge/shared, title: Dashboard}
+  # The workspace's portal: a customer's own devices at /portal/devices/, where /open of one takes them.
+  shell.portal:
+    - {id: devices, title: Your devices, description: "How your devices are doing, their alarms and your dashboards", entity: Device, open: "d/{id}"}
   shell.create:
     - {id: definition, label: Device definition, path: edge/definitions, entity: DeviceDefinition}
     - {id: flow, label: Flow, path: edge/flows, entity: EdgeFlow}

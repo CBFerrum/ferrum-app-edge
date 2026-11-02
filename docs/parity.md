@@ -112,11 +112,11 @@ the detail of what each thing was tried against.
 | Custom widgets in JavaScript | ThingsBoard | **By design** | No code a reviewer cannot read |
 | History: long ranges by rollup, short by sample | ThingsBoard, Ignition | **Verified** | |
 | Time-series at scale | ThingsBoard with Cassandra, TimescaleDB | **Partly** | PostgreSQL carries this to what one database can take. Past that, export to ClickHouse or InfluxDB |
-| Live updates over a socket | ThingsBoard | **Partly** | Pages poll, every few seconds |
-| Reports | ThingsBoard PE | **Partly** | Availability, alarms and readings, to read and export. Scheduled delivery is the workspace's |
+| Live updates over a socket | ThingsBoard | **Built** | Pages hear on the platform's socket that a site's readings landed and ask again at once, paced to one ask in three seconds, so a reading shows as soon as its gateway has sent it. The socket says that something changed and not what: a page still asks, with its reader's rights. Shared dashboards poll |
+| Reports | ThingsBoard PE | **Built** | Availability, alarms and readings, to read and export, and by schedule to anyone by email as CSV or PDF, with the mail in one transaction with the note that it ran. The PDF path needs the server's renderer and has not been run |
 | Assets and hierarchy | ThingsBoard, OpenRemote | **Built** | Assets inside assets, devices on them, selection by what is under an asset |
-| Arbitrary entity relations | ThingsBoard | **Partly** | Containment only |
-| Customers owning devices | ThingsBoard | **Partly** | Members-only sites and guest accounts share by site, not by device |
+| Arbitrary entity relations | ThingsBoard | **Built** | Between devices, by any name, and devices can be chosen by them. Assets contain. Flows do not follow them |
+| Customers owning devices | ThingsBoard | **Built** | A customer's people sign in to the workspace's portal and see their devices, alarms and given dashboards, and nothing else. They can acknowledge an alarm, and they cannot command |
 
 ## Fleet
 
@@ -128,7 +128,7 @@ the detail of what each thing was tried against.
 | Scheduler | ThingsBoard PE | **Built** | As automation, under an envelope |
 | Solution bundles | ThingsBoard PE | **Verified** | They arrive as drafts |
 | Tenants, roles, audit, SSO, API tokens | ThingsBoard, Hono | **Verified** | The platform's own |
-| Usage limits per tenant | ThingsBoard | **Partly** | Budgets at the gateway. No quota per workspace |
+| Usage limits per tenant | ThingsBoard | **Built** | The operator's, per workspace: measurements a day and devices. Past the first, gateways hold readings until there is room, and commands and leases go on. Other limits are budgets at the gateway |
 | Container workloads at the edge | Greengrass, Kura | **By design** | One binary, and external drivers |
 | Local dashboards at a gateway | Ignition Edge | **Partly** | The console shows work, links and problems. It draws no charts |
 | Federation between platforms | Ignition GAN | **Partly** | A gateway can export to another platform's ingest, and peers work through each other. Platforms do not share a view |
