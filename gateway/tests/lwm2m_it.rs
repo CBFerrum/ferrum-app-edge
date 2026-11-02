@@ -2,8 +2,11 @@
 //! Eclipse Leshan's demo client, when `FERRUM_TEST_LESHAN` names its jar, proves someone else's device
 //! can register and be read.
 
+use chrono::Utc;
 use ferrum_edge_contract::edge::{Credentials, DeviceLink};
-use ferrum_site::adapter::{Adapter, Reading};
+use ferrum_ops_contract::Command;
+use ferrum_ops_contract::sync::SiteDevice;
+use ferrum_site::adapter::{Adapter, Dispatched, Reading};
 use ferrum_site::adapters::coap::Coap;
 use ferrum_site::adapters::defined::Defined;
 use ferrum_site::adapters::hub::hash;
@@ -13,15 +16,40 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio::net::UdpSocket;
+use uuid::Uuid;
 
 fn free_port() -> u16 {
     std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
 
+fn command(operation: &str, payload: serde_json::Value) -> Command {
+    Command {
+        id: Uuid::now_v7(),
+        tenant_id: Uuid::nil(),
+        site_id: Uuid::nil(),
+        domain: "north".into(),
+        target_id: Uuid::nil(),
+        operation: operation.into(),
+        schema_version: 1,
+        issued_by: None,
+        approval_ref: None,
+        epoch: 1,
+        expected_state: serde_json::Value::Null,
+        issued_at: Utc::now(),
+        expires_at: Utc::now() + chrono::Duration::minutes(10),
+        payload,
+        payload_hash: String::new(),
+        workflow_id: None,
+        step_id: None,
+        correlation_id: None,
+        config_version: None,
+    }
+}
+
 async fn plant(code: &str) -> (Defined, u16) {
     let port = free_port();
     let body = format!(
-        "name: meters\nconnect: listen+lwm2m://127.0.0.1:{port}\nsubscribe: [/3/0/0]\nread:\n  - {{topic: +/3/0/0, device: \"{{topic.0}}\", attribute: manufacturer, json: $.value}}\n  - {{topic: +/3/0/9, device: \"{{topic.0}}\", metric: battery.pct, json: $.value}}\n"
+        "name: meters\nconnect: listen+lwm2m://127.0.0.1:{port}\nsubscribe: [/3/0/0]\nread:\n  - {{topic: +/3/0/0, device: \"{{topic.0}}\", attribute: manufacturer, json: $.value}}\n  - {{topic: +/3/0/9, device: \"{{topic.0}}\", metric: battery.pct, json: $.value}}\n  - {{topic: +/3/0/14, device: \"{{topic.0}}\", attribute: offset, json: $.value}}\ncommands:\n  clock.offset:\n    node: \"{{device}}/3/0/14\"\n    send: \"{{payload.offset}}\"\n    once: true\n  clock.read:\n    node: \"{{device}}/3/0/14\"\n    once: true\n"
     );
     let definitions = BTreeMap::from([("meters".to_string(), body)]);
     let link = DeviceLink { code: code.into(), definition: "meters".into(), ..Default::default() };
@@ -104,8 +132,28 @@ async fn a_device_written_by_someone_else() {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    let _ = client.kill().await;
     assert!(found, "Leshan's client registered and said who made it");
+    // A write goes as TLV, the one format every device has to take. Leshan's says what it heard.
+    let device =
+        SiteDevice { id: Uuid::nil(), code: "meter-1".into(), kind: "Sensor".into(), lifecycle: "Active".into(), operations: vec![], limits: BTreeMap::new() };
+    let write = command("clock.offset", json!({"offset": "+05:30"}));
+    assert!(matches!(d.dispatch(&write, &device).await, Ok(Dispatched::Accepted { .. })), "it was sent");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let read = command("clock.read", json!({}));
+    let mut offset = None;
+    for _ in 0..200 {
+        let _ = d.dispatch(&read, &device).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        offset = d.read().await.unwrap().into_iter().find_map(|r| match r {
+            Reading::Attribute { key, value, .. } if key == "offset" && value != json!("") => Some(value),
+            _ => None,
+        });
+        if offset.is_some() {
+            break;
+        }
+    }
+    let _ = client.kill().await;
+    assert_eq!(offset, Some(json!("+05:30")), "what was written reads back");
 }
 
 /// The same device, by key, through a DTLS stack that is not ours. The identity has to be the name

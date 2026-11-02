@@ -27,7 +27,7 @@ the detail of what each thing was tried against.
 | Device provisioning by a shared key | ThingsBoard | **Verified** | It adds a device that reports, and takes no command until commissioned |
 | Claiming by a device's secret | ThingsBoard | **Built** | |
 | Bulk import from CSV, with tokens | ThingsBoard PE, Hono | **Built** | |
-| LwM2M server | ThingsBoard, Hono | **Verified** | Against Eclipse Leshan's client, plain and over DTLS by pre-shared key, whose identity has to be the name it registers under, by plain text values. **No bootstrap, no TLV or SenML writes** |
+| LwM2M server | ThingsBoard, Hono | **Verified** | Against Eclipse Leshan's client, plain and over DTLS by pre-shared key, whose identity has to be the name it registers under. Reads by plain text and writes as TLV, read back from it. **No bootstrap, no certificates over DTLS** |
 | SNMP v1, v2c and v3, traps and informs | ThingsBoard, EdgeX | **Verified** | Against PySNMP: v3 with SHA-1 and AES, and SHA-256, and traps in all three versions, with a wrong password's dropped. Informs are v1 and v2c |
 | OCPP 1.6-J and 2.0.1 | ThingsBoard Gateway, OpenRemote | **Verified** | 1.6 against the Python `ocpp` library, including a charging profile held to OCPP's own schema; 2.0.1 against frames written here. Security profiles 0 to 3. Smart charging is a command like any other: nothing here works out a schedule |
 | Modbus TCP and RTU | Everyone | **Verified** | TCP against pymodbus, in CI: typed reads, and writes read back. RTU against a pseudo-terminal only |
