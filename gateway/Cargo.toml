@@ -85,3 +85,7 @@ workspace = true
 [[test]]
 name = "recovery_it"
 required-features = ["failpoints"]
+
+[[test]]
+name = "charger_it"
+required-features = ["failpoints"]
