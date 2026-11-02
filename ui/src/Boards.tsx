@@ -348,7 +348,7 @@ export function Grid({ board, data, live, editing, onMove, onResize, onEdit, onR
   };
   const ordered = useMemo(() => [...board.widgets].sort((a, b) => a.y - b.y || a.x - b.x), [board.widgets]);
   return (
-    <div ref={grid} className="edge-board" data-editing={editing || undefined} style={{ gridAutoRows: ROW, gap: GAP }}>
+    <div ref={grid} className="edge-tiles" data-editing={editing || undefined} style={{ gridAutoRows: ROW, gap: GAP }}>
       {ordered.map((w) => (
         <section key={w.id} className="card edge-widget" aria-label={w.title || kindOf(w.type)?.label} style={{ gridColumn: `${w.x + 1} / span ${w.w}`, gridRow: `${w.y + 1} / span ${w.h}` }}>
           {(w.title && w.type !== "button") || editing ? (

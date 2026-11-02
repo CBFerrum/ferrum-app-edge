@@ -17,7 +17,7 @@ function Progress({ id }: { id: string }) {
   if (devices.length === 0) return <p className="muted">It has not reached a device yet.</p>;
   return (
     <div className="edge-scroll">
-      <table className="edge-table">
+      <table className="edge-table edge-rows-left">
         <thead>
           <tr>
             <th>Device</th>
@@ -89,11 +89,11 @@ export function Updates() {
       <div className="edge-bar">
         <span className="muted">Firmware reaches sensors and meters whose definition allows it, never a robot or a controller.</span>
         <span className="edge-grow" />
-        <Link className="btn btn-default" to="/e/EdgeFirmware">
+        <Link className="btn btn-md" to="/e/EdgeFirmware">
           Firmware
         </Link>
         {writable ? (
-          <Link className="btn btn-primary" to="/e/EdgeRollout/new">
+          <Link className="btn btn-primary btn-md" to="/e/EdgeRollout/new">
             A new rollout
           </Link>
         ) : null}

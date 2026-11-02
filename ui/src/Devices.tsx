@@ -20,7 +20,8 @@ function Outcomes({ outcomes }: { outcomes: Outcome[] }) {
         <ul className="edge-refused">
           {refused.map((o) => (
             <li key={o.device}>
-              <strong>{o.device}</strong> {o.refused}
+              {o.refused?.includes(o.device) ? null : <strong>{o.device} </strong>}
+              {o.refused}
             </li>
           ))}
         </ul>
@@ -229,7 +230,7 @@ export function Devices() {
         <input className="input edge-search" type="search" aria-label="Find a device" placeholder="Find a device" value={text} onChange={(e) => set("q", e.target.value)} />
         <input className="input edge-search" type="search" aria-label="With the tag" placeholder="With the tag" value={tagged} onChange={(e) => set("tag", e.target.value)} />
         <Button onClick={() => setDialog("import")}>Import</Button>
-        <Link className="btn btn-default" to="/e/Device/new">
+        <Link className="btn btn-md" to="/e/Device/new">
           Add a device
         </Link>
       </div>
