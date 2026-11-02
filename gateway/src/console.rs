@@ -55,7 +55,7 @@ impl App {
     fn session(&self, headers: &HeaderMap) -> Option<Session> {
         let token = headers.get(header::AUTHORIZATION)?.to_str().ok()?.strip_prefix("Bearer ")?;
         let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
-        let now = Utc::now();
+        let now = self.rt.clock.now();
         sessions.retain(|_, s| s.until > now);
         sessions.get(token).cloned()
     }
@@ -128,7 +128,7 @@ async fn login(State(app): State<App>, axum::Json(l): axum::Json<Login>) -> Resp
         return err(StatusCode::UNAUTHORIZED, "that PIN is not on this site's list");
     };
     let token = hex::encode(Uuid::now_v7().as_bytes()) + &hex::encode(Uuid::new_v4().as_bytes());
-    let session = Session { name: who.name.clone(), may: who.may.clone(), until: Utc::now() + Duration::hours(SESSION_HOURS) };
+    let session = Session { name: who.name.clone(), may: who.may.clone(), until: app.rt.clock.now() + Duration::hours(SESSION_HOURS) };
     app.sessions.lock().unwrap_or_else(|e| e.into_inner()).insert(token.clone(), session.clone());
     axum::Json(json!({"token": token, "name": session.name, "may": session.may})).into_response()
 }
