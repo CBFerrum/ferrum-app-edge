@@ -32,15 +32,16 @@ the detail of what each thing was tried against.
 | OCPP 1.6-J and 2.0.1 | ThingsBoard Gateway, OpenRemote | **Verified** | 1.6 against the Python `ocpp` library; 2.0.1 against frames written here. Security profiles 0 to 2. **No certificates (profile 3), no smart charging** |
 | Modbus TCP and RTU | Everyone | **Built** | Against a stand-in and a pseudo-terminal |
 | OPC UA client: watch, read, write, call, encryption, users, browse | Ignition, Kura, Azure IoT Operations | **Verified** | Against async-opcua's server |
-| OPC UA events | Ignition | **Partly** | Subscribed with `events:`, and nothing has raised one yet. **No history read, no alarms and conditions acknowledgement** |
-| OPC UA server | Ignition, Kura | **No** | A gateway does not offer its data as a server. Sparkplug and MQTT do that job today |
+| OPC UA events and history | Ignition | **Verified** | Against asyncua: events with their ids, and a node's history from where this last got to. Acknowledging a condition is a `call` to its `i=9111`, which no server has answered yet |
+| OPC UA server | Ignition, Kura | **Verified** | As an export, read only, against asyncua's client; with encryption, a login and certificates a person trusts, against async-opcua's. **No history**, and a variable appears with its first reading |
 | Siemens S7 | PLC4X, Ignition, ThingsBoard Gateway | **Verified** | Against python-snap7's server. Its emulation of bit writes differs, so a bit write has only met the standard's description |
 | EtherNet/IP, Logix tags | PLC4X, Ignition | **Verified** | Against cpppo, direct and routed. **No I/O connections, by design** |
 | TwinCAT ADS | PLC4X, Ignition | **Verified** | Against pyads's test server, by symbol |
 | BACnet/IP | ThingsBoard Gateway, OpenRemote | **Verified** | Against BACpypes3, read and write. **No Who-Is, no COV** |
 | KNX over IP | ThingsBoard Gateway, OpenRemote | **Built** | Tunnelling, against a stand-in |
 | IEC 60870-5-104 | Ignition modules | **Verified** | Against lib60870: interrogation, spontaneous data, commands sent |
-| DNP3, DLMS/COSEM | Ignition modules, metering head ends | **No** | Neither is built. An external driver can carry them |
+| DLMS/COSEM | Metering head ends, Ignition modules | **Built** | Over the wrapper, by OBIS code, with blocks and low-level security, read only. The requests compare equal to Gurux's client. **No HDLC, no high-level security or ciphering** |
+| DNP3 | Ignition modules | **Verified** | As a master over TCP against opendnp3: integrity, events, unsolicited, select-before-operate. **No Secure Authentication, no TLS, no serial** |
 | M-Bus | OpenRemote, metering | **Verified** | Frames read as pyMeterBus reads them. No meter |
 | CANopen and raw CAN | ThingsBoard Gateway, Kura | **External** | `drivers/can_bridge.py`, on python-can's virtual bus |
 | Bluetooth Low Energy | ThingsBoard Gateway | **External** | `drivers/ble_bridge.py`. Has met no device |
@@ -53,7 +54,7 @@ the detail of what each thing was tried against.
 | SQL as a source | ThingsBoard Gateway (ODBC) | **Verified** | PostgreSQL and SQLite, read only. Others, by an external driver |
 | FTP and a watched folder | ThingsBoard Gateway | **Verified** | FTP against pyftpdlib |
 | NATS as a source | Magistrala | **Verified** | Against nats-server |
-| Kafka and AMQP as sources | ThingsBoard PE | **No** | They are destinations here, not sources |
+| Kafka and AMQP as sources | ThingsBoard PE | **Verified** | Against Apache Kafka and RabbitMQ, in CI. A Kafka reader keeps its place in a file and has no consumer group |
 | HTTP polling, WebSocket, TCP, UDP, serial, webhooks | Everyone | **Built** | Against real sockets |
 | Any other protocol | EdgeX, Kura | **Verified** | External drivers, as JSON lines in any language |
 | Discovery of devices | EdgeX | **Partly** | Strangers on a connection are noticed and a person claims them. No network scanning, on purpose |

@@ -30,11 +30,23 @@ FIRMWARE = ("-p", "ferrum-app-edge", "--test", "firmware_it")
 APP_UNIT = ("-p", "ferrum-app-edge", "--lib")
 DEVICES = ("-p", "ferrum-site", "--test", "devices_it")
 OCPP = ("-p", "ferrum-site", "--test", "ocpp_it")
+DNP3 = ("-p", "ferrum-site", "--test", "dnp3_it")
+EXPORTS = ("-p", "ferrum-site", "--test", "exports_it")
+METERS = ("-p", "ferrum-site", "--test", "dlms_it")
 # Generous enough to compile and run; passing it means the mutant hung the test.
 TIMEOUT = 600
 
 # name, file, text to replace, what breaks it, test
 MUTANTS = [
+    ("served-on-a-port-nobody-listed", "gateway/src/export.rs", "if !self.limits.listen.contains(&bind) {", "if false {", EXPORTS),
+    ("served-variable-can-be-written", "gateway/src/adapters/opcua_server.rs", ".value(0.0f64).organized_by(&folder)", ".value(0.0f64).writable().organized_by(&folder)", EXPORTS),
+    ("served-to-any-client", "gateway/src/adapters/opcua_server.rs", ".pki_dir(pki)", ".pki_dir(pki).trust_client_certs(true)", EXPORTS),
+    ("served-port-outlives-its-export", "gateway/src/export.rs", ".retain(|to, _| exports", ".retain(|to, _| !to.is_empty() || exports", EXPORTS),
+    ("dnp3-operates-unselected", "gateway/src/adapters/dnp3.rs", "        if !self.direct {\n", "        if false {\n", DNP3),
+    ("dnp3-silence-counts-as-not-sent", "gateway/src/adapters/dnp3.rs", ".await.map_err(Failure::Unknown)?;", ".await.map_err(Failure::NotSent)?;", DNP3),
+    ("dnp3-events-never-confirmed", "gateway/src/adapters/dnp3.rs", "    if control & CON != 0 {", "    if false {", DNP3),
+    ("dnp3-restart-left-standing", "gateway/src/adapters/dnp3.rs", "        if iin[0] & RESTARTED != 0 {", "        if false {", DNP3),
+    ("meter-can-be-written", "gateway/src/adapters/dlms.rs", 'Err(Trouble::Refused(format!("{tag}: a meter is only read here")))', "Ok(())", METERS),
     ("firmware-reaches-a-robot", "src/firmware.rs", ".bind(UPDATABLE.iter().map(|k| k.to_string()).collect::<Vec<_>>())", '.bind(vec!["Sensor".to_string(), "Robot".to_string(), "Controller".to_string()])', FIRMWARE),
     ("rollout-never-stops", "src/firmware.rs", "    if failed >= stop_after {", "    if false {", FIRMWARE),
     ("firmware-needs-no-leave", "src/firmware.rs", ".is_some_and(|c| c.definition.firmware)", ".is_some()", FIRMWARE),

@@ -28,7 +28,7 @@ failpoints = []
 ferrum-ops-contract = { workspace = true }
 ferrum-edge-contract = { workspace = true }
 aes = "0.8"
-async-opcua = { version = "0.19", optional = true, default-features = false, features = ["client"] }
+async-opcua = { version = "0.19", optional = true, default-features = false, features = ["client", "server"] }
 async-trait = { workspace = true }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
 chrono = { workspace = true }

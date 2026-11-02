@@ -8,7 +8,7 @@
 //! a handshake each time and saves a connection to watch.
 
 use crate::adapter::Failure;
-use crate::adapters::transport::{Out, Transport};
+use crate::adapters::transport::{Message, Out, Transport};
 use chrono::{DateTime, Utc};
 use ferrum_edge_contract::sparkplug;
 use hmac::{Hmac, Mac};
@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
+use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::pki_types::ServerName;
@@ -100,7 +101,12 @@ const FRAME_END: u8 = 0xce;
 const METHOD: u8 = 1;
 const HEADER: u8 = 2;
 const BODY: u8 = 3;
+const HEARTBEAT_FRAME: u8 = 8;
 const CHANNEL: u16 = 1;
+/// How many seconds a broker and a reader may each be silent for.
+const HEARTBEAT: u16 = 30;
+/// How many messages can be on their way at once.
+const PREFETCH: u16 = 100;
 
 fn short(out: &mut Vec<u8>, text: &str) {
     out.push(text.len().min(255) as u8);
@@ -121,9 +127,72 @@ fn method(class: u16, id: u16) -> Vec<u8> {
 /// AMQP 0-9-1, as RabbitMQ speaks it: frames, with a method or part of a message in each.
 struct Amqp {
     stream: BufReader<Box<dyn Stream>>,
+    pending: Vec<u8>,
 }
 
 impl Amqp {
+    /// Logged in with a channel open, and the largest frame the broker takes. `heartbeat` is how
+    /// many seconds either side may be silent for, where nought means for as long as it likes.
+    async fn open(url: &Url, user: &str, password: &str, heartbeat: u16) -> Result<(Amqp, u32), String> {
+        let plain = tcp(url, if url.scheme() == "amqps" { 5671 } else { 5672 }).await?;
+        let stream: Box<dyn Stream> = if url.scheme() == "amqps" { secure(plain, url.host_str().unwrap_or_default()).await? } else { Box::new(plain) };
+        let mut a = Amqp { stream: BufReader::new(stream), pending: Vec::new() };
+        a.stream.get_mut().write_all(b"AMQP\x00\x00\x09\x01").await.map_err(|e| e.to_string())?;
+        a.expect(10, 10).await?;
+        let user = if user.is_empty() { "guest" } else { user };
+        let mut started = method(10, 11);
+        long(&mut started, b"");
+        short(&mut started, "PLAIN");
+        long(&mut started, format!("\0{user}\0{password}").as_bytes());
+        short(&mut started, "en_US");
+        a.send(METHOD, 0, &started).await?;
+        let tune = a.expect(10, 30).await?;
+        let frame_max = tune.get(2..6).map_or(131_072, |b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
+        let frame_max = if frame_max == 0 { 131_072 } else { frame_max };
+        let mut tuned = method(10, 31);
+        tuned.extend(1u16.to_be_bytes());
+        tuned.extend(frame_max.to_be_bytes());
+        tuned.extend(heartbeat.to_be_bytes());
+        a.send(METHOD, 0, &tuned).await?;
+        let mut open = method(10, 40);
+        short(&mut open, &decoded(url.path().trim_start_matches('/').split('/').next().filter(|v| !v.is_empty()).unwrap_or("/")));
+        short(&mut open, "");
+        open.push(0);
+        a.send(METHOD, 0, &open).await?;
+        a.expect(10, 41).await?;
+        let mut channel = method(20, 10);
+        short(&mut channel, "");
+        a.send(METHOD, CHANNEL, &channel).await?;
+        a.expect(20, 11).await?;
+        Ok((a, frame_max))
+    }
+
+    /// The next frame of any kind, or nothing if none came in time. Safe to give up on: what has
+    /// arrived of a frame stays here for the next call.
+    async fn frame(&mut self, wait: Duration) -> Result<Option<(u8, Vec<u8>)>, String> {
+        loop {
+            if let Some(head) = self.pending.get(..7) {
+                let size = u32::from_be_bytes([head[3], head[4], head[5], head[6]]) as usize;
+                if size > 1 << 20 {
+                    return Err("that is not AMQP".into());
+                }
+                if self.pending.len() > 7 + size {
+                    let whole: Vec<u8> = self.pending.drain(..8 + size).collect();
+                    if whole[7 + size] != FRAME_END {
+                        return Err("that is not AMQP".into());
+                    }
+                    return Ok(Some((whole[0], whole[7..7 + size].to_vec())));
+                }
+            }
+            match timeout(wait, self.stream.read_buf(&mut self.pending)).await {
+                Err(_) => return Ok(None),
+                Ok(Ok(0)) => return Err("it hung up".into()),
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => return Err(e.to_string()),
+            }
+        }
+    }
+
     async fn send(&mut self, kind: u8, channel: u16, payload: &[u8]) -> Result<(), String> {
         let mut frame = vec![kind];
         frame.extend(channel.to_be_bytes());
@@ -152,10 +221,7 @@ impl Amqp {
             let class = u16::from_be_bytes([payload[0], payload[1]]);
             let id = u16::from_be_bytes([payload[2], payload[3]]);
             if matches!((class, id), (10, 50) | (20, 40)) {
-                // A close says why: a reply code and then a short string.
-                let length = payload.get(6).copied().unwrap_or(0) as usize;
-                let why = payload.get(7..7 + length).map(|t| String::from_utf8_lossy(t).into_owned());
-                return Err(why.unwrap_or_else(|| "it closed the connection".into()));
+                return Err(why_closed(&payload));
             }
             return Ok((class, id, payload[4..].to_vec()));
         }
@@ -170,36 +236,7 @@ impl Amqp {
 /// RabbitMQ and the like. `topic` is the routing key and `?exchange=` where it goes, and publisher
 /// confirms are the yes: a message is confirmed once the broker has taken responsibility for it.
 pub async fn amqp(url: &Url, key: &str, bodies: &[String], secret: Option<&str>) -> Result<(), String> {
-    let plain = tcp(url, if url.scheme() == "amqps" { 5671 } else { 5672 }).await?;
-    let stream: Box<dyn Stream> = if url.scheme() == "amqps" { secure(plain, url.host_str().unwrap_or_default()).await? } else { Box::new(plain) };
-    let mut a = Amqp { stream: BufReader::new(stream) };
-    a.stream.get_mut().write_all(b"AMQP\x00\x00\x09\x01").await.map_err(|e| e.to_string())?;
-    a.expect(10, 10).await?;
-    let user = if url.username().is_empty() { "guest" } else { url.username() };
-    let mut started = method(10, 11);
-    long(&mut started, b"");
-    short(&mut started, "PLAIN");
-    long(&mut started, format!("\0{user}\0{}", secret.unwrap_or("guest")).as_bytes());
-    short(&mut started, "en_US");
-    a.send(METHOD, 0, &started).await?;
-    let tune = a.expect(10, 30).await?;
-    let frame_max = tune.get(2..6).map_or(131_072, |b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
-    let frame_max = if frame_max == 0 { 131_072 } else { frame_max };
-    let mut tuned = method(10, 31);
-    tuned.extend(1u16.to_be_bytes());
-    tuned.extend(frame_max.to_be_bytes());
-    tuned.extend(0u16.to_be_bytes());
-    a.send(METHOD, 0, &tuned).await?;
-    let mut open = method(10, 40);
-    short(&mut open, &decoded(url.path().trim_start_matches('/').split('/').next().filter(|v| !v.is_empty()).unwrap_or("/")));
-    short(&mut open, "");
-    open.push(0);
-    a.send(METHOD, 0, &open).await?;
-    a.expect(10, 41).await?;
-    let mut channel = method(20, 10);
-    short(&mut channel, "");
-    a.send(METHOD, CHANNEL, &channel).await?;
-    a.expect(20, 11).await?;
+    let (mut a, frame_max) = Amqp::open(url, url.username(), secret.unwrap_or("guest"), 0).await?;
     let mut confirm = method(85, 10);
     confirm.push(0);
     a.send(METHOD, CHANNEL, &confirm).await?;
@@ -243,6 +280,91 @@ pub async fn amqp(url: &Url, key: &str, bodies: &[String], secret: Option<&str>)
     close.extend([0u8; 4]);
     let _ = a.send(METHOD, 0, &close).await;
     Ok(())
+}
+
+/// Queues as a way in. Each message is acknowledged once it has been handed on, so one that was not
+/// comes again after a reconnect, and one may arrive twice.
+pub async fn amqp_read(url: &Url, login: (&str, &str), queues: &[String], tx: mpsc::Sender<Message>, ready: mpsc::Sender<()>) -> Result<(), String> {
+    // Half the agreed silence, and so a broker that says nothing for two of these has gone.
+    let beat = Duration::from_secs(u64::from(HEARTBEAT) / 2);
+    let (mut a, _) = Amqp::open(url, login.0, login.1, HEARTBEAT).await?;
+    let mut qos = method(60, 10);
+    qos.extend(0u32.to_be_bytes());
+    qos.extend(PREFETCH.to_be_bytes());
+    qos.push(0);
+    a.send(METHOD, CHANNEL, &qos).await?;
+    a.expect(60, 11).await?;
+    for queue in queues {
+        let mut consume = method(60, 20);
+        consume.extend(0u16.to_be_bytes());
+        short(&mut consume, queue);
+        short(&mut consume, "");
+        consume.push(0);
+        consume.extend(0u32.to_be_bytes());
+        a.send(METHOD, CHANNEL, &consume).await?;
+        a.expect(60, 21).await?;
+    }
+    let _ = ready.send(()).await;
+    // A message comes in three frames: a method, a header saying how long, and then its body.
+    let (mut quiet, mut delivery, mut expected, mut body) = (0, None, 0, Vec::new());
+    loop {
+        let got = tokio::select! {
+            () = tx.closed() => return Ok(()),
+            got = a.frame(beat) => got?,
+        };
+        let Some((kind, payload)) = got else {
+            quiet += 1;
+            if quiet > 4 {
+                return Err("it went quiet".into());
+            }
+            a.send(HEARTBEAT_FRAME, 0, &[]).await?;
+            continue;
+        };
+        quiet = 0;
+        match kind {
+            METHOD if payload.len() >= 4 => {
+                let (class, id) = (u16::from_be_bytes([payload[0], payload[1]]), u16::from_be_bytes([payload[2], payload[3]]));
+                if matches!((class, id), (10, 50) | (20, 40)) {
+                    return Err(why_closed(&payload));
+                }
+                if (class, id) == (60, 60) {
+                    delivery = delivered(&payload[4..]);
+                    body.clear();
+                    expected = usize::MAX;
+                }
+            }
+            HEADER if payload.len() >= 12 => expected = u64::from_be_bytes(payload[4..12].try_into().unwrap_or_default()) as usize,
+            BODY => body.extend(payload),
+            _ => {}
+        }
+        if expected <= body.len()
+            && let Some((tag, key)) = delivery.take()
+        {
+            if tx.send(Message { topic: key, body: std::mem::take(&mut body), status: None, from: None }).await.is_err() {
+                return Ok(());
+            }
+            let mut ack = method(60, 80);
+            ack.extend(tag.to_be_bytes());
+            ack.push(0);
+            a.send(METHOD, CHANNEL, &ack).await?;
+        }
+    }
+}
+
+/// A delivery's tag and routing key, from after its consumer tag.
+fn delivered(args: &[u8]) -> Option<(u64, String)> {
+    let at = 1 + usize::from(*args.first()?);
+    let tag = u64::from_be_bytes(args.get(at..at + 8)?.try_into().ok()?);
+    let exchange = at + 9;
+    let key = exchange + 1 + usize::from(*args.get(exchange)?);
+    let size = usize::from(*args.get(key)?);
+    Some((tag, String::from_utf8_lossy(args.get(key + 1..key + 1 + size)?).into_owned()))
+}
+
+fn why_closed(payload: &[u8]) -> String {
+    // A close says why: a reply code and then a short string.
+    let length = payload.get(6).copied().unwrap_or(0) as usize;
+    payload.get(7..7 + length).map_or_else(|| "it closed the connection".to_string(), |t| String::from_utf8_lossy(t).into_owned())
 }
 
 fn tag(text: &str) -> String {
@@ -665,7 +787,7 @@ impl EdgeNode {
 #[cfg(feature = "kafka")]
 mod kafka {
     use super::*;
-    use rskafka::client::partition::{Compression, UnknownTopicHandling};
+    use rskafka::client::partition::{Compression, OffsetAt, UnknownTopicHandling};
     use rskafka::client::{Client, ClientBuilder, Credentials, SaslConfig};
     use rskafka::record::Record;
     use std::collections::HashMap;
@@ -702,6 +824,55 @@ mod kafka {
             Ok(())
         }
 
+        /// Topics as a way in, from where this last got to. That is kept in a file beside the
+        /// journal, every few seconds, so after a crash a few seconds may arrive twice.
+        // ponytail: no consumer group, so two gateways on a topic each hear all of it. Sharing a
+        // topic out needs a coordinator, which this client does not have.
+        pub async fn read(
+            &self,
+            url: &Url,
+            secret: Option<&str>,
+            reading: Reading<'_>,
+            tx: mpsc::Sender<Message>,
+            ready: mpsc::Sender<()>,
+        ) -> Result<(), String> {
+            let Reading { topics, from_start, kept } = reading;
+            let client = self.client(url, secret).await?;
+            let known = client.list_topics().await.map_err(|e| e.to_string())?;
+            let saved: HashMap<String, i64> = kept.and_then(|f| serde_json::from_slice(&std::fs::read(f).ok()?).ok()).unwrap_or_default();
+            let offsets = Arc::new(std::sync::Mutex::new(saved));
+            let mut tasks = tokio::task::JoinSet::new();
+            for topic in topics {
+                let partitions: Vec<i32> = known.iter().find(|t| t.name == *topic).map_or(vec![0], |t| t.partitions.iter().copied().collect());
+                for partition in partitions {
+                    tasks.spawn(watch(client.clone(), topic.clone(), partition, from_start, offsets.clone(), tx.clone()));
+                }
+            }
+            let _ = ready.send(()).await;
+            let keep = |offsets: &std::sync::Mutex<HashMap<String, i64>>| {
+                let Some(file) = kept else { return };
+                let Ok(body) = serde_json::to_vec(&*offsets.lock().unwrap_or_else(|e| e.into_inner())) else { return };
+                let fresh = file.with_extension("new");
+                if let Err(e) = std::fs::write(&fresh, body).and_then(|()| std::fs::rename(&fresh, file)) {
+                    tracing::warn!("cannot keep where this got to in {}: {e}", file.display());
+                }
+            };
+            let mut every = tokio::time::interval(Duration::from_secs(5));
+            let ended = loop {
+                tokio::select! {
+                    () = tx.closed() => break Ok(()),
+                    _ = every.tick() => keep(&offsets),
+                    ended = tasks.join_next() => match ended {
+                        Some(Ok(Err(why))) => break Err(why),
+                        Some(_) => {}
+                        None => break Ok(()),
+                    },
+                }
+            };
+            keep(&offsets);
+            ended
+        }
+
         async fn client(&self, url: &Url, secret: Option<&str>) -> Result<Arc<Client>, String> {
             let key = format!("{}:{}", url.host_str().unwrap_or_default(), url.port().unwrap_or(9092));
             let mut clients = self.clients.lock().await;
@@ -724,6 +895,44 @@ mod kafka {
         }
     }
 
+    /// What to read, and where to keep how far this has got.
+    pub struct Reading<'a> {
+        pub topics: &'a [String],
+        /// Where to begin with nothing kept: the oldest record, or whatever comes next.
+        pub from_start: bool,
+        pub kept: Option<&'a std::path::Path>,
+    }
+
+    async fn watch(
+        client: Arc<Client>,
+        topic: String,
+        partition: i32,
+        from_start: bool,
+        offsets: Arc<std::sync::Mutex<HashMap<String, i64>>>,
+        tx: mpsc::Sender<Message>,
+    ) -> Result<(), String> {
+        let reader = client.partition_client(topic.clone(), partition, UnknownTopicHandling::Retry).await.map_err(|e| e.to_string())?;
+        let key = format!("{topic}/{partition}");
+        let oldest = reader.get_offset(OffsetAt::Earliest).await.map_err(|e| e.to_string())?;
+        let saved = offsets.lock().unwrap_or_else(|e| e.into_inner()).get(&key).copied();
+        let mut at = match saved {
+            // What was kept may have aged out while this was away.
+            Some(at) => at.max(oldest),
+            None if from_start => oldest,
+            None => reader.get_offset(OffsetAt::Latest).await.map_err(|e| e.to_string())?,
+        };
+        loop {
+            let (records, _) = reader.fetch_records(at, 1..1_000_000, 1_000).await.map_err(|e| e.to_string())?;
+            for r in records {
+                at = r.offset + 1;
+                if tx.send(Message { topic: topic.clone(), body: r.record.value.unwrap_or_default(), status: None, from: None }).await.is_err() {
+                    return Ok(());
+                }
+                offsets.lock().unwrap_or_else(|e| e.into_inner()).insert(key.clone(), at);
+            }
+        }
+    }
+
     #[test]
     fn a_device_keeps_to_one_partition() {
         assert_eq!(partition_of("PRESS-1", 8), partition_of("PRESS-1", 8));
@@ -733,7 +942,7 @@ mod kafka {
 }
 
 #[cfg(feature = "kafka")]
-pub use kafka::Kafka;
+pub use kafka::{Kafka, Reading};
 
 #[cfg(test)]
 mod tests {

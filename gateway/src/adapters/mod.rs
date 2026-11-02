@@ -5,6 +5,8 @@ pub mod ads;
 pub mod bacnet;
 pub mod coap;
 pub mod defined;
+pub mod dlms;
+pub mod dnp3;
 pub mod enip;
 pub mod files;
 pub mod http_server;
@@ -18,6 +20,7 @@ pub mod s7;
 pub mod sim;
 pub mod snmp;
 pub mod snmp3;
+pub mod sources;
 pub mod sql;
 pub mod tags;
 pub mod transport;
@@ -33,5 +36,7 @@ pub mod nats;
 pub mod ocpp;
 #[cfg(feature = "opcua")]
 pub mod opcua;
+#[cfg(feature = "opcua")]
+pub mod opcua_server;
 #[cfg(feature = "mqtt")]
 pub mod vda5050;

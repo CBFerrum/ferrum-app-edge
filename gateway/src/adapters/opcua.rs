@@ -3,6 +3,11 @@
 //!
 //! `opcua://host:4840/path?security=Basic256Sha256&mode=SignAndEncrypt&user=u&password=p&interval=500`
 //!
+//! `browse:i=85` shows what is under a node. `events:i=2253` in `subscribe` watches a node's events,
+//! which carry `EventId` and `ConditionId`, so a condition can be acknowledged with a `call` to its
+//! `i=9111`, with `{type: bytes, value: ...}` and `{type: text, value: ...}`. `history:ns=2;s=x`
+//! reads what the server's historian holds since this last asked, an hour back the first time.
+//!
 //! A value the server calls bad is not passed on: it is not a reading. With security on, this site's
 //! own certificate is created under `tls_dir/opcua`, and a server is trusted only once a person has
 //! moved its certificate from `rejected` to `trusted` there, as OPC UA intends.
@@ -10,14 +15,17 @@
 use crate::adapter::Failure;
 use crate::adapters::transport::{Limits, Message, Out, Transport};
 use async_trait::async_trait;
-use opcua::client::{Client, ClientBuilder, IdentityToken, Session, SubscriptionCallbacks};
+use chrono::Utc;
+use opcua::client::{Client, ClientBuilder, HistoryReadAction, IdentityToken, Session, SubscriptionCallbacks};
 use opcua::crypto::SecurityPolicy;
 use opcua::types::{
-    AttributeId, BrowseDescription, BrowseDirection, BrowseResultMask, CallMethodRequest, DataValue, EventFilter, ExtensionObject, MessageSecurityMode,
-    MonitoredItemCreateRequest, MonitoringMode, MonitoringParameters, NodeId, ObjectTypeId, QualifiedName, ReadValueId, ReferenceTypeId,
-    SimpleAttributeOperand, StatusCode, TimestampsToReturn, UAString, UserTokenPolicy, Variant, VariantScalarTypeId, WriteValue,
+    AttributeId, BrowseDescription, BrowseDirection, BrowseResultMask, ByteString, CallMethodRequest, DataValue, EventFilter, ExtensionObject, HistoryData,
+    HistoryReadValueId, LocalizedText, MessageSecurityMode, MonitoredItemCreateRequest, MonitoringMode, MonitoringParameters, NodeId, ObjectTypeId,
+    QualifiedName, ReadRawModifiedDetails, ReadValueId, ReferenceTypeId, SimpleAttributeOperand, StatusCode, TimestampsToReturn, UAString, UserTokenPolicy,
+    Variant, VariantScalarTypeId, WriteValue,
 };
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,8 +37,14 @@ const ANSWER: Duration = Duration::from_secs(10);
 const BROWSE: &str = "browse:";
 /// `events:i=2253` in `subscribe` watches a node's events, which arrive under the same name.
 const EVENTS: &str = "events:";
-/// What is asked of each event: every event has these.
-const EVENT_FIELDS: [&str; 5] = ["EventType", "SourceName", "Time", "Message", "Severity"];
+/// `history:ns=2;s=x` reads a node's history.
+const HISTORY: &str = "history:";
+/// What is asked of each event: every event has these, and `ConditionId` is only on a condition.
+const EVENT_FIELDS: [&str; 6] = ["EventType", "SourceName", "Time", "Message", "Severity", "EventId"];
+const CONDITION_FIELD: &str = "ConditionId";
+/// How much history one ask brings, and how many pages of it.
+const HISTORY_PAGE: u32 = 1000;
+const HISTORY_PAGES: usize = 20;
 
 /// What to watch: a node's value, or its events.
 fn item(node: &str) -> Option<MonitoredItemCreateRequest> {
@@ -41,7 +55,16 @@ fn item(node: &str) -> Option<MonitoredItemCreateRequest> {
         attribute_id: AttributeId::Value as u32,
         index_range: Default::default(),
     };
-    let filter = EventFilter { select_clauses: Some(EVENT_FIELDS.iter().map(|name| select(name)).collect()), where_clause: Default::default() };
+    // A condition's own node is how it is acknowledged, and it has no path to ask by. An empty path
+    // and not a missing one: asyncua's server cannot take a missing one, and it is as good.
+    let condition = SimpleAttributeOperand {
+        type_definition_id: ObjectTypeId::ConditionType.into(),
+        browse_path: Some(vec![]),
+        attribute_id: AttributeId::NodeId as u32,
+        index_range: Default::default(),
+    };
+    let clauses = EVENT_FIELDS.iter().map(|name| select(name)).chain([condition]).collect();
+    let filter = EventFilter { select_clauses: Some(clauses), where_clause: Default::default() };
     Some(MonitoredItemCreateRequest {
         item_to_monitor: ReadValueId { node_id: NodeId::from_str(events).ok()?, attribute_id: AttributeId::EventNotifier as u32, ..Default::default() },
         monitoring_mode: MonitoringMode::Reporting,
@@ -64,6 +87,8 @@ pub struct Opcua {
     nodes: Vec<String>,
     store: Option<std::path::PathBuf>,
     session: Mutex<Option<Arc<Session>>>,
+    /// How far each node's history has been read, for as long as this runs.
+    since: Mutex<HashMap<String, chrono::DateTime<Utc>>>,
 }
 
 fn query(rest: &str, key: &str) -> Option<String> {
@@ -88,6 +113,7 @@ fn json_of(v: &Variant) -> Value {
         Variant::Double(n) => json!(n),
         Variant::String(s) => json!(s.as_ref()),
         Variant::Array(a) => Value::Array(a.values.iter().map(json_of).collect()),
+        Variant::ByteString(b) => json!(b.as_base64()),
         other => json!(other.to_string()),
     }
 }
@@ -119,6 +145,8 @@ fn variant(v: &Value) -> Result<Variant, String> {
             "float" => VariantScalarTypeId::Float,
             "double" => VariantScalarTypeId::Double,
             "string" => VariantScalarTypeId::String,
+            "bytes" => return Ok(Variant::ByteString(ByteString::from_base64(value.as_str().unwrap_or_default()).ok_or("that is not base64")?)),
+            "text" => return Ok(Variant::LocalizedText(Box::new(LocalizedText::new("", value.as_str().unwrap_or_default())))),
             other => return Err(format!("{other} is not a type here")),
         };
         return like(value, target);
@@ -182,7 +210,7 @@ impl Opcua {
         let user = query(rest, "user").zip(query(rest, "password"));
         let interval = Duration::from_millis(query(rest, "interval").and_then(|i| i.parse().ok()).unwrap_or(1000).clamp(50, 60_000));
         let store = limits.tls_dir.as_ref().map(|d| d.join("opcua"));
-        Ok(Opcua { url, security, mode, user, interval, nodes: nodes.to_vec(), store, session: Mutex::new(None) })
+        Ok(Opcua { url, security, mode, user, interval, nodes: nodes.to_vec(), store, session: Mutex::new(None), since: Mutex::default() })
     }
 
     fn client(&self) -> Result<Client, String> {
@@ -203,6 +231,40 @@ impl Opcua {
     async fn session(&self) -> Result<Arc<Session>, Failure> {
         self.session.lock().await.clone().ok_or_else(|| Failure::NotSent("not connected".into()))
     }
+}
+
+/// What a historian holds for a node, oldest first.
+async fn history(session: &Session, id: NodeId, from: chrono::DateTime<Utc>, until: chrono::DateTime<Utc>) -> Result<Vec<Value>, Failure> {
+    let details = ReadRawModifiedDetails {
+        is_read_modified: false,
+        start_time: from.into(),
+        end_time: until.into(),
+        num_values_per_node: HISTORY_PAGE,
+        return_bounds: false,
+    };
+    let (mut samples, mut continuation) = (Vec::new(), ByteString::null());
+    for _ in 0..HISTORY_PAGES {
+        let nodes = [HistoryReadValueId { node_id: id.clone(), continuation_point: continuation, ..Default::default() }];
+        let asked = session.history_read(HistoryReadAction::ReadRawModifiedDetails(details.clone()), TimestampsToReturn::Both, false, &nodes);
+        let got = tokio::time::timeout(ANSWER, asked)
+            .await
+            .map_err(|_| Failure::NotSent("it did not answer".into()))?
+            .map_err(|e| Failure::NotSent(e.to_string()))?;
+        let page = got.into_iter().next().ok_or_else(|| Failure::NotSent("it answered nothing".into()))?;
+        if page.status_code.is_bad() {
+            return Err(Failure::NotSent(format!("{id} has no history here: {}", page.status_code)));
+        }
+        let data = page.history_data.inner_as::<HistoryData>().and_then(|h| h.data_values.clone()).unwrap_or_default();
+        samples.extend(data.iter().filter(|d| !d.status.unwrap_or(StatusCode::Good).is_bad()).map(|d| {
+            let time = d.source_timestamp.as_ref().or(d.server_timestamp.as_ref()).map(|t| t.as_chrono().to_rfc3339());
+            json!({"value": d.value.as_ref().map_or(Value::Null, json_of), "time": time})
+        }));
+        continuation = page.continuation_point;
+        if continuation.is_null() {
+            break;
+        }
+    }
+    Ok(samples)
 }
 
 /// A request that had time to arrive has unknown effects if no answer came.
@@ -241,7 +303,8 @@ impl Transport for Opcua {
             move |fields, item| {
                 let topic = format!("{EVENTS}{}", item.item_to_monitor().node_id);
                 let said: Vec<Value> = fields.iter().flatten().map(json_of).collect();
-                let body = EVENT_FIELDS.iter().zip(said).map(|(name, value)| ((*name).to_string(), value)).collect::<serde_json::Map<_, _>>();
+                let names = EVENT_FIELDS.iter().copied().chain([CONDITION_FIELD]);
+                let body = names.zip(said).map(|(name, value)| (name.to_string(), value)).collect::<serde_json::Map<_, _>>();
                 let _ = events.try_send(Message { topic, body: Value::Object(body).to_string().into_bytes(), status: None, from: None });
             },
         );
@@ -294,6 +357,17 @@ impl Transport for Opcua {
                     .map(|c| json!({"node": c.node_id.node_id.to_string(), "name": c.browse_name.name.as_ref(), "label": c.display_name.text.as_ref(), "class": format!("{:?}", c.node_class)}))
                     .collect();
                 let body = json!({"value": children}).to_string().into_bytes();
+                Ok(Some(Message { topic: node, body, status: None, from: None }))
+            }
+            Out::Node { node, value: None } if node.starts_with(HISTORY) => {
+                let id = node_of(&node[HISTORY.len()..])?;
+                let until = Utc::now();
+                let from = self.since.lock().await.get(&node).copied().unwrap_or(until - chrono::Duration::hours(1));
+                let samples = history(&session, id, from, until).await?;
+                let newest = samples.iter().filter_map(|s| s["time"].as_str()?.parse::<chrono::DateTime<Utc>>().ok()).max();
+                // Just past the newest, since a range includes both its ends.
+                self.since.lock().await.insert(node.clone(), newest.map_or(from, |t| t + chrono::Duration::milliseconds(1)));
+                let body = json!({"value": samples}).to_string().into_bytes();
                 Ok(Some(Message { topic: node, body, status: None, from: None }))
             }
             Out::Node { node, value: None } => {
