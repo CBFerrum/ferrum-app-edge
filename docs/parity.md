@@ -28,7 +28,7 @@ the detail of what each thing was tried against.
 | Claiming by a device's secret | ThingsBoard | **Built** | |
 | Bulk import from CSV, with tokens | ThingsBoard PE, Hono | **Built** | |
 | LwM2M server | ThingsBoard, Hono | **Verified** | Against Eclipse Leshan's client, plain and over DTLS by pre-shared key, whose identity has to be the name it registers under, by plain text values. **No bootstrap, no TLV or SenML writes** |
-| SNMP v1, v2c and v3, traps and informs | ThingsBoard, EdgeX | **Verified** | Against PySNMP: v3 with SHA-1 and AES, and SHA-256. Traps are v1 and v2c |
+| SNMP v1, v2c and v3, traps and informs | ThingsBoard, EdgeX | **Verified** | Against PySNMP: v3 with SHA-1 and AES, and SHA-256, and traps in all three versions, with a wrong password's dropped. Informs are v1 and v2c |
 | OCPP 1.6-J and 2.0.1 | ThingsBoard Gateway, OpenRemote | **Verified** | 1.6 against the Python `ocpp` library, including a charging profile held to OCPP's own schema; 2.0.1 against frames written here. Security profiles 0 to 3. Smart charging is a command like any other: nothing here works out a schedule |
 | Modbus TCP and RTU | Everyone | **Verified** | TCP against pymodbus, in CI: typed reads, and writes read back. RTU against a pseudo-terminal only |
 | OPC UA client: watch, read, write, call, encryption, users, browse | Ignition, Kura, Azure IoT Operations | **Verified** | Against async-opcua's server |
@@ -37,7 +37,7 @@ the detail of what each thing was tried against.
 | Siemens S7 | PLC4X, Ignition, ThingsBoard Gateway | **Verified** | Against python-snap7's server. Its emulation of bit writes differs, so a bit write has only met the standard's description |
 | EtherNet/IP, Logix tags | PLC4X, Ignition | **Verified** | Against cpppo, direct and routed. **No I/O connections, by design** |
 | TwinCAT ADS | PLC4X, Ignition | **Verified** | Against pyads's test server, by symbol |
-| BACnet/IP | ThingsBoard Gateway, OpenRemote | **Verified** | Against BACpypes3, read and write. **No Who-Is, no COV** |
+| BACnet/IP | ThingsBoard Gateway, OpenRemote | **Verified** | Against BACpypes3, read and write, and `discover` asks who is there with a Who-Is. **No COV**: it polls |
 | KNX over IP | ThingsBoard Gateway, OpenRemote | **Built** | Tunnelling, against a stand-in |
 | IEC 60870-5-104 | Ignition modules | **Verified** | Against lib60870: interrogation, spontaneous data, commands sent |
 | DLMS/COSEM | Metering head ends, Ignition modules | **Built** | Over the wrapper, by OBIS code, with blocks and low-level security, read only. The requests compare equal to Gurux's client. **No HDLC, no high-level security or ciphering** |
