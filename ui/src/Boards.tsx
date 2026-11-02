@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useId, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { bootstrap, refusal } from "@ferrum/client";
 import { Alert, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
 import { can, useEntityMeta } from "@ferrum/records";
@@ -390,7 +390,8 @@ export function BoardPage() {
   const [setting, setSetting] = useState<Widget | null>(null);
   const [choices, setChoices] = useState(false);
   const [sharing, setSharing] = useState(false);
-  const [vars, setVars] = useState<Record<string, string>>({});
+  const [params] = useSearchParams();
+  const [vars, setVars] = useState<Record<string, string>>(() => Object.fromEntries(params));
   const saved = useMemo(() => parse(q.data?.body), [q.data?.body]);
   const board = draft ?? saved;
   const [secs, setSecs] = useState<number | null>(null);

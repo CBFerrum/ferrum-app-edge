@@ -264,7 +264,7 @@ function TableView({ w, result, live }: { w: Widget; result?: Result; live: bool
       <tbody>
         {rows.map((d) => (
           <tr key={d.id}>
-            <th scope="row">{live ? <Link to={`/d/${d.id}`}>{d.name}</Link> : d.name}</th>
+            <th scope="row">{live ? <Link to={w.board ? `/dashboards/${w.board}?device=${d.id}` : `/d/${d.id}`}>{d.name}</Link> : d.name}</th>
             {columns.map((c) => (
               <td key={c}>{d.latest[c] ? number(d.latest[c].value, w.decimals) : "–"}</td>
             ))}
@@ -425,6 +425,8 @@ export function WidgetBody({ w, result, live }: { w: Widget; result?: Result; li
       return <BarsView w={w} result={result} />;
     case "table":
       return <TableView w={w} result={result} live={live} />;
+    case "link":
+      return live && w.board ? <Link to={`/dashboards/${w.board}${w.device ? `?device=${w.device}` : ""}`}>{w.text || "Open"}</Link> : <Nothing why="This opens from inside" />;
     case "alarms":
       return <AlarmsView result={result} />;
     case "events":

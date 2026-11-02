@@ -519,7 +519,10 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
         ("POST", ["flows", "try"]) => {
             may(ctx, FLOWS)?;
             let b = body(req)?;
-            return Ok(ok(try_flow(b["body"].as_str().unwrap_or_default(), &b)));
+            let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+            let used = crate::usable_flows(&mut tx, ctx.tenant, Uuid::nil()).await?;
+            tx.commit().await?;
+            return Ok(ok(try_flow(b["body"].as_str().unwrap_or_default(), &used, &b)));
         }
         ("GET", ["flows", id, "versions"]) => {
             may(ctx, READ)?;
@@ -698,8 +701,8 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
 }
 
 /// Checks a flow and, given a script, shows what it would do, by the code a gateway runs.
-fn try_flow(text: &str, b: &Value) -> Value {
-    let compiled = match flow::parse(text) {
+fn try_flow(text: &str, used: &[(String, String)], b: &Value) -> Value {
+    let compiled = match crate::whole_flow(text, used).and_then(|whole| flow::parse(&whole)) {
         Ok(f) => f,
         Err(why) => return json!({"ok": false, "error": why}),
     };
@@ -719,7 +722,8 @@ async fn simulate_flow(k: &Kernel, ctx: &Ctx, id: Uuid, b: &Value) -> Result<Val
     let text: Option<Option<String>> =
         sqlx::query_scalar("select body from e_edge_flow where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(id).fetch_optional(&mut *tx).await?;
     let text = text.ok_or_else(|| Error::NotFound("flow".into()))?.unwrap_or_default();
-    let result = try_flow(&text, b);
+    let used = crate::usable_flows(&mut tx, ctx.tenant, id).await?;
+    let result = try_flow(&text, &used, b);
     let moments = result["moments"].as_array().map_or(0, Vec::len);
     if result["ok"] == json!(true) {
         if moments == 0 {

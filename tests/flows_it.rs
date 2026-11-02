@@ -225,6 +225,57 @@ async fn scenario() {
     assert_eq!(kept[0]["by"], "rev@flowing.test");
     assert!(kept[1]["body"].as_str().unwrap().contains("Fleet over its limit"));
 
+    // ───── a flow used inside another ─────
+    let shared = json!({
+        "nodes": [
+            {"id": "i", "kind": "input", "name": "in"},
+            {"id": "high", "kind": "compare", "op": ">", "value": 80},
+            {"id": "hot", "kind": "output", "name": "hot"},
+            {"id": "cool", "kind": "output", "name": "cool"},
+        ],
+        "edges": [{"from": "i", "to": "high"}, {"from": "high", "port": "yes", "to": "hot"}, {"from": "high", "port": "no", "to": "cool"}],
+    });
+    let once = |metric: &str| json!({"script": [{"at": 0, "device": "METER-A", "metric": metric, "value": 90}]});
+    let used = id_of(&t.k.insert(&engineer, "EdgeFlow", obj(json!({"flow_name": "Too hot", "body": shared.to_string()}))).await.unwrap());
+    t.api(&engineer, "POST", &format!("/flows/{used}/simulate"), once("in")).await.unwrap();
+    t.k.run_action(&engineer, "EdgeFlow", used, "submit_for_review", json!({})).await.unwrap();
+    let parent = json!({
+        "nodes": [
+            {"id": "t", "kind": "metric", "metric": "power.kw"},
+            {"id": "u", "kind": "use", "flow": "Too hot"},
+            {"id": "a", "kind": "alarm", "name": "Over"},
+        ],
+        "edges": [{"from": "t", "to": "u"}, {"from": "u", "port": "hot", "to": "a"}, {"from": "u", "port": "cool", "to": "a", "input": "clear"}],
+    });
+    let user = id_of(&t.k.insert(&engineer, "EdgeFlow", obj(json!({"flow_name": "Uses it", "body": parent.to_string()}))).await.unwrap());
+    let early = t.api(&engineer, "POST", &format!("/flows/{user}/simulate"), once("power.kw")).await.unwrap();
+    assert!(early["error"].as_str().unwrap().contains("no approved flow"), "only what has been reviewed can be used: {early}");
+    t.k.run_action(&reviewer, "EdgeFlow", used, "approve", json!({})).await.unwrap();
+    let run = t.api(&engineer, "POST", &format!("/flows/{user}/simulate"), once("power.kw")).await.unwrap();
+    assert!(run["moments"].to_string().contains("Over"), "the reviewer sees the whole of it: {run}");
+    t.k.run_action(&engineer, "EdgeFlow", user, "submit_for_review", json!({})).await.unwrap();
+    t.k.run_action(&reviewer, "EdgeFlow", user, "approve", json!({})).await.unwrap();
+
+    // If what it uses changes after it was seen, what was seen is not what would run.
+    t.k.run_action(&engineer, "EdgeFlow", used, "revise", json!({})).await.unwrap();
+    let mut changed = shared.clone();
+    changed["nodes"][1]["value"] = json!(90);
+    t.k.update(&engineer, "EdgeFlow", used, obj(json!({"body": changed.to_string()})), None).await.unwrap();
+    t.api(&engineer, "POST", &format!("/flows/{used}/simulate"), once("in")).await.unwrap();
+    t.k.run_action(&engineer, "EdgeFlow", used, "submit_for_review", json!({})).await.unwrap();
+    t.k.run_action(&reviewer, "EdgeFlow", used, "approve", json!({})).await.unwrap();
+    let stale = t.k.run_action(&reviewer, "EdgeFlow", user, "activate", json!({})).await;
+    assert!(format!("{stale:?}").contains("has changed"), "{stale:?}");
+
+    t.k.run_action(&engineer, "EdgeFlow", user, "revise", json!({})).await.unwrap();
+    t.api(&engineer, "POST", &format!("/flows/{user}/simulate"), once("power.kw")).await.unwrap();
+    t.k.run_action(&engineer, "EdgeFlow", user, "submit_for_review", json!({})).await.unwrap();
+    t.k.run_action(&reviewer, "EdgeFlow", user, "approve", json!({})).await.unwrap();
+    t.k.run_action(&reviewer, "EdgeFlow", user, "activate", json!({})).await.unwrap();
+    let c = config::for_gateway(&mut t.tx().await, t.tenant, gw, Some(north)).await.unwrap();
+    let sent = c.flows.iter().find(|f| f.id == user).unwrap();
+    assert!(sent.body.contains("u.high") && !sent.body.contains("\"use\""), "a gateway gets the whole of it, with nothing to look up: {}", sent.body);
+
     // A long value is not carried about, and it is said that it was long.
     let long = FlowTrace::new(gateway_flow, Utc::now(), Trace { node: "in".into(), device: None, value: json!("x".repeat(5_000)), ports: vec![] });
     assert_eq!(long.step.value, json!({"too_long_to_show": 5002}));
