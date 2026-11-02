@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use ferrum_edge_contract::device_api;
 use ferrum_edge_contract::driver::{self, Api, Compiled, Decoded, Ending, Format, Memory, Step, render, render_json};
-use ferrum_edge_contract::edge::DeviceLink;
+use ferrum_edge_contract::edge::{DeviceLink, Provisioning};
 use ferrum_ops_contract::telemetry::Class;
 use ferrum_ops_contract::{Command, sync::SiteDevice};
 use serde::Serialize;
@@ -342,6 +342,16 @@ impl Link {
     /// Takes in a message: what it says about the equipment, and what it says about commands.
     fn heard(&self, m: &Message, owner: Option<&str>) {
         self.counters.messages.fetch_add(1, Ordering::Relaxed);
+        if let Some(code) = device_api::joiner(&m.topic) {
+            let said: Value = serde_json::from_slice(&m.body).unwrap_or(Value::Null);
+            let (definition, token_hash) = (said["definition"].as_str().unwrap_or_default(), said["token_hash"].as_str().unwrap_or_default());
+            locked(&self.shared).readings.push_back(Reading::Joined {
+                device: code.to_string(),
+                definition: definition.to_string(),
+                token_hash: token_hash.to_string(),
+            });
+            return;
+        }
         let body = match self.compiled.definition.checksum {
             Some(check) => match check.open(&m.body) {
                 Some(body) => body,
@@ -802,6 +812,14 @@ impl Defined {
         }
         *self.by_device.write().unwrap_or_else(|e| e.into_inner()) = by_device;
         problems
+    }
+
+    /// Who can add themselves, on the links that take their definition.
+    pub fn allow_joining(&self, provisioning: &[Provisioning]) {
+        for link in self.links.read().unwrap_or_else(|e| e.into_inner()).values() {
+            let name = &link.compiled.definition.name;
+            link.hub.allow_joining(provisioning.iter().filter(|p| p.definition == *name).cloned().collect());
+        }
     }
 
     pub fn reaches(&self, code: &str) -> bool {

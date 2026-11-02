@@ -112,3 +112,52 @@ async fn scenario() {
     t.api(&engineer, "DELETE", &path, json!({})).await.ok();
     assert_eq!(of_press(&gateway1.fetch(&t, "").await.unwrap()).await, Credentials::default());
 }
+
+#[test]
+fn a_device_that_added_itself_becomes_a_record() {
+    run(joined());
+}
+
+async fn joined() {
+    let t = workspace("joined").await;
+    let engineer = t.person("eng@joined.test", &["Edge Engineer", "Ops Dispatcher", "Device Administrator"]).await;
+    let viewer = t.person("view@joined.test", &["Edge Viewer"]).await;
+    let site = id_of(&t.insert("Site", json!({"site_name": "North", "site_code": "north"})).await);
+    let (gw, gateway1) = gateway(&t, "GW-1", site, 1).await;
+    let definition =
+        id_of(&t.k.insert(&engineer, "DeviceDefinition", obj(json!({"definition_name": "devices", "body": DEVICES}))).await.expect("a definition"));
+    t.k.run_action(&engineer, "DeviceDefinition", definition, "publish", json!({})).await.expect("published");
+    t.insert("Device", json!({"device_name": "First", "device_code": "FIRST", "kind": "Sensor", "site": site, "gateway": gw, "edge_definition": definition}))
+        .await;
+
+    // ───── a person allows it, and a gateway hears how, and only the hash ─────
+    assert!(gateway1.fetch(&t, "").await.unwrap().provisioning.is_empty(), "nobody joins unless someone said so");
+    assert!(t.api(&viewer, "POST", &format!("/definitions/{definition}/provisioning"), json!({})).await.is_err());
+    let allowed = t.api(&engineer, "POST", &format!("/definitions/{definition}/provisioning"), json!({})).await.unwrap();
+    let (key, secret) = (allowed["key"].as_str().unwrap(), allowed["secret"].as_str().unwrap());
+    let config = gateway1.fetch(&t, "").await.unwrap();
+    assert_eq!(config.provisioning.len(), 1);
+    assert_eq!((config.provisioning[0].key.as_str(), config.provisioning[0].secret.clone()), (key, hash(secret)));
+    assert_eq!(config.gateway, Some(gw), "it is told who it is");
+
+    // ───── a device joined at a gateway ─────
+    let token = "the-token-the-gateway-made";
+    t.fact(site, "edge.joined", chrono::Utc::now(), json!({"code": "NEW-1", "definition": "devices", "token_hash": hash(token), "gateway": gw})).await;
+    let devices = t.api(&engineer, "GET", "/devices", json!({})).await.unwrap();
+    let new = devices["devices"].as_array().unwrap().iter().find(|d| d["code"] == json!("NEW-1")).expect("it is a record now").clone();
+    assert_eq!((new["lifecycle"].as_str(), new["definition"].as_str()), (Some("Provisioned"), Some("devices")), "{new}");
+    let told = gateway1.fetch(&t, "").await.unwrap();
+    assert_eq!(told.devices.iter().find(|d| d.code == "NEW-1").unwrap().credentials.token, Some(hash(token)), "and its gateway has it as an ordinary device");
+
+    // ───── nothing is taken over this way ─────
+    t.fact(site, "edge.joined", chrono::Utc::now(), json!({"code": "FIRST", "definition": "devices", "token_hash": hash("stolen"), "gateway": gw})).await;
+    let first = gateway1.fetch(&t, "").await.unwrap();
+    assert_eq!(first.devices.iter().find(|d| d.code == "FIRST").unwrap().credentials.token, None, "the record that exists stands");
+    t.fact(site, "edge.joined", chrono::Utc::now(), json!({"code": "NOWHERE", "definition": "no such definition", "token_hash": hash("x"), "gateway": gw}))
+        .await;
+    assert!(gateway1.fetch(&t, "").await.unwrap().devices.iter().all(|d| d.code != "NOWHERE"));
+
+    // ───── and it can be stopped ─────
+    t.api(&engineer, "DELETE", &format!("/definitions/{definition}/provisioning"), json!({})).await.unwrap();
+    assert!(gateway1.fetch(&t, "").await.unwrap().provisioning.is_empty());
+}

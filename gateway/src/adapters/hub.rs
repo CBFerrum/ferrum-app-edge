@@ -6,12 +6,13 @@ use crate::adapter::Failure;
 use crate::adapters::transport::{Message, Out};
 use ferrum_edge_contract::device_api;
 use ferrum_edge_contract::driver::topic_matches;
-use ferrum_edge_contract::edge::{Basic, DeviceLink};
+use ferrum_edge_contract::edge::{Basic, DeviceLink, Provisioning};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 /// What can wait for a device before it counts as too slow to keep.
@@ -20,6 +21,8 @@ const MAILBOX: usize = 256;
 const MAX_FILTERS: usize = 100;
 /// Attributes kept per device, for it to ask for again.
 const MAX_ATTRIBUTES: usize = 1000;
+/// Devices that can add themselves in an hour. A leaked secret can fill a platform only this fast.
+const MAX_JOINS: usize = 120;
 
 pub fn hash(secret: &[u8]) -> String {
     hex::encode(Sha256::digest(secret))
@@ -109,6 +112,18 @@ pub struct Hub {
     next: AtomicU64,
     /// What each device last said about itself, for it to ask for after a restart of its own.
     reported: Mutex<HashMap<String, Map<String, Value>>>,
+    provisioning: RwLock<Vec<Provisioning>>,
+    /// Devices that added themselves here and the platform has not confirmed yet, by token hash.
+    joined: Mutex<HashMap<String, String>>,
+    joins: Mutex<Vec<Instant>>,
+}
+
+/// A device that has just added itself: what it gets, and what the platform is to be told.
+#[derive(Debug, PartialEq)]
+pub struct Joined {
+    pub token: String,
+    pub token_hash: String,
+    pub definition: String,
 }
 
 impl std::fmt::Debug for Hub {
@@ -125,8 +140,13 @@ impl Hub {
     /// Who may connect changes with the platform's word. A device no longer listed, or whose
     /// credentials went, is gone at once: taking a device away must not wait for it to reconnect.
     pub fn set(&self, devices: &[DeviceLink]) {
-        let directory = Directory::of(devices);
+        let mut directory = Directory::of(devices);
         let known: HashMap<&str, &DeviceLink> = devices.iter().map(|d| (d.code.as_str(), d)).collect();
+        // One that joined stays known until the platform has confirmed it, or it would be turned away.
+        let mut joined = locked(&self.joined);
+        joined.retain(|_, code| !known.contains_key(code.as_str()));
+        directory.tokens.extend(joined.iter().map(|(hash, code)| (hash.clone(), code.clone())));
+        drop(joined);
         locked(&self.sessions).retain(|_, s| known.get(s.device.as_str()).is_some_and(|d| !d.credentials.is_empty()));
         *self.directory.write().unwrap_or_else(|e| e.into_inner()) = directory;
     }
@@ -195,6 +215,59 @@ impl Hub {
             sessions.remove(&id);
         }
         taken
+    }
+
+    pub fn allow_joining(&self, provisioning: Vec<Provisioning>) {
+        *self.provisioning.write().unwrap_or_else(|e| e.into_inner()) = provisioning;
+    }
+
+    /// A device adding itself, with the key and secret of its kind. It gets a token of its own, made
+    /// here, so this works with the link down. An existing device cannot be taken over this way.
+    pub fn join(&self, code: &str, key: &str, secret: &str) -> Result<Joined, &'static str> {
+        let definition = {
+            let provisioning = self.provisioning.read().unwrap_or_else(|e| e.into_inner());
+            let found = provisioning.iter().find(|p| p.key == key).filter(|p| p.secret == hash(secret.as_bytes())).ok_or("the key or the secret is wrong")?;
+            found.definition.clone()
+        };
+        if code.trim().is_empty() || code.len() > 80 {
+            return Err("a device needs a name of at most 80 characters");
+        }
+        {
+            let mut joins = locked(&self.joins);
+            joins.retain(|at| at.elapsed() < Duration::from_secs(3600));
+            if joins.len() >= MAX_JOINS {
+                return Err("too many devices have joined lately");
+            }
+            let directory = self.directory.read().unwrap_or_else(|e| e.into_inner());
+            if directory.shared.contains_key(code) || locked(&self.joined).values().any(|c| c == code) {
+                return Err("a device of that name already exists");
+            }
+            joins.push(Instant::now());
+        }
+        let token = hex::encode(rand::random::<[u8; 24]>());
+        let token_hash = hash(token.as_bytes());
+        locked(&self.joined).insert(token_hash.clone(), code.to_string());
+        self.directory.write().unwrap_or_else(|e| e.into_inner()).tokens.insert(token_hash.clone(), code.to_string());
+        Ok(Joined { token, token_hash, definition })
+    }
+
+    /// The device API's answer to a device adding itself, and the message that tells the platform.
+    pub async fn joining(&self, tx: &mpsc::Sender<Message>, body: &[u8]) -> Value {
+        let asked: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
+        let text = |k: &str| asked[k].as_str().unwrap_or_default();
+        match self.join(text("deviceName"), text("provisionDeviceKey"), text("provisionDeviceSecret")) {
+            Ok(joined) => {
+                let told = Message {
+                    topic: device_api::joined(text("deviceName")),
+                    body: json!({"token_hash": joined.token_hash, "definition": joined.definition}).to_string().into_bytes(),
+                    status: None,
+                    from: None,
+                };
+                let _ = tx.send(told).await;
+                json!({"status": "SUCCESS", "credentialsType": "ACCESS_TOKEN", "credentialsValue": joined.token})
+            }
+            Err(why) => json!({"status": "FAILURE", "errorMsg": why}),
+        }
     }
 
     /// Takes something a device said, under its own name, whichever way it came in. A request for
@@ -374,6 +447,60 @@ mod tests {
         }
         assert_eq!(h.deliver("t", b"x"), 0);
         assert!(!h.online("TOKEN"));
+    }
+
+    fn joinable() -> Hub {
+        let h = hub();
+        h.allow_joining(vec![Provisioning { definition: "devices".into(), key: "k".into(), secret: hash(b"s") }]);
+        h
+    }
+
+    #[test]
+    fn a_device_with_the_secret_of_its_kind_can_add_itself() {
+        let h = joinable();
+        let joined = h.join("NEW-1", "k", "s").unwrap();
+        assert_eq!(joined.definition, "devices");
+        assert_eq!(joined.token_hash, hash(joined.token.as_bytes()));
+        assert_eq!(h.who(&Proof { username: Some(&joined.token), ..Default::default() }).as_deref(), Some("NEW-1"), "it can connect at once");
+    }
+
+    #[test]
+    fn it_needs_the_key_and_the_secret() {
+        let h = joinable();
+        assert!(h.join("NEW-1", "k", "wrong").is_err());
+        assert!(h.join("NEW-1", "wrong", "s").is_err());
+        assert!(h.join("", "k", "s").is_err(), "a device needs a name");
+        assert!(Hub::default().join("NEW-1", "k", "s").is_err(), "nobody allowed it");
+    }
+
+    #[test]
+    fn no_device_can_be_taken_over_by_joining_as_it() {
+        let h = joinable();
+        assert!(h.join("TOKEN", "k", "s").is_err(), "that one exists");
+        h.join("NEW-1", "k", "s").unwrap();
+        assert!(h.join("NEW-1", "k", "s").is_err(), "and this one now does");
+    }
+
+    #[test]
+    fn a_leaked_secret_adds_devices_only_so_fast() {
+        let h = joinable();
+        for i in 0..MAX_JOINS {
+            h.join(&format!("D-{i}"), "k", "s").unwrap();
+        }
+        assert!(h.join("ONE-MORE", "k", "s").is_err());
+    }
+
+    #[test]
+    fn one_that_joined_stays_until_the_platform_has_it() {
+        let h = joinable();
+        let joined = h.join("NEW-1", "k", "s").unwrap();
+        let proof = Proof { username: Some(&joined.token), ..Default::default() };
+        h.set(&[device("TOKEN", Credentials { token: Some(hash(b"tok")), ..Default::default() })]);
+        assert_eq!(h.who(&proof).as_deref(), Some("NEW-1"), "word from the platform that predates it does not end it");
+        h.set(&[device("NEW-1", Credentials { token: Some(joined.token_hash.clone()), ..Default::default() })]);
+        assert_eq!(h.who(&proof).as_deref(), Some("NEW-1"));
+        h.set(&[]);
+        assert_eq!(h.who(&proof), None, "once it is the platform's, the platform decides");
     }
 
     #[test]

@@ -7,6 +7,8 @@ use ferrum_domain::util::{elevated, sys};
 use ferrum_edge_contract::edge::AlarmChange;
 use ferrum_kernel::{Ctx, Doc, Error, Kernel, Result, Tx, notify};
 use ferrum_ops::commands::{self, Issuer, NewCommand};
+use ferrum_ops::contract::Lifecycle;
+use ferrum_ops::devices;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -60,7 +62,32 @@ pub async fn apply(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: &str, payload: &Val
             }
         }
         "request" => request(ctx, tx, payload, at).await?,
+        "joined" => joined(k, ctx, tx, payload).await?,
         _ => {}
+    }
+    Ok(())
+}
+
+/// A device added itself at a gateway, which may have been some time ago. It becomes a record that
+/// reports and takes no command until a person commissions it. If the name has been taken since, the
+/// record that exists stands, and this device's token is not added to it.
+async fn joined(k: &Kernel, ctx: &Ctx, tx: &mut Tx, payload: &Value) -> Result<()> {
+    let body = &payload["body"];
+    let (Some(code), Some(definition), Some(hash)) = (body["code"].as_str(), body["definition"].as_str(), body["token_hash"].as_str()) else { return Ok(()) };
+    let site = payload["site"].as_str().and_then(|s| s.parse::<Uuid>().ok());
+    let taken: Option<i32> =
+        sqlx::query_scalar("select 1 from e_device where tenant_id = $1 and device_code = $2").bind(ctx.tenant).bind(code).fetch_optional(&mut **tx).await?;
+    let found: Option<Uuid> = sqlx::query_scalar("select id from e_device_definition where tenant_id = $1 and definition_name = $2")
+        .bind(ctx.tenant)
+        .bind(definition)
+        .fetch_optional(&mut **tx)
+        .await?;
+    let (None, Some(found)) = (taken, found) else { return Ok(()) };
+    let doc = json!({"device_name": code, "device_code": code, "kind": "Sensor", "site": site, "gateway": body["gateway"], "edge_definition": found, "edge_token_hash": hash});
+    let made = k.insert_tx(&elevated(ctx), tx, "Device", doc.as_object().cloned().unwrap_or_default()).await?;
+    let Some(id) = made.get("id").and_then(Value::as_str).and_then(|i| i.parse::<Uuid>().ok()) else { return Ok(()) };
+    for to in [Lifecycle::Claimed, Lifecycle::Provisioned] {
+        devices::set_lifecycle_tx(k, &elevated(ctx), tx, id, to, "it added itself at a gateway").await?;
     }
     Ok(())
 }

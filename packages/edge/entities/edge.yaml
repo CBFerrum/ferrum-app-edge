@@ -13,6 +13,8 @@
     - {name: body, type: code, required: true, label: Definition}
     - {name: published_body, type: code, read_only: true, no_copy: true, label: What Gateways Run}
     - {name: notes, type: text}
+    - {name: provision_key, type: data, read_only: true, no_copy: true, label: Key for Adding Devices}
+    - {name: provision_hash, type: data, read_only: true, no_copy: true, hidden: true}
   actions:
     - {name: publish, label: Publish, permission: write}
   list: {columns: [definition_name, status, revision], sort: definition_name asc}

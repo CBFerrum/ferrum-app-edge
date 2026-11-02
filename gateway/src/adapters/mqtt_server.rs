@@ -265,6 +265,45 @@ struct Live {
     count: AtomicUsize,
 }
 
+/// A device with no credentials yet: all it can do is add itself, on `/provision`, and hear how that
+/// went on `/provision/response`.
+async fn joining<R, W>(r: &mut R, w: &mut W, version: u8, keepalive: u16, live: &Live)
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let idle = if keepalive == 0 { HELLO } else { Duration::from_secs(u64::from(keepalive) * 3 / 2 + 1).min(HELLO * 6) };
+    loop {
+        let Ok(Some((kind, flags, body))) = tokio::time::timeout(idle, read_packet(r)).await else { return };
+        let reply = match kind {
+            SUBSCRIBE => {
+                let Some((id, filters)) = parse_subscribe(version, &body, false) else { return };
+                let refused = if version == 5 { 0x87 } else { 0x80 };
+                let codes: Vec<u8> = filters.iter().map(|(f, _)| if *f == "/provision/response" { 0 } else { refused }).collect();
+                suback(version, id, &codes, 0x90)
+            }
+            PUBLISH => {
+                let Some(p) = parse_publish(flags, version, &body) else { return };
+                if p.topic != "/provision" {
+                    return;
+                }
+                let answer = live.hub.joining(&live.tx, p.payload).await;
+                if let Some(id) = p.id.filter(|_| p.qos == 1)
+                    && w.write_all(&ack(PUBACK, 0, id)).await.is_err()
+                {
+                    return;
+                }
+                publish(version, "/provision/response", answer.to_string().as_bytes())
+            }
+            PINGREQ => vec![0xd0, 0],
+            _ => return,
+        };
+        if w.write_all(&reply).await.is_err() {
+            return;
+        }
+    }
+}
+
 async fn session<S>(stream: S, certificate: Option<String>, live: Arc<Live>)
 where
     S: AsyncRead + AsyncWrite + Send + 'static,
@@ -275,7 +314,14 @@ where
     let version = hello.version;
     let proof = Proof { client_id: hello.client_id, username: hello.username, password: hello.password, certificate: certificate.as_deref() };
     let Some(device) = live.hub.who(&proof) else {
-        let _ = w.write_all(&connack(version, false)).await;
+        if live.api && hello.username == Some("provision") {
+            let keepalive = hello.keepalive;
+            if w.write_all(&connack(version, true)).await.is_ok() {
+                joining(&mut r, &mut w, version, keepalive, &live).await;
+            }
+        } else {
+            let _ = w.write_all(&connack(version, false)).await;
+        }
         return;
     };
     let keepalive = hello.keepalive;

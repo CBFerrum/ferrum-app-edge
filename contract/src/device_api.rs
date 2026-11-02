@@ -39,6 +39,16 @@ pub fn as_heard(topic: &str, code: &str) -> String {
     topic.to_string()
 }
 
+/// What says a device added itself: `$joined/NEW-1`.
+pub fn joined(code: &str) -> String {
+    format!("$joined/{code}")
+}
+
+/// Who added themselves, if that is what this says.
+pub fn joiner(topic: &str) -> Option<&str> {
+    topic.strip_prefix("$joined/")
+}
+
 pub fn session(code: &str, online: bool) -> String {
     format!("{SESSION}{code}/{}", if online { "online" } else { "offline" })
 }

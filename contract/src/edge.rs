@@ -175,6 +175,22 @@ pub struct EdgeConfig {
     pub exports: Vec<Export>,
     #[serde(default)]
     pub release: Option<Release>,
+    /// Definitions a device can add itself to, with a key and secret every device of the kind holds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provisioning: Vec<Provisioning>,
+    /// Who this gateway is, for what it reports about devices the platform has not met.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<Uuid>,
+}
+
+/// A way for a device of one definition to add itself. The key says which, and the secret, kept here
+/// as a hash, is what lets it. It adds a device and nothing more: it reports, and takes no command
+/// until a person commissions it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Provisioning {
+    pub definition: String,
+    pub key: String,
+    pub secret: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

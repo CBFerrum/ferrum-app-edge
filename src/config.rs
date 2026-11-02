@@ -2,7 +2,7 @@
 //! content, so an unchanged configuration costs one short answer.
 
 use chrono::{DateTime, Utc};
-use ferrum_edge_contract::edge::{Basic, Comparison, Credentials, DeviceLink, EdgeConfig, Export, FlowSpec, Release, Rule};
+use ferrum_edge_contract::edge::{Basic, Comparison, Credentials, DeviceLink, EdgeConfig, Export, FlowSpec, Provisioning, Release, Rule};
 use ferrum_kernel::{Result, Tx};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -200,7 +200,18 @@ pub async fn for_gateway(tx: &mut Tx, tenant: Uuid, gateway: Uuid, site: Option<
     let release = release
         .filter(|r| number(r.percent.as_deref()).unwrap_or(0.0) > bucket(gateway) || number(r.percent.as_deref()) == Some(100.0))
         .map(|r| Release { version: r.version, url: r.url, sha256: r.sha256, signature: r.signature, expires_at: r.expires_at });
-    let mut config = EdgeConfig { version: String::new(), definitions, devices, rules, flows, exports, release };
+    let provisioning: Vec<(String, String, String)> = sqlx::query_as(
+        "select definition_name, provision_key, provision_hash from e_device_definition where tenant_id = $1 and provision_key is not null and provision_hash is not null and published_body is not null order by definition_name",
+    )
+    .bind(tenant)
+    .fetch_all(&mut **tx)
+    .await?;
+    let provisioning: Vec<Provisioning> = provisioning
+        .into_iter()
+        .filter(|(name, ..)| definitions.contains_key(name))
+        .map(|(definition, key, secret)| Provisioning { definition, key, secret })
+        .collect();
+    let mut config = EdgeConfig { version: String::new(), definitions, devices, rules, flows, exports, release, provisioning, gateway: Some(gateway) };
     config.version = hex::encode(Sha256::digest(serde_json::to_vec(&config).unwrap_or_default()));
     Ok(config)
 }
