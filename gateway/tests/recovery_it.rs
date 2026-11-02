@@ -388,7 +388,7 @@ async fn past_an_allowance_readings_wait_and_nothing_else_does(w: &World) {
     let oldest = async || site.journal().samples(1).ok().and_then(|(s, _)| s.first().map(|m| (m.boot, m.seq)));
     until("readings to wait at the gateway", 10, async || oldest().await.is_some()).await;
     let first = oldest().await;
-    tokio::time::sleep(Duration::from_secs(4)).await;
+    tokio::time::sleep(StdDuration::from_secs(4)).await;
     assert_eq!(oldest().await, first, "an exchange or two later it is still here: nothing was taken, and nothing thrown away");
     allowance(1_000_000).await;
     until("readings to arrive", 15, async || stored().await > 0).await;
