@@ -69,26 +69,32 @@ fn bucket(gateway: Uuid) -> f64 {
     f64::from(Sha256::digest(gateway.as_bytes())[0]) / 255.0 * 100.0
 }
 
-/// What `gateway` should be. Only what it reaches, and only what it needs.
+/// What `gateway` should be. Only what it reaches, and only what it needs. A device that calls in goes wherever
+/// it is sent, so every gateway in a pooled domain has to know it, and which one speaks for it is the platform's
+/// record of where it is connected.
 pub async fn for_gateway(tx: &mut Tx, tenant: Uuid, gateway: Uuid, site: Option<Uuid>) -> Result<EdgeConfig> {
     let rows: Vec<DeviceRow> = sqlx::query_as(
         "select d.device_code, f.definition_name, f.published_body, d.edge_connect, d.edge_settings, d.edge_concurrency, \
                 d.edge_token_hash, d.edge_client_id, d.edge_username, d.edge_password_hash, d.edge_certificate, v.device_code as via \
          from e_device d join e_device_definition f on f.tenant_id = d.tenant_id and f.id = d.edge_definition \
          left join e_device v on v.tenant_id = d.tenant_id and v.id = d.edge_via \
-         where d.tenant_id = $1 and d.gateway = $2 and d.lifecycle not in ('Retired', 'Quarantined') and f.published_body is not null order by d.device_code",
+         where d.tenant_id = $1 and (d.gateway = $2 or (d.site = $3 and exists (select 1 from op_authority o where o.tenant_id = d.tenant_id and o.site_id = d.site and o.pooled))) \
+         and d.lifecycle not in ('Retired', 'Quarantined') and f.published_body is not null order by d.device_code",
     )
     .bind(tenant)
     .bind(gateway)
+    .bind(site)
     .fetch_all(&mut **tx)
     .await?;
     // What each was last asked to be, for a device to ask for after it restarts.
     let wanted: Vec<(String, String, Value)> = sqlx::query_as(
         "select d.device_code, a.key, a.desired from edge_attribute a join e_device d on d.tenant_id = a.tenant_id and d.id = a.device_id \
-         where a.tenant_id = $1 and d.gateway = $2 and a.desired is not null order by d.device_code, a.key",
+         where a.tenant_id = $1 and (d.gateway = $2 or (d.site = $3 and exists (select 1 from op_authority o where o.tenant_id = d.tenant_id and o.site_id = d.site and o.pooled))) \
+         and a.desired is not null order by d.device_code, a.key",
     )
     .bind(tenant)
     .bind(gateway)
+    .bind(site)
     .fetch_all(&mut **tx)
     .await?;
     let mut shared: BTreeMap<String, BTreeMap<String, Value>> = BTreeMap::new();
@@ -117,9 +123,13 @@ pub async fn for_gateway(tx: &mut Tx, tenant: Uuid, gateway: Uuid, site: Option<
     }
     let by_definition: BTreeMap<Uuid, Vec<String>> = {
         let rows: Vec<(Uuid, String)> =
-            sqlx::query_as("select edge_definition, device_code from e_device where tenant_id = $1 and gateway = $2 and edge_definition is not null")
+            sqlx::query_as(
+                "select d.edge_definition, d.device_code from e_device d where d.tenant_id = $1 and d.edge_definition is not null \
+                 and (d.gateway = $2 or (d.site = $3 and exists (select 1 from op_authority o where o.tenant_id = d.tenant_id and o.site_id = d.site and o.pooled)))",
+            )
                 .bind(tenant)
                 .bind(gateway)
+                .bind(site)
                 .fetch_all(&mut **tx)
                 .await?;
         let mut map: BTreeMap<Uuid, Vec<String>> = BTreeMap::new();
