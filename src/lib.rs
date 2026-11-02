@@ -48,6 +48,7 @@ pub fn register(h: &mut HookRegistry) {
     h.register("EdgeRule", Arc::new(RuleHook));
     h.register("EdgeFlow", Arc::new(FlowHook));
     h.register("EdgeDashboard", Arc::new(BoardHook));
+    h.register("EdgeExport", Arc::new(ExportHook));
     h.add_event_sink(Arc::new(Facts));
     h.add_site("edge", Arc::new(site::EdgeSite));
     h.add_job_handler(Arc::new(notices::Notices));
@@ -72,6 +73,20 @@ impl DocHook for BoardHook {
             Some(body) => data::check(body).map(drop).map_err(|why| Error::field("body", why)),
             None => Ok(()),
         }
+    }
+}
+
+/// Where an export sends is checked when it is saved, and not by a gateway that can only fail quietly.
+struct ExportHook;
+
+#[async_trait]
+impl DocHook for ExportHook {
+    fn name(&self) -> &'static str {
+        "edge.export"
+    }
+
+    async fn validate_change(&self, _hc: &mut HookCtx<'_>, _old: Option<&Doc>, doc: &Doc) -> Result<()> {
+        ferrum_edge_contract::edge::check_export(s(doc, "send_to").unwrap_or_default()).map_err(|why| Error::field("send_to", why))
     }
 }
 

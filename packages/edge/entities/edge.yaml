@@ -115,10 +115,10 @@
   fields:
     - {name: export_name, type: data, required: true, in_list: true}
     - {name: site, type: link, to: Site, in_list: true, description: "Every site, if empty"}
-    - {name: send_to, type: data, required: true, label: Send To, in_list: true, description: "https://historian/in takes batches, mqtt://broker takes a message per measurement"}
-    - {name: topic, type: data, description: "MQTT: {device} and {metric} work here"}
+    - {name: send_to, type: data, required: true, label: Send To, in_list: true, description: "https://historian/in, mqtts://broker, nats://bus:4222, kafka://bus:9092, amqp://user@broker/vhost?exchange=readings, influx://host:8086/?org=o&bucket=b, clickhouse://host:8123/table, s3://bucket/prefix?region=r, sqs://sqs.region.amazonaws.com/account/queue, sns://sns.region.amazonaws.com/?topic=arn, pubsub://project/topic, azure://hub.azure-devices.net/device, eventhub://ns.servicebus.windows.net/hub"}
+    - {name: topic, type: data, label: Topic or Key, description: "A topic, subject or routing key: {device} and {metric} work here"}
     - {name: metrics, type: data, description: "Only these, comma separated, with * for the rest of a name. All, if empty"}
-    - {name: sign_with, type: data, label: Sign With, description: "The name of a secret kept at the site. Signs each batch with HMAC-SHA256"}
+    - {name: sign_with, type: data, label: Secret, description: "The name of a secret kept at the site. It signs each batch to a web address, and logs in anywhere else. Passwords never go in the address."}
     - {name: enabled, type: check, default: true, in_list: true}
   list: {columns: [export_name, site, send_to, enabled], sort: export_name asc}
 
