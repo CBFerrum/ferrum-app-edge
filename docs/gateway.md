@@ -162,6 +162,7 @@ queue when the far end has said yes.
 | `pubsub://project/topic` | Google Cloud Pub/Sub. `?endpoint=` for its emulator | | A service account's key, as JSON |
 | `azure://hub.azure-devices.net/device` | Azure IoT Hub, as that device | | The device's key |
 | `eventhub://namespace.servicebus.windows.net/hub` | Azure Event Hubs | | `policy:key` |
+| `sparkplug://broker:1883/group/node`, `sparkplugs://` | This gateway as a Sparkplug edge node: births, data in sequence, and everything again if a host asks | | |
 
 A secret is named by the export and kept in the site's `secrets`. An address with a password in it is
 refused when it is saved, because an export travels to every gateway and every backup. `allow` limits

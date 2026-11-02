@@ -40,13 +40,33 @@ required* per device model, and the templates in `templates` are starts, not sup
 | Transport | Tried against | Not tried |
 |---|---|---|
 | TCP, UDP, serial, HTTP, WebSocket | Real sockets and a pseudo-terminal, with stand-ins (`gateway/tests/adapters_it.rs`) | Real serial hardware, RS-485 timing, any vendor's device |
-| MQTT 5 | rumqttd 0.20 and a stand-in. TLS is not exercised | Mosquitto, EMQX, HiveMQ, reconnect storms, MQTT 3.1.1 brokers |
+| MQTT 5 | rumqttd 0.20 and a stand-in. TLS is not exercised | Mosquitto, EMQX, HiveMQ, reconnect storms |
+| Device API | Eclipse Paho 2.1 and 1.6 (MQTT 3.1.1), rumqttc v4 and v5, curl, aiocoap 0.4.17 | Any device's firmware, ThingsBoard's own SDKs |
 | Modbus TCP and RTU | A stand-in controller, and a stand-in on a pseudo-terminal with two units | Any PLC, a real RS-485 bus, CRC errors on the line |
-| OPC UA | async-opcua 0.19's own server: None, and Basic256Sha256 with SignAndEncrypt, users, and server trust by certificate (`gateway/tests/protocols_it.rs`) | Any commercial server, a certified stack, certificates issued by a plant authority |
-| Sparkplug B | Payloads from this repository's own encoder, checked against a hand-worked byte sequence | Any real edge node or host. It is not a primary host |
-| MTConnect | A document shaped like an agent's | A real agent or machine tool |
+| OPC UA | async-opcua 0.19's own server: None, and Basic256Sha256 with SignAndEncrypt, users, server trust by certificate, and browsing (`gateway/tests/protocols_it.rs`) | Any commercial server. Events have not been raised by anything |
+| Siemens S7 | python-snap7 3.3's server: reads of every type, writes, strings, a missing block, and on real binaries through a gateway. Its server treats a bit write as a byte, so bits have not met a faithful peer | Any PLC |
+| EtherNet/IP | cpppo 5.2: read, write, arrays, direct and through a slot | Any Logix controller |
+| TwinCAT ADS | pyads 3.6's test server: symbols, read, write | Any TwinCAT runtime, routes |
+| BACnet/IP | BACpypes3: analog and binary values, names, a commandable write, a refused read | Any controller, foreign device registration |
+| SNMP v1, v2c | PySNMP 7.1: get, set, a missing OID, a trap and an inform | Any device's MIB, v3 |
+| KNX | A stand-in written from the specification (`gateway/tests/knx_it.rs`). Nothing independent could run as an interface | Any interface, any bus |
+| IEC 60870-5-104 | lib60870's server: interrogation and spontaneous data on real sockets. Commands were sent, and it did not hang up | Any RTU, redundancy groups |
+| M-Bus | Frames built here and read the same by pyMeterBus 0.8 | Any meter, any level converter |
+| OCPP 1.6 and 2.0.1 | The Python `ocpp` 2.1 library for 1.6, in CI and through a real gateway. 2.0.1 by frames written here (`gateway/tests/ocpp_it.rs`) | Any charger |
+| LwM2M | Eclipse Leshan's demo client 2.0.0-M16, in CI | Any device, DTLS |
+| CoAP client | aiocoap 0.4.17, with 3 KB in blocks | Observe from a real device |
+| NATS, FTP, folders | nats-server, pyftpdlib, the file system | |
+| SQL | PostgreSQL 17 and SQLite | Other databases |
+| Sparkplug B | rumqttd, as a primary host and an edge node (`gateway/tests/sparkplug_it.rs`) | Ignition, any real edge node, any real host |
+| MTConnect | A stand-in agent (`gateway/tests/mtconnect_it.rs`) | A real agent or machine tool |
 | Listeners and webhooks | Real sockets | Load, and devices that reconnect abruptly |
-| External drivers | A shell script | Any vendor's library |
+| External drivers | A shell script, and python-can's virtual bus | Any vendor's library, a real CAN bus, any Bluetooth device |
+
+| Export | Tried against |
+|---|---|
+| NATS, Kafka, RabbitMQ, InfluxDB 2, ClickHouse | The real services, in CI (`gateway/tests/exports_it.rs`) |
+| S3, SQS, SNS | moto, in CI. Signatures match Amazon's published example |
+| Google Pub/Sub, Azure IoT Hub, Event Hubs | The documented shape of the calls. An assertion for Google is checked by `openssl`. **Nothing has been sent to their real services** |
 
 | Template | Written from | State |
 |---|---|---|
@@ -66,12 +86,14 @@ two steps cost. **What a gateway sustains is not measured**: it depends on its d
 
 | What | Why, and what it would take |
 |---|---|
-| Siemens S7, EtherNet/IP, ADS, BACnet, KNX, CANopen, PROFINET, other fieldbuses | No driver ships. An external driver wrapping a vendor's or PLC4X's stack is the likely route |
-| OPC UA browsing, events and conditions, history | Not built. Node ids come from a person with a client |
-| Sparkplug primary host | No STATE, no rebirth requests, no sequence checks. Reading works while nodes are alive and have sent a birth |
+| DNP3, DLMS/COSEM, PROFINET, EtherCAT, CANopen as such | Not built. An external driver is the way, and PROFINET and EtherCAT belong to a controller anyway |
+| SNMP v3, LwM2M over DTLS, CoAP over DTLS | Not built, so those stay on private networks |
+| OPC UA history, alarms and conditions, a server of our own | Not built |
 | ROS 2 by DDS directly | Through rosbridge. A vendor-qualified adapter as a process of its own is the rule |
-| EPCIS, AAS | Import and export, not built |
+| EPCIS | Not built |
 | ThingsBoard, Siemens, Rockwell, AVEVA, Ignition, Dematic, Blue Yonder, Manhattan | Coexist and integrate per contract. There is no universal adapter and none is claimed |
+
+[parity.md](parity.md) has the whole picture, reference by reference.
 
 ## Unresolved safety and compliance questions
 
