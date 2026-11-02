@@ -52,6 +52,8 @@ required* per device model, and the templates in `templates` are starts, not sup
 | KNX | A stand-in written from the specification (`gateway/tests/knx_it.rs`). Nothing independent could run as an interface | Any interface, any bus |
 | IEC 60870-5-104 | lib60870's server: interrogation and spontaneous data on real sockets. Commands were sent, and it did not hang up | Any RTU, redundancy groups |
 | M-Bus | Frames built here and read the same by pyMeterBus 0.8 | Any meter, any level converter |
+| DNP3 | opendnp3's outstation, by hand: an integrity poll, events and unsolicited responses confirmed, one point on request, and binary and analog commands selected and operated. A stand-in does the same in CI | Any RTU. No Secure Authentication, no TLS, no serial, no file transfer |
+| DLMS/COSEM | The requests compare equal to those of Gurux's client, apart from which optional services are offered, and read a stand-in written from the Green Book | Any meter. Nothing above low-level security, and no HDLC on a serial or optical port |
 | OCPP 1.6 and 2.0.1 | The Python `ocpp` 2.1 library for 1.6, in CI and through a real gateway. 2.0.1 by frames written here (`gateway/tests/ocpp_it.rs`) | Any charger |
 | LwM2M | Eclipse Leshan's demo client 2.0.0-M16, in CI | Any device, DTLS |
 | CoAP client | aiocoap 0.4.17, with 3 KB in blocks | Observe from a real device |

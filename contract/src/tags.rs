@@ -151,6 +151,51 @@ pub fn oid(text: &str) -> Result<(Vec<u32>, bool), String> {
     Ok((arcs, walk))
 }
 
+/// A DLMS object: its class, its OBIS code and which attribute. `1.0.1.8.0.255` is a Register's value,
+/// and `1:0.0.96.1.0.255:2` says all three.
+pub fn cosem(tag: &str) -> Result<(u16, [u8; 6], u8), String> {
+    const REGISTER: u16 = 3;
+    const VALUE: u8 = 2;
+    let wrong = || format!("{tag} is not an OBIS code: try 1.0.1.8.0.255");
+    let obis = |text: &str| -> Option<[u8; 6]> { text.split('.').map(str::parse).collect::<Result<Vec<u8>, _>>().ok()?.try_into().ok() };
+    let parts: Vec<&str> = tag.split(':').collect();
+    match parts[..] {
+        [o] => Some((REGISTER, obis(o).ok_or_else(wrong)?, VALUE)),
+        [c, o] => Some((c.parse().map_err(|_| wrong())?, obis(o).ok_or_else(wrong)?, VALUE)),
+        [c, o, a] => Some((c.parse().map_err(|_| wrong())?, obis(o).ok_or_else(wrong)?, a.parse().map_err(|_| wrong())?)),
+        _ => None,
+    }
+    .ok_or_else(wrong)
+}
+
+/// What a DNP3 node names: everything, or one point of an outstation by its static group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dnp3Point {
+    Everything,
+    One { group: u8, index: u16 },
+}
+
+impl Dnp3Point {
+    pub fn parse(text: &str) -> Result<Dnp3Point, String> {
+        const GROUPS: [(&str, u8); 7] = [
+            ("binary-input", 1),
+            ("double-bit", 3),
+            ("binary-output", 10),
+            ("counter", 20),
+            ("frozen-counter", 21),
+            ("analog-input", 30),
+            ("analog-output", 40),
+        ];
+        if text == "interrogate" {
+            return Ok(Dnp3Point::Everything);
+        }
+        let wrong = || format!("{text} is not a DNP3 point: try analog-input:3, binary-output:2 or interrogate");
+        let (kind, index) = text.split_once(':').ok_or_else(wrong)?;
+        let group = GROUPS.iter().find(|(n, _)| *n == kind).map(|(_, g)| *g).ok_or_else(wrong)?;
+        Ok(Dnp3Point::One { group, index: index.parse().map_err(|_| wrong())? })
+    }
+}
+
 /// Whether a statement only reads. A database's own read-only mode is the second line of defence.
 pub fn read_only(sql: &str) -> bool {
     let first = sql.split_whitespace().next().unwrap_or_default().to_lowercase();
@@ -163,6 +208,8 @@ pub fn check(scheme: &str, tag: &str) -> Result<(), String> {
         "s7" => S7Address::parse(tag).map(drop),
         "bacnet" => BacnetAddress::parse(tag).map(drop),
         "snmp" => oid(tag).map(drop),
+        "dlms" => cosem(tag).map(drop),
+        "dnp3" => Dnp3Point::parse(tag).map(drop),
         "ads" | "enip" => symbol(tag).map(drop),
         "postgres" | "sqlite" if !read_only(tag) => Err("this only reads: one select at a time".into()),
         _ => Ok(()),
@@ -187,6 +234,26 @@ mod tests {
         assert_eq!(S7Address::parse("DB1.DBB0:string(10)").unwrap().kind, Kind::Text(10));
         for bad in ["", "Z1", "DB1", "DB1.DBZ0", "M0.9", "DBx.DBW0", "DB1.DBW0:wrong"] {
             assert!(S7Address::parse(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn dnp3_points_go_by_name() {
+        assert_eq!(Dnp3Point::parse("analog-input:3"), Ok(Dnp3Point::One { group: 30, index: 3 }));
+        assert_eq!(Dnp3Point::parse("binary-output:65535"), Ok(Dnp3Point::One { group: 10, index: 65535 }));
+        assert_eq!(Dnp3Point::parse("interrogate"), Ok(Dnp3Point::Everything));
+        for bad in ["analog-input", "analog-input:x", "analog-input:65536", "valve:1", ""] {
+            assert!(check("dnp3", bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn meters_are_asked_by_obis_code() {
+        assert_eq!(cosem("1.0.1.8.0.255"), Ok((3, [1, 0, 1, 8, 0, 255], 2)));
+        assert_eq!(cosem("1:0.0.96.1.0.255"), Ok((1, [0, 0, 96, 1, 0, 255], 2)));
+        assert_eq!(cosem("3:1.0.1.8.0.255:3"), Ok((3, [1, 0, 1, 8, 0, 255], 3)));
+        for bad in ["1.0.1.8.0", "x", "1:2:3:4", "1.0.1.8.0.256"] {
+            assert!(check("dlms", bad).is_err(), "{bad}");
         }
     }
 

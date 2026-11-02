@@ -1,0 +1,19 @@
+# about: A substation or water works RTU over DNP3: events and values as they change, and a select-before-operate command.
+# group: Energy
+name: dnp3-outstation
+connect: dnp3://rtu:20000?master=1&outstation=10&poll=30
+poll:
+  - {every: 1h, node: interrogate}
+read:
+  - {topic: analog-input:0, metric: flow.m3h, json: $.value, unit: m3/h}
+  - {topic: analog-input:1, metric: level.m, json: $.value, unit: m}
+  - {topic: binary-input:0, state: true, json: $.value, map: {"true": Running, "false": Idle}}
+commands:
+  pump.start:
+    node: binary-output:0
+    send: true
+    once: true
+  pump.stop:
+    node: binary-output:0
+    send: false
+    once: true

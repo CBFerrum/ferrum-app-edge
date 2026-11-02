@@ -1,0 +1,8 @@
+# about: Readings from a RabbitMQ queue that something else fills, each acknowledged once it has been taken.
+# group: Messaging
+name: amqp-source
+connect: amqp://reader:{secret.broker}@broker/plant
+subscribe:
+  - plant.readings
+read:
+  - {topic: plant.press.temp, metric: temp.c, json: $, unit: C}

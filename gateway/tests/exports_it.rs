@@ -7,7 +7,7 @@ use axum::body::Bytes;
 use axum::http::{HeaderMap, Uri};
 use chrono::Utc;
 use ferrum_edge_contract::edge::Export;
-use ferrum_site::adapters::transport::Limits;
+use ferrum_site::adapters::transport::{self, Limits};
 use ferrum_site::export::Sender;
 use ferrum_site::sinks::{self, Aws};
 use serde_json::{Value, json};
@@ -122,6 +122,58 @@ async fn amqp_is_confirmed_by_the_broker() {
     let nowhere = export(&format!("amqp://guest@{host}/%2F?exchange=no-such-exchange"), Some("x"), Some("password"));
     let refused = sender().deliver(&nowhere, &readings(1), &json!({"password": "guest"})).await;
     assert!(refused.unwrap_err().contains("no-such-exchange"), "and it says why");
+}
+
+#[tokio::test]
+async fn a_queue_can_be_read_as_well() {
+    let Some(host) = service("FERRUM_TEST_AMQP") else { return };
+    let manager = service("FERRUM_TEST_AMQP_MANAGER").expect("the management address too");
+    let queue = format!("q{}", Uuid::now_v7().simple());
+    let web = reqwest::Client::new();
+    let created =
+        web.put(format!("{manager}/api/queues/%2F/{queue}")).basic_auth("guest", Some("guest")).json(&json!({"durable": false})).send().await.unwrap();
+    assert!(created.status().is_success(), "{}", created.status());
+    let e = export(&format!("amqp://guest@{host}/%2F"), Some(&queue), Some("password"));
+    sender().deliver(&e, &readings(3), &json!({"password": "guest"})).await.expect("confirmed");
+
+    let topics = [queue.clone()];
+    let options = transport::Options { subscribe: &topics, ..Default::default() };
+    let link = transport::open(&format!("amqp://guest:guest@{host}/%2F"), options, &Limits::default()).unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let (ready, _up) = tokio::sync::mpsc::channel(1);
+    tokio::spawn(async move { link.run(tx, ready).await });
+    for i in 0..3 {
+        let m = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.expect("a message").unwrap();
+        assert_eq!(m.topic, queue, "by its routing key");
+        assert_eq!(serde_json::from_slice::<Value>(&m.body).unwrap()["value"], json!(i as f64 + 0.5));
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let left: Value = web.get(format!("{manager}/api/queues/%2F/{queue}")).basic_auth("guest", Some("guest")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(left["messages_unacknowledged"].as_i64().unwrap_or(0), 0, "each was acknowledged once it was handed on: {left}");
+}
+
+#[cfg(feature = "kafka")]
+#[tokio::test]
+async fn a_topic_can_be_read_as_well() {
+    use rskafka::client::ClientBuilder;
+    let Some(host) = service("FERRUM_TEST_KAFKA") else { return };
+    let topic = format!("t{}", Uuid::now_v7().simple());
+    let client = ClientBuilder::new(vec![host.clone()]).build().await.unwrap();
+    client.controller_client().unwrap().create_topic(&topic, 1, 1, 5_000).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let e = export(&format!("kafka://{host}"), Some(&topic), None);
+    sender().deliver(&e, &readings(2), &json!({})).await.expect("taken");
+    let topics = [topic.clone()];
+    let options = transport::Options { subscribe: &topics, ..Default::default() };
+    let link = transport::open(&format!("kafka://{host}?from=start"), options, &Limits::default()).unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let (ready, _up) = tokio::sync::mpsc::channel(1);
+    tokio::spawn(async move { link.run(tx, ready).await });
+    for i in 0..2 {
+        let m = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.expect("a record").unwrap();
+        assert_eq!(m.topic, topic);
+        assert_eq!(serde_json::from_slice::<Value>(&m.body).unwrap()["value"], json!(i as f64 + 0.5));
+    }
 }
 
 #[cfg(feature = "kafka")]

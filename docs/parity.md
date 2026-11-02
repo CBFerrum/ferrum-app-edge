@@ -40,7 +40,8 @@ the detail of what each thing was tried against.
 | BACnet/IP | ThingsBoard Gateway, OpenRemote | **Verified** | Against BACpypes3, read and write. **No Who-Is, no COV** |
 | KNX over IP | ThingsBoard Gateway, OpenRemote | **Built** | Tunnelling, against a stand-in |
 | IEC 60870-5-104 | Ignition modules | **Verified** | Against lib60870: interrogation, spontaneous data, commands sent |
-| DNP3, DLMS/COSEM | Ignition modules, metering head ends | **No** | Neither is built. An external driver can carry them |
+| DLMS/COSEM | Metering head ends, Ignition modules | **Built** | Over the wrapper, by OBIS code, with blocks and low-level security, read only. The requests compare equal to Gurux's client. **No HDLC, no high-level security or ciphering** |
+| DNP3 | Ignition modules | **Verified** | As a master over TCP against opendnp3: integrity, events, unsolicited, select-before-operate. **No Secure Authentication, no TLS, no serial** |
 | M-Bus | OpenRemote, metering | **Verified** | Frames read as pyMeterBus reads them. No meter |
 | CANopen and raw CAN | ThingsBoard Gateway, Kura | **External** | `drivers/can_bridge.py`, on python-can's virtual bus |
 | Bluetooth Low Energy | ThingsBoard Gateway | **External** | `drivers/ble_bridge.py`. Has met no device |
@@ -53,7 +54,7 @@ the detail of what each thing was tried against.
 | SQL as a source | ThingsBoard Gateway (ODBC) | **Verified** | PostgreSQL and SQLite, read only. Others, by an external driver |
 | FTP and a watched folder | ThingsBoard Gateway | **Verified** | FTP against pyftpdlib |
 | NATS as a source | Magistrala | **Verified** | Against nats-server |
-| Kafka and AMQP as sources | ThingsBoard PE | **No** | They are destinations here, not sources |
+| Kafka and AMQP as sources | ThingsBoard PE | **Verified** | Against Apache Kafka and RabbitMQ, in CI. A Kafka reader keeps its place in a file and has no consumer group |
 | HTTP polling, WebSocket, TCP, UDP, serial, webhooks | Everyone | **Built** | Against real sockets |
 | Any other protocol | EdgeX, Kura | **Verified** | External drivers, as JSON lines in any language |
 | Discovery of devices | EdgeX | **Partly** | Strangers on a connection are noticed and a person claims them. No network scanning, on purpose |

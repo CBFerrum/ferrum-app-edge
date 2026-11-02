@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- DNP3 as a master over TCP: integrity polls, events and unsolicited responses, and commands selected
+  and then operated. It has met opendnp3's outstation.
+- DLMS/COSEM meters by OBIS code, over the wrapper, read only.
+- Kafka topics and AMQP queues as sources. A Kafka reader keeps its place across restarts in the
+  gateway's state folder.
+
 ## 0.2.0
 
 The gaps with ThingsBoard and the other reference products, closed or named: `docs/parity.md` goes

@@ -18,7 +18,7 @@ commands:
     status: {match: '^(?P<r>OK|ERR)', group: r, done: OK, failed: ERR}
 ```
 
-The interface offers twenty templates to start from, in `templates`. A template is a
+The interface offers templates to start from, in `templates`. A template is a
 start and not a promise: none has been tried on the equipment it names ([compatibility](compatibility.md)).
 
 ## Connecting
@@ -43,12 +43,16 @@ start and not a promise: none has been tried on the equipment it names ([compati
 | `listen+snmp://0.0.0.0:162` | Traps and informs |
 | `knx://interface:3671` | KNX over IP. `subscribe` and `node` say `1/2/3:dpt9` |
 | `iec104://rtu:2404?ca=1` | IEC 60870-5-104: `interrogate`, `single:4001`, `double:4002`, `setpoint:4003` |
+| `dnp3://rtu:20000?master=1&outstation=10&poll=30` | DNP3 over TCP. Points arrive by name, `analog-input:3`, `binary-input:1`, `counter:0`, holding `{value, flags}`, and `at` if the outstation stamped them. `interrogate` or a point asks for it. `binary-output:2` takes `true`, `false`, `trip`, `close` or `pulse`, and `analog-output:4` a number, each selected and then operated unless `&direct=true`. `&unsolicited=false` and `&time=true` are there for those who need them |
 | `mbus://bridge:9000` | M-Bus meters through a TCP bridge. `node` is a primary address |
+| `dlms://meter:4059?client=16&server=1` | DLMS/COSEM electricity meters through the wrapper. `node` is an OBIS code, `1.0.1.8.0.255`, or `class:obis:attribute`. A Register comes back scaled. `&password=` logs in with low security. It only reads |
 | `coap://sensor:5683` | A device that serves CoAP. `get`, `put`, `post`, `delete`, and `subscribe` to watch with Observe |
 | `listen+lwm2m://0.0.0.0:5683` | LwM2M devices register here. `subscribe` lists what to watch on each |
 | `listen+ocpp://0.0.0.0:9000/ocpp?open=1`, `listen+ocpps://…` | EV chargers, with `api: ocpp`. `open=1` lets a charger with no token in |
 | `mtconnect://agent:5000?interval=1000` | An MTConnect agent: everything, then its sample stream |
 | `nats://bus:4222` | NATS subjects in `subscribe` |
+| `amqp://reader:{secret.x}@broker/plant`, `amqps://…` | Queues named in `subscribe`, which it does not create, arriving by routing key. Each is acknowledged once it has been taken, so one can arrive twice |
+| `kafka://bus:9092`, `kafkas://…`, `?from=start` | Topics named in `subscribe`. Its place is kept in the gateway's state folder, so a restart loses nothing a topic still holds. The first time it reads what comes next, or all that is there with `from=start`. There is no consumer group: two gateways on one topic each hear all of it |
 | `postgres://user:pw@host/db`, `sqlite:///path` | A query in `node`, read only |
 | `file:///data/out?every=30&match=.csv` | New files in a folder, line by line |
 | `ftp://user:pw@host/out?every=60` | The same on an FTP server |
