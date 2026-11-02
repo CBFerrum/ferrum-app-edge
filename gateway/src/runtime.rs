@@ -26,7 +26,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::Duration as StdDuration;
 use tokio::sync::watch;
 use tokio::time::timeout;
@@ -105,6 +105,9 @@ const MAX_TRACES: usize = 1_000;
 /// How often what flows remember is written down. A crash loses this much of a window or a hold.
 const FLOW_SAVE_MS: i64 = 15_000;
 
+/// How many readings go in one exchange. The platform takes more than this.
+const MEASUREMENTS_AT_ONCE: i64 = 20_000;
+
 pub struct Runtime {
     pub cfg: Config,
     pub journal: Arc<Journal>,
@@ -139,6 +142,9 @@ pub struct Runtime {
     signing: tokio::sync::Mutex<()>,
     exports: Mutex<Vec<Export>>,
     sender: Sender,
+    held_back: AtomicBool,
+    /// What was read lately, for the console.
+    pub recent: Mutex<crate::console::Recent>,
     export_shed: AtomicI64,
 }
 
@@ -223,6 +229,8 @@ impl Runtime {
             signing: tokio::sync::Mutex::new(()),
             exports: Mutex::default(),
             sender: Sender::new(exporting),
+            held_back: AtomicBool::new(false),
+            recent: Mutex::default(),
             export_shed: AtomicI64::new(0),
         });
         runtime.settle_update();
@@ -911,10 +919,12 @@ impl Runtime {
     }
 
     /// One exchange. Everything sent stays in the journal until the answer says it arrived.
-    pub async fn exchange(&self) -> Result<(), LinkError> {
+    /// Says whether there is more to send than one exchange carries.
+    pub async fn exchange(&self) -> Result<bool, LinkError> {
         let reports = self.journal.reports(500).unwrap_or_default();
         let facts = self.journal.facts(500).unwrap_or_default();
-        let (measurements, upto) = self.journal.samples(5000).unwrap_or_default();
+        let (measurements, upto) = self.journal.samples(MEASUREMENTS_AT_ONCE).unwrap_or_default();
+        let full = measurements.len() as i64 >= MEASUREMENTS_AT_ONCE;
         let held = self.journal.unconfirmed(500).unwrap_or_default();
         let counts = self.journal.counts().unwrap_or_default();
         let room = (self.cfg.max_queued - counts.queued).clamp(0, 100);
@@ -943,8 +953,9 @@ impl Runtime {
                 *self.heard.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
                 // It came up and reached the platform, so it stays.
                 let _ = self.journal.clear("update_pending");
+                let taken = !r.measurements_held;
                 self.absorb(r, &held, upto);
-                Ok(())
+                Ok(full && taken)
             }
             Err(LinkError::Clock(server)) => {
                 self.clock.correct(server);
@@ -970,7 +981,18 @@ impl Runtime {
         let refused: Vec<Uuid> = r.reports_refused.iter().map(|(id, _)| *id).collect();
         let _ = self.journal.reports_gone(&refused);
         let _ = self.journal.facts_gone(&r.facts_done);
-        let _ = self.journal.samples_gone(samples_upto);
+        // Over a workspace's allowance nothing was taken: they stay here, within the budget, for later.
+        if !r.measurements_held {
+            let _ = self.journal.samples_gone(samples_upto);
+        }
+        if self.held_back.swap(r.measurements_held, Ordering::Relaxed) != r.measurements_held {
+            let said = if r.measurements_held {
+                "This workspace has used today's allowance of readings, so they are being kept here."
+            } else {
+                "There is room for readings again."
+            };
+            let _ = self.journal.notice(at, said);
+        }
         if r.fenced {
             if self.journal.get("fenced").ok().flatten().is_none() {
                 let _ = self.journal.notice(at, "This gateway no longer holds its domain. Dispatch has stopped.");
@@ -1023,7 +1045,16 @@ impl Runtime {
         if free_disk(&self.cfg.state_dir).is_some_and(|f| f < self.cfg.reserve_mb << 20) {
             batch.retain(|m| m.class == Class::Alarm);
         }
-        self.offer_exports(&batch, &self.devices_by_id());
+        let by_id = self.devices_by_id();
+        self.offer_exports(&batch, &by_id);
+        {
+            let mut recent = self.recent.lock().unwrap_or_else(|e| e.into_inner());
+            for m in &batch {
+                if let Some(d) = by_id.get(&m.device_id) {
+                    recent.heard(&d.code, &m.metric, m.source_time.timestamp_millis(), m.value);
+                }
+            }
+        }
         if let Err(e) = self.journal.add_samples(&batch) {
             tracing::warn!("measurements not kept: {e}");
         }
@@ -1183,9 +1214,10 @@ impl Runtime {
             let mut failures = 0u32;
             loop {
                 let wait = match sync.exchange().await {
-                    Ok(()) => {
+                    // A backlog goes as fast as the platform takes it, which is what paces this.
+                    Ok(more) => {
                         failures = 0;
-                        sync.cfg.sync_secs * 1000
+                        if more { 0 } else { sync.cfg.sync_secs * 1000 }
                     }
                     Err(LinkError::Clock(_)) => 100,
                     Err(e) => {
@@ -1245,7 +1277,11 @@ impl Runtime {
         let reading = tokio::spawn(async move {
             loop {
                 reader.read_equipment().await;
-                tokio::select! { _ = s.changed() => return, _ = tokio::time::sleep(StdDuration::from_secs(reader.cfg.read_secs)) => {} }
+                tokio::select! {
+                    _ = s.changed() => return,
+                    _ = tokio::time::sleep(StdDuration::from_secs(reader.cfg.read_secs)) => {}
+                    () = reader.defined.pressing.notified() => {}
+                }
             }
         });
         let _ = tokio::join!(exchange, working, reading, managing, exporting);

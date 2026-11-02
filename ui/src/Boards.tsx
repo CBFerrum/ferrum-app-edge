@@ -7,6 +7,7 @@ import { bootstrap, refusal } from "@ferrum/client";
 import { Alert, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
 import { can, useEntityMeta } from "@ferrum/records";
 import { type Board, COLUMNS, added, kindOf, KINDS, moved, type Param, parse, resized, SYMBOLS, type Variable, type Widget } from "./layout";
+import { SLOW_POLL_MS } from "./live";
 import { boardData, boardDoc, boardList, device as deviceDetail, devices, newBoard, saveBoard, shareBoard, unshareBoard } from "./data";
 import { Tabs } from "./Tabs";
 import { type Result, WidgetBody } from "./Widgets";
@@ -400,7 +401,7 @@ export function BoardPage() {
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(saved);
   const { dialog } = useUnsavedGuard(dirty);
   useShellTitle(q.data?.dashboard_name ?? "Dashboard");
-  const data = useQuery({ queryKey: ["edge", "board-data", id, body, vars, last], enabled: q.isSuccess, refetchInterval: 5_000, placeholderData: (old) => old, queryFn: () => boardData(body, vars, last) });
+  const data = useQuery({ queryKey: ["edge", "board-data", id, body, vars, last], enabled: q.isSuccess, refetchInterval: SLOW_POLL_MS, placeholderData: (old) => old, queryFn: () => boardData(body, vars, last) });
   const list = useQuery({ queryKey: ["edge", "devices", ""], enabled: (board.variables?.length ?? 0) > 0, queryFn: () => devices({}) });
   const save = useMutation({
     mutationFn: () => saveBoard(id, q.data!.version, { body: JSON.stringify({ ...board, last_secs: last }) }),

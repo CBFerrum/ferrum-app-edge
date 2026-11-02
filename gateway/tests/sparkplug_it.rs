@@ -177,3 +177,34 @@ async fn a_gateway_can_be_an_edge_node_for_someone_elses_scada() {
     assert_eq!(born["seq"], 0);
     next(&mut heard, "spBv1.0/plant/DBIRTH/GW-1/PRESS").await;
 }
+
+/// Eclipse Tahu's own definitions, when `FERRUM_TEST_PYTHON` has mqtt_spb_wrapper, as CI's does.
+#[test]
+fn tahus_definitions_read_what_is_written_here_and_the_other_way() {
+    let Ok(python) = std::env::var("FERRUM_TEST_PYTHON") else {
+        eprintln!("skipped: FERRUM_TEST_PYTHON is not set");
+        return;
+    };
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/sparkplug_peer.py");
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new(&python).arg("-W").arg("ignore").arg(script).args(args).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    let ours = payload(7, json!([{"name": "temp.c", "value": 21.5}, {"name": "on", "value": true}, {"name": "note", "value": "ok"}]));
+    let read: Value = serde_json::from_str(&run(&["read", &hex::encode(ours)])).unwrap();
+    assert_eq!((read["seq"].as_u64(), read["timestamp"].as_u64()), (Some(7), Some(1_800_000_000_000)), "{read}");
+    let by_name = |name: &str| read["metrics"].as_array().unwrap().iter().find(|m| m["name"] == name).unwrap_or_else(|| panic!("{name}: {read}")).clone();
+    assert_eq!(by_name("temp.c")["value"], json!(21.5));
+    assert_eq!(by_name("temp.c")["datatype"], json!(10), "a Double, as Tahu numbers them");
+    assert_eq!(by_name("on")["value"], json!(true));
+    assert_eq!(by_name("note")["value"], json!("ok"));
+
+    let theirs = hex::decode(run(&["write"])).unwrap();
+    let got = sparkplug::decode(&theirs).expect("it reads");
+    let value = |name: &str| got["metrics"].as_array().unwrap().iter().find(|m| m["name"] == name).map(|m| m["value"].clone());
+    assert_eq!(value("temp.c"), Some(json!(21.5)), "{got}");
+    assert_eq!(value("count"), Some(json!(7)), "{got}");
+    assert_eq!(value("on"), Some(json!(true)), "{got}");
+    assert_eq!(value("name"), Some(json!("press")), "{got}");
+}

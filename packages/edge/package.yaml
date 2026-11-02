@@ -1,5 +1,5 @@
 package: edge
-version: 0.2.0
+version: 0.3.0
 label: IoT Edge
 description: Device definitions, edge rules and flows, alarms, exports and releases
 depends: [ops]
@@ -10,7 +10,7 @@ modules:
     label: IoT Edge
     icon: factory
     order: 61
-    items: [DeviceDefinition, EdgeRule, EdgeFlow, EdgeAlarm, EdgeNotifyRule, EdgeExport, EdgeRelease, EdgeDashboard, EdgeAsset, EdgeFirmware, EdgeRollout, EdgeSchedule]
+    items: [DeviceDefinition, EdgeRule, EdgeFlow, EdgeAlarm, EdgeNotifyRule, EdgeExport, EdgeRelease, EdgeDashboard, EdgeAsset, EdgeFirmware, EdgeRollout, EdgeSchedule, EdgeCustomer, EdgeRelation, EdgeReportSchedule]
 
 overlays:
   - entity: Device
@@ -25,6 +25,8 @@ overlays:
       - {op: add_field, column: true, field: {name: edge_password_hash, type: data, read_only: true, no_copy: true, hidden: true}}
       - {op: add_field, column: true, field: {name: edge_certificate, type: data, read_only: true, no_copy: true, label: Certificate Fingerprint}}
       - {op: add_field, column: true, field: {name: edge_via, type: link, to: Device, label: Reached Through, description: "A gateway of its own, for a device that sits behind one"}}
+      - {op: add_field, column: true, field: {name: edge_customer, type: link, to: EdgeCustomer, label: Owned By, in_filter: true, description: "The customer whose people see this one in the workspace's portal"}}
+      - {op: add_field, column: true, field: {name: edge_shows, type: data, label: Shows Its Customer, description: "Which readings its customer sees, comma separated, with a star for the rest of a name: temp.*, power. All of them, if empty"}}
       - {op: add_field, column: true, field: {name: edge_tags, type: data, label: Tags, in_list: true, description: "Comma separated: what lets many devices be found and asked at once"}}
       - {op: add_field, column: true, field: {name: edge_asset, type: link, to: EdgeAsset, label: Belongs To, description: "Where it sits among the things that matter here"}}
 
@@ -44,6 +46,9 @@ roles:
       - {entity: EdgeFirmware, read: true}
       - {entity: EdgeRollout, read: true}
       - {entity: EdgeSchedule, read: true}
+      - {entity: EdgeCustomer, read: true}
+      - {entity: EdgeRelation, read: true}
+      - {entity: EdgeReportSchedule, read: true}
       - {entity: Device, read: true}
       - {entity: Site, read: true}
   - name: Edge Engineer
@@ -61,6 +66,9 @@ roles:
       - {entity: EdgeFirmware, read: true, write: true, create: true, delete: true}
       - {entity: EdgeRollout, read: true, write: true, create: true, delete: true}
       - {entity: EdgeSchedule, read: true, write: true, create: true, delete: true}
+      - {entity: EdgeCustomer, read: true, write: true, create: true, delete: true, export: true, import: true}
+      - {entity: EdgeRelation, read: true, write: true, create: true, delete: true, export: true, import: true}
+      - {entity: EdgeReportSchedule, read: true, write: true, create: true, delete: true}
       - {entity: Device, read: true, write: true, create: true, export: true, import: true}
       - {entity: DeviceProfile, read: true}
       - {entity: Site, read: true}

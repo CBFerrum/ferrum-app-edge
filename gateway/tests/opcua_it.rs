@@ -90,7 +90,7 @@ async fn a_gateway_hears_a_strangers_events_and_reads_its_history() {
     let event = timeout(Duration::from_secs(10), rx.recv()).await.expect("an event").unwrap();
     assert_eq!(event.topic, "events:i=2253");
     let said: Value = serde_json::from_slice(&event.body).unwrap();
-    assert!(said["Message"].to_string().contains("door open"), "{said}");
+    assert_eq!(said["Message"], "door open", "{said}");
     assert_eq!(said["Severity"], json!(500), "{said}");
     assert!(said["EventId"].as_str().is_some_and(|id| !id.is_empty()), "what a condition is acknowledged by: {said}");
 

@@ -37,7 +37,7 @@ start and not a promise: none has been tried on the equipment it names ([compati
 | `s7://plc:102?rack=0&slot=1` | Siemens S7: `DB1.DBD0:real`, `MW10`, `M0.1`, `I0.1` |
 | `enip://plc:44818?slot=0` | EtherNet/IP, by tag: `Line.Speed`, `Temps[3]` |
 | `ads://plc:48898?target=…&port=851&source=…` | TwinCAT ADS, by name and type: `MAIN.speed:real` |
-| `bacnet://controller:47808?priority=16` | BACnet/IP: `analog-input:1`, `binary-value:2/present-value` |
+| `bacnet://controller:47808?priority=16` | BACnet/IP: `analog-input:1`, `binary-value:2/present-value`. `discover` asks who is there, and a broadcast address asks a whole network |
 | `snmp://device:161?community=public&version=2c` | SNMP v1 and v2c: an OID, or `walk:` and one |
 | `snmp://device:161?version=3&user=u&auth={secret.a}&priv={secret.p}&auth_hash=sha256` | SNMP v3: SHA-1 or SHA-256, and AES if `priv` is given |
 | `listen+snmp://0.0.0.0:162` | Traps and informs |
@@ -48,6 +48,7 @@ start and not a promise: none has been tried on the equipment it names ([compati
 | `dlms://meter:4059?client=16&server=1` | DLMS/COSEM electricity meters through the wrapper. `node` is an OBIS code, `1.0.1.8.0.255`, or `class:obis:attribute`. A Register comes back scaled. `&password=` logs in with low security. It only reads |
 | `coap://sensor:5683` | A device that serves CoAP. `get`, `put`, `post`, `delete`, and `subscribe` to watch with Observe |
 | `listen+lwm2m://0.0.0.0:5683` | LwM2M devices register here. `subscribe` lists what to watch on each |
+| `listen+lwm2ms://0.0.0.0:5684`, and `listen+coaps://0.0.0.0:5684` with `api: device` | LwM2M and the device API over DTLS by pre-shared key. The identity is the device's code and the key the SHA-256 of its access token, as bytes, so nothing new has to be given out. An LwM2M device has to register under the identity it proved. Use these for anything off a private network. Certificates over DTLS are not here |
 | `listen+ocpp://0.0.0.0:9000/ocpp?open=1`, `listen+ocpps://…` | EV chargers, with `api: ocpp`. `open=1` lets a charger with no token in |
 | `mtconnect://agent:5000?interval=1000` | An MTConnect agent: everything, then its sample stream |
 | `nats://bus:4222` | NATS subjects in `subscribe` |
@@ -128,6 +129,10 @@ A value says what it is, once: `metric: name` (a number to record), `state: true
 Stopped, Maintenance or Unknown), `attribute: name` (a fact that changes rarely) or `event: name`
 (something that happened).
 
+A network that delivers a device's payload inside JSON says `bytes: $.data` on the rule, for hexadecimal,
+or `encoding: base64` as well, and then `at` counts from there. That is a whole uplink decoder in a line
+per value, with no code in it.
+
 It says where it comes from, once: `json: $.a.b[0]`, `group: name` (of `match`), `at: 4` (a byte, with
 `type`, `order` and `len`), `reg: 2` (a Modbus register, counted from the read), or `value:` (fixed:
 this rule matching is the news). With none of those it is the whole message, as text.
@@ -143,7 +148,7 @@ often. `time: $.timestamp` keeps the time the equipment gave, as RFC 3339 or sec
 since 1970.
 
 `device: "{topic.1}"` says whose message this is, when several devices share a connection, from a
-`+` in the topic, `{group.x}` or `{each.x}`. A code nobody has added goes on the list of strangers for
+`+` in the topic, `{group.x}`, `{each.x}` or `{json.a.b}` for a path in the message. A code nobody has added goes on the list of strangers for
 a person to claim, and nothing it says is recorded until then.
 
 ### Formats

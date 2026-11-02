@@ -6,12 +6,16 @@ import websockets
 from datetime import datetime, timezone
 from ocpp.routing import on
 from ocpp.v16 import ChargePoint as CP, call, call_result
-from ocpp.v16.enums import RegistrationStatus, Action, ChargePointStatus, ChargePointErrorCode, RemoteStartStopStatus
+from ocpp.v16.enums import ChargingProfileStatus, RegistrationStatus, Action, ChargePointStatus, ChargePointErrorCode, RemoteStartStopStatus
 class Station(CP):
     @on(Action.remote_start_transaction)
     async def on_start(self, id_tag, **kw):
         print("remote start", id_tag, flush=True)
         return call_result.RemoteStartTransaction(status=RemoteStartStopStatus.accepted)
+    @on(Action.set_charging_profile)
+    async def on_limit(self, connector_id, cs_charging_profiles, **kw):
+        print("limit", cs_charging_profiles["charging_schedule"]["charging_schedule_period"][0]["limit"], flush=True)
+        return call_result.SetChargingProfile(status=ChargingProfileStatus.accepted)
 async def main():
     async with websockets.connect(sys.argv[1], subprotocols=["ocpp1.6"]) as ws:
         cp = Station("CP_1", ws)
@@ -23,6 +27,6 @@ async def main():
         r = await cp.call(call.Authorize(id_tag="A1")); print("authorize", r.id_tag_info, flush=True)
         r = await cp.call(call.StartTransaction(connector_id=1, id_tag="A1", meter_start=100, timestamp=datetime.now(timezone.utc).isoformat())); print("start", r.transaction_id, flush=True)
         r = await cp.call(call.MeterValues(connector_id=1, meter_value=[{"timestamp": datetime.now(timezone.utc).isoformat(), "sampled_value": [{"value": "1500", "measurand": "Energy.Active.Import.Register", "unit": "Wh"}]}])); print("meter ok", flush=True)
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)
         t.cancel()
 asyncio.run(main())

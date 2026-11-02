@@ -164,6 +164,7 @@ impl Sender {
             "kafka" | "kafkas" => return self.kafka.send(&url, topic.unwrap_or("ferrum"), bodies, secret).await,
             "influx" | "influxs" => return sinks::influx(http, &url, bodies, secret).await,
             "clickhouse" | "clickhouses" => return sinks::clickhouse(http, &url, bodies, secret).await,
+            "postgres" => return sinks::postgres(&url, bodies, secret).await,
             "s3" => return sinks::s3(http, &url, bodies, secret, now).await,
             "sqs" => return sinks::sqs(http, &url, bodies, secret, now).await,
             "sns" => return sinks::sns(http, &url, bodies, secret, now).await,

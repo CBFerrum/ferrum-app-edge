@@ -407,7 +407,7 @@ where
 }
 
 /// SHA-256 of the certificate a device presented, if it did.
-fn fingerprint(stream: &tokio_rustls::server::TlsStream<tokio::net::TcpStream>) -> Option<String> {
+pub(crate) fn fingerprint(stream: &tokio_rustls::server::TlsStream<tokio::net::TcpStream>) -> Option<String> {
     stream.get_ref().1.peer_certificates()?.first().map(|c| crate::adapters::hub::hash(c.as_ref()))
 }
 

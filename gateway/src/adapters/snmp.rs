@@ -2,9 +2,11 @@
 //! is a password sent in the clear, so that it stays on a network that can bear it. Version 3 is in
 //! [`super::snmp3`].
 //!
-//! `snmp://10.0.0.7:161?community=public&version=2c`, and `listen+snmp://0.0.0.0:162` for traps.
+//! `snmp://10.0.0.7:161?community=public&version=2c`, and `listen+snmp://0.0.0.0:162` for traps, with
+//! `?user=u&auth={secret.a}&priv={secret.p}` for version 3's.
 
 use crate::adapter::Failure;
+use crate::adapters::snmp3::TrapUser;
 use crate::adapters::tags::{ANSWER, Tags, Trouble, host_port, number, query};
 use crate::adapters::transport::{Message, Out, Transport};
 use async_trait::async_trait;
@@ -243,6 +245,18 @@ impl Tags for Snmp {
 /// inform asks for an answer, so it gets one.
 pub struct Traps {
     pub address: String,
+    /// Who may send them in version 3, with `?user=` and its passwords. Without one, v3 traps are
+    /// dropped: they could not be checked.
+    pub user: Option<TrapUser>,
+}
+
+impl Traps {
+    fn pdu(&self, message: &[u8]) -> Option<Pdu> {
+        parse(message).or_else(|| {
+            let (kind, bindings) = self.user.as_ref()?.open(message)?;
+            Some(Pdu { kind, id: 0, error: 0, bindings })
+        })
+    }
 }
 
 #[async_trait]
@@ -256,7 +270,7 @@ impl Transport for Traps {
                 () = tx.closed() => return Ok(()),
                 got = socket.recv_from(&mut buffer) => got.map_err(|e| e.to_string())?,
             };
-            let Some(pdu) = parse(&buffer[..n]).filter(|p| matches!(p.kind, TRAP_V1 | TRAP_V2 | INFORM)) else { continue };
+            let Some(pdu) = self.pdu(&buffer[..n]).filter(|p| matches!(p.kind, TRAP_V1 | TRAP_V2 | INFORM)) else { continue };
             if pdu.kind == INFORM {
                 let mut answer = buffer[..n].to_vec();
                 if let Some(at) = answer.iter().position(|b| *b == INFORM) {

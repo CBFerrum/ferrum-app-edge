@@ -283,7 +283,12 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
                 Arc::new(HttpServer { address: bind.to_string(), tls: secured, hub })
             }
         }
-        "listen+coap" => Arc::new(CoapServer { address: bind.to_string(), hub: hub.ok_or("nothing here can check who calls")?, socket: Mutex::new(None) }),
+        "listen+coap" | "listen+coaps" => Arc::new(CoapServer {
+            address: bind.to_string(),
+            hub: hub.ok_or("nothing here can check who calls")?,
+            secure: scheme.ends_with('s'),
+            socket: Mutex::new(None),
+        }),
         "http" | "https" => Arc::new(Http::new(address, headers, tls, limits)?),
         #[cfg(feature = "ws")]
         "ws" | "wss" => {
@@ -319,7 +324,9 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
         "kafka" | "kafkas" => Arc::new(super::sources::KafkaSource::new(scheme, rest, subscribe, limits.state_dir.as_deref())?),
         "file" => Arc::new(super::files::Folder::new(rest)),
         "ftp" => Arc::new(super::files::Ftp::new(rest)),
-        "listen+lwm2m" => Arc::new(super::lwm2m::Lwm2m::new(bind.to_string(), subscribe, hub.ok_or("nothing here can check who calls")?)),
+        "listen+lwm2m" | "listen+lwm2ms" => {
+            Arc::new(super::lwm2m::Lwm2m::new(bind.to_string(), subscribe, hub.ok_or("nothing here can check who calls")?, scheme.ends_with('s')))
+        }
         "knx" => Arc::new(super::knx::Knx::new(rest, subscribe)),
         "iec104" => Arc::new(super::iec104::Iec104::new(rest)),
         "dnp3" => Arc::new(super::dnp3::Dnp3::new(rest)),
@@ -343,7 +350,7 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
                 })
             }))
         }
-        "listen+snmp" => Arc::new(super::snmp::Traps { address: bind.to_string() }),
+        "listen+snmp" => Arc::new(super::snmp::Traps { address: bind.to_string(), user: super::snmp3::TrapUser::from_address(rest) }),
         #[cfg(feature = "ws")]
         "listen+ocpp" | "listen+ocpps" => {
             let address = bind.split('/').next().unwrap_or(bind).to_string();

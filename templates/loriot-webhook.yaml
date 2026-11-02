@@ -1,0 +1,8 @@
+# about: LoRaWAN devices through LORIOT's HTTP push output, decoding the payload here.
+# group: Generic
+# The fields are examples. Change them to what the device sends.
+name: loriot-webhook
+connect: webhook://0.0.0.0:8088?token={secret.webhook_token}
+read:
+  - {topic: /loriot, device: "{json.EUI}", when: {json: $.cmd, is: rx}, bytes: $.data, values: [{metric: temp.c, at: 0, type: i16, scale: 0.01, unit: C}]}
+  - {topic: /loriot, device: "{json.EUI}", when: {json: $.cmd, is: rx}, attribute: rssi, json: $.rssi}

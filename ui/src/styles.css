@@ -1085,3 +1085,19 @@ a.edge-row-main:hover strong {
 .edge-rows-left td {
   text-align: left;
 }
+
+.edge-portal {
+  margin-inline: auto;
+  max-width: 1100px;
+}
+
+.edge-portal h1 {
+  font-size: 1.375rem;
+  font-weight: 600;
+}
+
+.edge-plain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}

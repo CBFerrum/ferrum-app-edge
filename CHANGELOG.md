@@ -1,7 +1,29 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
+- Customers who own devices: their people see those devices, their alarms and the dashboards given to
+  them in the workspace's portal, and nothing else.
+- A device can show its customer only some of its readings, and alarms can be chosen for push.
+- Relations between devices, by any name, shown on both and usable to choose them.
+- Reports by the clock, by email, as CSV or PDF.
+- Pages hear on the platform's socket that readings landed, and ask again at once.
+- A workspace's allowance of measurements a day: past it, gateways hold readings until there is room.
+- CoAP and LwM2M over DTLS, by pre-shared key, so they can leave a private network: `listen+coaps` and
+  `listen+lwm2ms`. Met Eclipse Leshan's client.
+- SNMP v3 traps, with `?user=` on `listen+snmp`, and BACnet's `discover`, by Who-Is.
+- OCPP security profile 3: a charger known by its certificate. Charging profiles go as commands.
+- Templates for The Things Stack, Sigfox, LORIOT, ThingPark, AWS IoT Core and Azure Event Hubs. `bytes:`
+  decodes a payload delivered inside JSON, and `device:` can come from the message.
+- An export to a table of your own in PostgreSQL.
+- A backlog drains as fast as the platform takes it, rather than 5,000 readings each `sync_secs`, and a
+  link piling up wakes the reader, rather than dropping them until its next `read_secs`. One gateway went
+  from about 1,000 stored a second to 28,500 with nothing lost. `scripts/soak.py` measures it.
+- AAS Part 2's repository, reading only, and what scanners saw as a GS1 EPCIS 2.0 document.
+- `ferrum-site release-key` and `sign`, and a workflow that builds the gateway on a tag.
+- ThingsBoard's own Python client works against a gateway unchanged, in CI, for devices and gateways.
+  It found a real fault: its firmware subscription did not match the chunks, so a download hung.
+- Modbus TCP against pymodbus, and Sparkplug payloads against Eclipse Tahu's definitions, in CI.
 - A gateway as an OPC UA server, by an export to `listen+opcua://`: each device a folder, each metric a
   variable, read only, with a login over encryption if a secret is named.
 - OPC UA history with `history:`, and events carrying `EventId` and `ConditionId`, met against asyncua.

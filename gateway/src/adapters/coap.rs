@@ -7,6 +7,7 @@
 //! own network, and a device on any other should use MQTT over TLS.
 
 use crate::adapter::Failure;
+use crate::adapters::dtls::Wire;
 use crate::adapters::hub::{Hub, Proof};
 use crate::adapters::transport::{Message, Out, Transport};
 use async_trait::async_trait;
@@ -234,7 +235,9 @@ impl Memory {
 pub struct CoapServer {
     pub address: String,
     pub hub: Arc<Hub>,
-    pub socket: Mutex<Option<Arc<UdpSocket>>>,
+    /// Encrypted by DTLS, which takes a device's key, or plain.
+    pub secure: bool,
+    pub socket: Mutex<Option<Wire>>,
 }
 
 /// The block option's parts: number, whether more follows, and the size of a block.
@@ -276,7 +279,7 @@ fn assemble(memory: &mut Memory, peer: SocketAddr, m: &Coap, value: &[u8]) -> Re
 /// Keeps a device told of what it is watching, for as long as it wants to know.
 fn watch(
     hub: Arc<Hub>,
-    socket: Arc<UdpSocket>,
+    socket: Wire,
     peer: SocketAddr,
     token: Vec<u8>,
     session: u64,
@@ -430,7 +433,7 @@ impl Transport for CoapClient {
 struct Served {
     hub: Arc<Hub>,
     tx: mpsc::Sender<Message>,
-    socket: Arc<UdpSocket>,
+    socket: Wire,
     memory: Mutex<Memory>,
 }
 
@@ -572,7 +575,7 @@ impl Served {
 #[async_trait]
 impl Transport for CoapServer {
     async fn run(&self, tx: mpsc::Sender<Message>, ready: mpsc::Sender<()>) -> Result<(), String> {
-        let socket = Arc::new(UdpSocket::bind(&self.address).await.map_err(|e| format!("{}: {e}", self.address))?);
+        let socket = if self.secure { Wire::secured(&self.address, self.hub.clone()).await? } else { Wire::plain(&self.address).await? };
         *self.socket.lock().await = Some(socket.clone());
         let _ = ready.send(()).await;
         let served = Arc::new(Served { hub: self.hub.clone(), tx: tx.clone(), socket: socket.clone(), memory: Mutex::default() });

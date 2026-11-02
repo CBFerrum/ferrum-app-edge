@@ -9,6 +9,7 @@ import { refusal, relativeTime } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { tries } from "./connecting";
 import { type Attribute, connection, desire, device, deviceRecord, type Issued, issueCredentials, revokeCredentials, sendCommand } from "./data";
+import { SLOW_POLL_MS } from "./live";
 import { Acknowledge } from "./Alarms";
 import { History } from "./History";
 import { Tabs } from "./Tabs";
@@ -218,7 +219,7 @@ function Connect({ id, onClose }: { id: string; onClose: () => void }) {
 
 export function DevicePage() {
   const { id } = useParams() as { id: string };
-  const q = useQuery({ queryKey: ["edge", "device", id], queryFn: () => device(id), refetchInterval: 10_000 });
+  const q = useQuery({ queryKey: ["edge", "device", id], queryFn: () => device(id), refetchInterval: SLOW_POLL_MS });
   const [asking, setAsking] = useState<Attribute | "new" | null>(null);
   const [token, setToken] = useState(false);
   const [sending, setSending] = useState(false);
@@ -277,6 +278,18 @@ export function DevicePage() {
           </dl>
         )}
       </section>
+      {d.related?.length ? (
+        <section className="card card-pad stack" aria-label="Related devices">
+          <h2 className="edge-section">Related</h2>
+          <ul className="edge-plain">
+            {d.related.map((r) => (
+              <li key={r.id}>
+                {r.out ? r.relation : `${r.relation} (from)`} <Link to={`/d/${r.to}`}>{r.name}</Link> <span className="muted">{r.code}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       <History id={id} code={record.data?.device_code ?? id} metrics={metrics.map((m) => m.metric)} />
       <section className="card card-pad stack" aria-label="Attributes">
         <h2 className="edge-section">What it says about itself</h2>

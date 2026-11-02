@@ -277,6 +277,55 @@ async fn several_units_share_one_modbus_serial_line() {
 }
 
 #[tokio::test]
+async fn a_burst_wakes_the_reader_rather_than_waiting_for_its_turn() {
+    let port = free_port();
+    let address = format!("127.0.0.1:{port}");
+    let definition = format!("name: chatty\nconnect: listen://{address}\nframe: {{line: \"\\n\"}}\nread:\n  - {{metric: level}}\n");
+    let d = start(Limits { listen: vec![address.clone()], ..Default::default() }, &definition, &[("CHATTY", Value::Null)]);
+    until("the port", async || TcpStream::connect(&address).await.is_ok()).await;
+    let woken = d.pressing.clone();
+    let mut chatty = TcpStream::connect(&address).await.unwrap();
+    let burst = "1.5\n".repeat(6_000);
+    let woke = tokio::time::timeout(Wait::from_secs(5), async {
+        tokio::join!(woken.notified(), async { chatty.write_all(burst.as_bytes()).await.unwrap() });
+    })
+    .await;
+    assert!(woke.is_ok(), "half full is when a read is due, whatever the clock says");
+}
+
+/// Someone else's Modbus at the far end, when `FERRUM_TEST_PYTHON` has pymodbus, as CI's does.
+#[tokio::test]
+async fn a_controller_written_by_someone_else_over_modbus_tcp() {
+    let Ok(python) = std::env::var("FERRUM_TEST_PYTHON") else {
+        eprintln!("skipped: FERRUM_TEST_PYTHON is not set");
+        return;
+    };
+    use tokio::io::AsyncBufReadExt;
+    let port = free_port();
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/modbus_peer.py");
+    let mut peer =
+        tokio::process::Command::new(python).arg(script).arg(port.to_string()).stdout(std::process::Stdio::piped()).kill_on_drop(true).spawn().unwrap();
+    let mut lines = tokio::io::BufReader::new(peer.stdout.take().unwrap()).lines();
+    lines.next_line().await.unwrap().expect("it started");
+    until("its port", async || TcpStream::connect(("127.0.0.1", port)).await.is_ok()).await;
+
+    let seen = Seen::default();
+    let definition = format!(
+        "name: press\nconnect: modbus+tcp://127.0.0.1:{port}?unit=1\npoll:\n  - {{every: 200ms, read: holding, at: 0, count: 6}}\n  - {{every: 200ms, read: holding, at: 100, count: 2}}\nread:\n  - topic: holding/0\n    values:\n      - {{metric: temp.c, reg: 0, type: i16, scale: 0.1}}\n      - {{metric: pressure.bar, reg: 1, type: f32, order: cdab}}\n      - {{metric: cycles.count, reg: 3, type: u32}}\n  - topic: holding/100\n    values:\n      - {{metric: started, reg: 0, type: u16}}\n      - {{metric: job, reg: 1, type: u16}}\ncommands:\n  machine.start_job:\n    once: true\n    write:\n      - {{at: 101, value: \"{{payload.job}}\"}}\n      - {{at: 100, value: 1}}\n"
+    );
+    let d = start(Limits::default(), &definition, &[("PRESS-1", Value::Null)]);
+    seen.reading(&d, |r| metric(r, "temp.c", 21.5)).await;
+    seen.reading(&d, |r| metric(r, "pressure.bar", 12.5)).await;
+    seen.reading(&d, |r| metric(r, "cycles.count", 65538.0)).await;
+    seen.reading(&d, |r| metric(r, "started", 0.0)).await;
+
+    let job = command("machine.start_job", json!({"job": 7}));
+    assert!(matches!(d.dispatch(&job, &device("PRESS-1")).await, Ok(Dispatched::Accepted { .. })));
+    seen.reading(&d, |r| metric(r, "job", 7.0)).await;
+    seen.reading(&d, |r| metric(r, "started", 1.0)).await;
+}
+
+#[tokio::test]
 async fn a_binary_protocol_is_checked_both_ways() {
     let seen = Seen::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

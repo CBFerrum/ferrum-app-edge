@@ -1,9 +1,12 @@
 //! What IoT Edge can say on paper: which devices were there, what went wrong, and what they read.
 
+use crate::schedules::{days_of, due};
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use ferrum_domain::reports::{ReportSource, col};
-use ferrum_kernel::{Ctx, Error, Kernel, Result};
+use ferrum_domain::util::s;
+use ferrum_edge_contract::flow::minutes_of;
+use ferrum_kernel::{Ctx, Doc, DocHook, Error, HookCtx, Kernel, Result};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -122,5 +125,201 @@ impl ReportSource for EdgeReports {
         };
         tx.rollback().await?;
         Ok(out)
+    }
+}
+
+/// How many rows a mail shows of a report. The whole of it is attached.
+const IN_THE_MAIL: usize = 20;
+
+fn cell(v: &Value) -> String {
+    let text = match v {
+        Value::Null => String::new(),
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    // A device's name came from outside: a spreadsheet must not run it as a formula.
+    let text = if v.is_string() && text.starts_with(['=', '+', '-', '@', '\t', '\r']) { format!("'{text}") } else { text };
+    if text.contains(['"', ',', '\n', '\r']) { format!("\"{}\"", text.replace('"', "\"\"")) } else { text }
+}
+
+/// A report as CSV: titled, in the order of its columns, with a line ending a spreadsheet expects.
+pub fn csv(report: &Value) -> String {
+    let columns = report["columns"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let mut lines = vec![columns.iter().map(|c| cell(&c["label"])).collect::<Vec<_>>().join(",")];
+    for row in report["rows"].as_array().into_iter().flatten() {
+        lines.push(columns.iter().map(|c| cell(&row[c["name"].as_str().unwrap_or_default()])).collect::<Vec<_>>().join(","));
+    }
+    lines.join("\r\n") + "\r\n"
+}
+
+fn escaped(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// The first rows of a report as a table, with what a reader should know about the rest.
+pub fn html(title: &str, report: &Value, limit: usize) -> String {
+    let columns = report["columns"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let shown = |v: &Value| escaped(&v.as_str().map_or_else(|| if v.is_null() { String::new() } else { v.to_string() }, str::to_string));
+    let head: String = columns.iter().map(|c| format!("<th align=\"left\">{}</th>", shown(&c["label"]))).collect();
+    let rows = report["rows"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let body: String = rows
+        .iter()
+        .take(limit)
+        .map(|r| format!("<tr>{}</tr>", columns.iter().map(|c| format!("<td>{}</td>", shown(&r[c["name"].as_str().unwrap_or_default()]))).collect::<String>()))
+        .collect();
+    let more = if rows.len() > limit { format!("<p>The first {limit} of {} rows.</p>", rows.len()) } else { String::new() };
+    format!("<h1>{}</h1><table cellpadding=\"4\"><tr>{head}</tr>{body}</table>{more}", escaped(title))
+}
+
+#[derive(sqlx::FromRow)]
+struct Scheduled {
+    id: Uuid,
+    schedule_name: String,
+    report: String,
+    format: Option<String>,
+    days_back: Option<i64>,
+    at_time: Option<String>,
+    days: Option<String>,
+    offset_minutes: Option<i64>,
+    site: Option<Uuid>,
+    device: Option<Uuid>,
+    metric: Option<String>,
+    last_run: Option<DateTime<Utc>>,
+}
+
+/// Runs what is due. The mail goes through the platform's outbox, in one transaction with the note
+/// that it ran, so a report is neither lost nor sent twice by a crash here, and a mailer that is down
+/// is retried there. A report that cannot be made is said on the schedule and not tried again until
+/// its next day: it is someone's to fix, and trying every minute changes nothing.
+pub async fn deliver(k: &Kernel, ctx: &Ctx) -> Result<()> {
+    let now = Utc::now();
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let schedules: Vec<Scheduled> = sqlx::query_as(
+        "select id, schedule_name, report, format, days_back, at_time, days, offset_minutes, site, device, metric, last_run \
+         from e_edge_report_schedule where tenant_id = $1 and enabled",
+    )
+    .bind(ctx.tenant)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    for s in schedules {
+        if !due(None, s.at_time.as_deref(), s.days.as_deref().unwrap_or_default(), s.offset_minutes.unwrap_or(0), s.last_run, now) {
+            continue;
+        }
+        if let Err(e) = send(k, ctx, &s, now).await {
+            tracing::warn!(tenant = %ctx.tenant, schedule = %s.id, "a report did not go out: {e}");
+            let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+            noted(&mut tx, ctx, s.id, now, &format!("It did not go out: {e}")).await?;
+            tx.commit().await?;
+        }
+    }
+    Ok(())
+}
+
+async fn noted(tx: &mut ferrum_kernel::Tx, ctx: &Ctx, id: Uuid, now: DateTime<Utc>, result: &str) -> Result<()> {
+    sqlx::query("update e_edge_report_schedule set last_run = $3, last_result = $4 where tenant_id = $1 and id = $2")
+        .bind(ctx.tenant)
+        .bind(id)
+        .bind(now)
+        .bind(result)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+async fn send(k: &Kernel, ctx: &Ctx, s: &Scheduled, now: DateTime<Utc>) -> Result<()> {
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let to: Vec<String> = sqlx::query_scalar("select email from e_edge_report_schedule__recipients where tenant_id = $1 and parent_id = $2 order by idx")
+        .bind(ctx.tenant)
+        .bind(s.id)
+        .fetch_all(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    if to.is_empty() {
+        return Err(Error::invalid("it names nobody to send it to"));
+    }
+    let mut params = HashMap::from([
+        ("from_date".to_string(), (now - Duration::days(s.days_back.unwrap_or(7))).date_naive().to_string()),
+        ("to_date".to_string(), now.date_naive().to_string()),
+    ]);
+    params.extend(s.site.map(|v| ("site".to_string(), v.to_string())));
+    params.extend(s.device.map(|v| ("device".to_string(), v.to_string())));
+    params.extend(s.metric.clone().map(|v| ("metric".to_string(), v)));
+    let report = EdgeReports.run(k, ctx, &s.report, &params).await?;
+    let stem = format!("{} {}", s.schedule_name, now.date_naive());
+    let (name, kind, data) = if s.format.as_deref() == Some("PDF") {
+        let page = format!("<!doctype html><meta charset=\"utf-8\">{}", html(&stem, &report, MAX_ROWS as usize));
+        (format!("{stem}.pdf"), "application/pdf", k.html_to_pdf(&page).await?)
+    } else {
+        (format!("{stem}.csv"), "text/csv", csv(&report).into_bytes())
+    };
+    // ponytail: each run's file stays on the schedule as the record of what went out, and counts
+    // against the workspace's storage. Delete old ones from there if that ever matters.
+    let kept = k.store_file(ctx, Some(("EdgeReportSchedule", s.id)), &name, kind, &data).await;
+    let can_attach = k.mailer.as_ref().is_some_and(|m| m.can_attach());
+    let files: Vec<Uuid> = match &kept {
+        Ok(file) if can_attach => file["id"].as_str().and_then(|i| i.parse().ok()).into_iter().collect(),
+        Ok(_) => vec![],
+        Err(e) => {
+            tracing::warn!(tenant = %ctx.tenant, "a report's file was not kept, so it goes in the mail alone: {e}");
+            vec![]
+        }
+    };
+    let body = html(&s.schedule_name, &report, IN_THE_MAIL);
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    for person in &to {
+        k.queue_mail_with(&mut tx, ctx.tenant, person, &stem, &body, &files).await?;
+    }
+    noted(&mut tx, ctx, s.id, now, &format!("Sent to {} people, {} rows", to.len(), report["rows"].as_array().map_or(0, Vec::len))).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub struct ReportScheduleHook;
+
+#[async_trait]
+impl DocHook for ReportScheduleHook {
+    fn name(&self) -> &'static str {
+        "edge.report_schedule"
+    }
+
+    async fn validate_change(&self, _hc: &mut HookCtx<'_>, _old: Option<&Doc>, doc: &Doc) -> Result<()> {
+        if s(doc, "at_time").is_none_or(|t| minutes_of(t).is_none()) {
+            return Err(Error::field("at_time", "times of day are written 08:30"));
+        }
+        if days_of(s(doc, "days").unwrap_or_default()).is_none() {
+            return Err(Error::field("days", "days go from 1, Monday, to 7"));
+        }
+        if doc.get("recipients").and_then(Value::as_array).is_none_or(Vec::is_empty) {
+            return Err(Error::field("recipients", "say who it goes to"));
+        }
+        if s(doc, "report") == Some("edge_readings") && (s(doc, "device").is_none() || s(doc, "metric").is_none()) {
+            return Err(Error::field("device", "readings by the hour are of one device and one metric"));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_report_as_csv_cannot_run_anything() {
+        let report = json!({
+            "columns": [{"name": "device", "label": "Device"}, {"name": "note", "label": "Note, or not"}, {"name": "n", "label": "N"}],
+            "rows": [{"device": "=HYPERLINK(1)", "note": "a,\"b\"", "n": -3}, {"device": "P1"}],
+        });
+        assert_eq!(csv(&report), "Device,\"Note, or not\",N\r\n'=HYPERLINK(1),\"a,\"\"b\"\"\",-3\r\nP1,,\r\n");
+    }
+
+    #[test]
+    fn a_mail_shows_the_first_rows_and_says_so() {
+        let report = json!({"columns": [{"name": "d", "label": "D"}], "rows": [{"d": "<b>"}, {"d": 2}, {"d": 3}]});
+        let page = html("Week & day", &report, 2);
+        assert!(page.contains("<h1>Week &amp; day</h1>"));
+        assert!(page.contains("<td>&lt;b&gt;</td><"), "a name from outside is shown, and does nothing: {page}");
+        assert!(page.contains("The first 2 of 3 rows"));
+        assert!(!page.contains("<td>3</td>"));
     }
 }
