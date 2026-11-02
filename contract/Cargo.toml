@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 ferrum-calc = { workspace = true }
 chrono = { workspace = true }
+base64 = "0.22"
 hex = { workspace = true }
 quick-xml = "0.42"
 rust_decimal = { workspace = true }

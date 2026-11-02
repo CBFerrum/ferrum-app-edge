@@ -129,6 +129,10 @@ A value says what it is, once: `metric: name` (a number to record), `state: true
 Stopped, Maintenance or Unknown), `attribute: name` (a fact that changes rarely) or `event: name`
 (something that happened).
 
+A network that delivers a device's payload inside JSON says `bytes: $.data` on the rule, for hexadecimal,
+or `encoding: base64` as well, and then `at` counts from there. That is a whole uplink decoder in a line
+per value, with no code in it.
+
 It says where it comes from, once: `json: $.a.b[0]`, `group: name` (of `match`), `at: 4` (a byte, with
 `type`, `order` and `len`), `reg: 2` (a Modbus register, counted from the read), or `value:` (fixed:
 this rule matching is the news). With none of those it is the whole message, as text.
@@ -144,7 +148,7 @@ often. `time: $.timestamp` keeps the time the equipment gave, as RFC 3339 or sec
 since 1970.
 
 `device: "{topic.1}"` says whose message this is, when several devices share a connection, from a
-`+` in the topic, `{group.x}` or `{each.x}`. A code nobody has added goes on the list of strangers for
+`+` in the topic, `{group.x}`, `{each.x}` or `{json.a.b}` for a path in the message. A code nobody has added goes on the list of strangers for
 a person to claim, and nothing it says is recorded until then.
 
 ### Formats

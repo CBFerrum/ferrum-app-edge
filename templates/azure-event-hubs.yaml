@@ -1,0 +1,9 @@
+# about: Readings from Azure Event Hubs or IoT Hub's built-in endpoint, through its Kafka interface.
+# group: Messaging
+# The password is the connection string, kept as a secret at the site.
+name: azure-event-hubs
+connect: kafkas://$ConnectionString:{secret.event_hub}@example.servicebus.windows.net:9093
+subscribe:
+  - plant-readings
+read:
+  - {topic: plant-readings, device: "{json.device}", metric: temp.c, json: $.temp, unit: C}
