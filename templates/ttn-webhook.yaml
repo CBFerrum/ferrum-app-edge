@@ -1,0 +1,8 @@
+# about: LoRaWAN devices through The Things Stack's webhook, with its payload formatter's values.
+# group: Generic
+# Point the webhook's uplink path at /ttn. Every decoded key becomes a value.
+name: ttn-webhook
+connect: webhook://0.0.0.0:8088?token={secret.webhook_token}
+read:
+  - {topic: /ttn, device: "{json.end_device_ids.device_id}", each: $.uplink_message.decoded_payload, metric: "{each.key}", json: $.value}
+  - {topic: /ttn, device: "{json.end_device_ids.device_id}", attribute: rssi, json: "$.uplink_message.rx_metadata[0].rssi"}

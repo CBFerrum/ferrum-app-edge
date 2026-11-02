@@ -119,6 +119,18 @@ with nothing running, checks the file against the signed hash, keeps the old bin
 and restarts. A new build that keeps dying before it has spoken to the platform is put back, and that
 version is refused from then on.
 
+To make one, tag this repository `v0.3.0`: CI builds `ferrum-site` for 64-bit Intel and ARM Linux and
+attaches them to a GitHub release, with their hashes. CI holds no key, because a release is a person's to
+sign:
+
+```
+ferrum-site release-key > release.key     # once: public goes in update_keys, secret stays off every gateway
+ferrum-site sign --key secret.txt --version 0.3.0 --url https://…/ferrum-site --file ferrum-site --days 90
+```
+
+`sign` prints the version, hash, signature and expiry for the Edge Release. Keep the secret half on a
+machine that is not a gateway, in a file holding only it.
+
 **Robot, PLC and safety firmware stay with their makers' procedures**; nothing here touches them.
 
 ## Boxes in cabinets
@@ -163,6 +175,7 @@ queue when the far end has said yes.
 | `azure://hub.azure-devices.net/device` | Azure IoT Hub, as that device | | The device's key |
 | `eventhub://namespace.servicebus.windows.net/hub` | Azure Event Hubs | | `policy:key` |
 | `sparkplug://broker:1883/group/node`, `sparkplugs://` | This gateway as a Sparkplug edge node: births, data in sequence, and everything again if a host asks | | |
+| `postgres://writer@historian/plant?table=readings` | Rows in a table of someone else's, with columns `device`, `metric`, `value` and `at`, and the password as `sign_with`. A unique index on those makes a repeated batch land once. Plain TCP, so it belongs on a control network |
 | `listen+opcua://0.0.0.0:4840`, `listen+opcua://reader@0.0.0.0:4840` | This gateway as an OPC UA server, read only: each device a folder and each metric a variable, `ns=2;s=PRESS-1/temp.c`, stamped with the device's time. The address must be in `listen`. With a user and `sign_with`, only Basic256Sha256 with that password, and a client's certificate is trusted once a person moves it from `rejected` to `trusted` under `state_dir/tls/opcua-server`. The port closes when no export names it. Nothing can be written: a command goes through the ledger |
 
 A secret is named by the export and kept in the site's `secrets`. An address with a password in it is

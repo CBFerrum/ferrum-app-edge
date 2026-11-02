@@ -28,6 +28,7 @@ pub mod firmware;
 pub mod fleet;
 pub mod notices;
 pub mod platform_flows;
+pub mod portal;
 pub mod reports;
 pub mod schedules;
 pub mod site;
@@ -64,6 +65,7 @@ pub fn register(h: &mut HookRegistry) {
     h.register("EdgeFirmware", Arc::new(firmware::FirmwareHook));
     h.register("EdgeRollout", Arc::new(firmware::RolloutHook));
     h.register("EdgeSchedule", Arc::new(schedules::ScheduleHook));
+    h.register("EdgeReportSchedule", Arc::new(reports::ReportScheduleHook));
     h.add_event_sink(Arc::new(Facts));
     h.add_site("edge", Arc::new(site::EdgeSite));
     h.add_job_handler(Arc::new(notices::Notices));
@@ -356,6 +358,7 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
             notices::send_due(k, &ctx).await.map(drop),
             platform_flows::run(k, &ctx).await,
             firmware::advance(k, &ctx).await,
+            reports::deliver(k, &ctx).await,
         ] {
             if let Err(e) = outcome {
                 tracing::warn!(%tenant, "edge maintenance failed: {e}");

@@ -7,6 +7,7 @@
 
 use crate::adapter::Failure;
 use crate::adapters::coap::Coap;
+use crate::adapters::dtls::Wire;
 use crate::adapters::hub::Hub;
 use crate::adapters::transport::{Message, Out, Transport};
 use async_trait::async_trait;
@@ -15,7 +16,6 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
-use tokio::net::UdpSocket;
 use tokio::sync::{Mutex, mpsc};
 
 const CON: u8 = 0;
@@ -60,14 +60,15 @@ pub struct Lwm2m {
     pub address: String,
     pub watch: Vec<String>,
     pub hub: Arc<Hub>,
-    socket: Mutex<Option<Arc<UdpSocket>>>,
+    secure: bool,
+    socket: Mutex<Option<Wire>>,
     registered: Arc<Mutex<Registered>>,
     next: AtomicU16,
 }
 
 impl Lwm2m {
-    pub fn new(address: String, watch: &[String], hub: Arc<Hub>) -> Lwm2m {
-        Lwm2m { address, watch: watch.to_vec(), hub, socket: Mutex::new(None), registered: Arc::default(), next: AtomicU16::new(rand::random()) }
+    pub fn new(address: String, watch: &[String], hub: Arc<Hub>, secure: bool) -> Lwm2m {
+        Lwm2m { address, watch: watch.to_vec(), hub, secure, socket: Mutex::new(None), registered: Arc::default(), next: AtomicU16::new(rand::random()) }
     }
 
     fn request(&self, code: u8, path: &str, observe: bool, payload: Vec<u8>) -> Coap {
@@ -96,7 +97,7 @@ impl Lwm2m {
 #[async_trait]
 impl Transport for Lwm2m {
     async fn run(&self, tx: mpsc::Sender<Message>, ready: mpsc::Sender<()>) -> Result<(), String> {
-        let socket = Arc::new(UdpSocket::bind(&self.address).await.map_err(|e| format!("{}: {e}", self.address))?);
+        let socket = if self.secure { Wire::secured(&self.address, self.hub.clone()).await? } else { Wire::plain(&self.address).await? };
         *self.socket.lock().await = Some(socket.clone());
         let _ = ready.send(()).await;
         let mut buffer = vec![0u8; 1500];
@@ -110,7 +111,9 @@ impl Transport for Lwm2m {
                 let path = m.path();
                 let answer = match (m.code, path.as_slice()) {
                     (POST, ["rd"]) => {
-                        let Some(endpoint) = registration(&m).filter(|e| self.hub.known(e)) else {
+                        // Over DTLS, who it proved it was is who it may say it is.
+                        let vouched = |e: &String| !socket.encrypted() || socket.identity(peer).as_ref() == Some(e);
+                        let Some(endpoint) = registration(&m).filter(|e| self.hub.known(e) && vouched(e)) else {
                             let reply = m.answer(if registration(&m).is_some() { FORBIDDEN } else { BAD }, Vec::new());
                             let _ = socket.send_to(&reply.to_bytes(), peer).await;
                             continue;

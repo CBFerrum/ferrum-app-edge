@@ -31,6 +31,7 @@ APP_UNIT = ("-p", "ferrum-app-edge", "--lib")
 DEVICES = ("-p", "ferrum-site", "--test", "devices_it")
 OCPP = ("-p", "ferrum-site", "--test", "ocpp_it")
 DNP3 = ("-p", "ferrum-site", "--test", "dnp3_it")
+PORTAL = ("-p", "ferrum-app-edge", "--test", "portal_it")
 EXPORTS = ("-p", "ferrum-site", "--test", "exports_it")
 METERS = ("-p", "ferrum-site", "--test", "dlms_it")
 # Generous enough to compile and run; passing it means the mutant hung the test.
@@ -38,6 +39,16 @@ TIMEOUT = 600
 
 # name, file, text to replace, what breaks it, test
 MUTANTS = [
+    ("customer-asks-for-what-is-hidden", "src/portal.rs", 'return Err(Error::NotFound(format!("reading {hidden}")));', "let _ = hidden;", PORTAL),
+    ("a-burst-waits-for-the-clock", "gateway/src/adapters/defined.rs", "                self.pressing.notify_one();\n", "", PROTOCOLS),
+    ("held-readings-thrown-away", "gateway/src/runtime.rs", "        if !r.measurements_held {\n", "        if true {\n", SITE),
+    ("firmware-unheard-by-thingsboards-client", "contract/src/device_api.rs", 'if filter.starts_with(FIRMWARE_ANSWER) { "v2/fw/response/#" } else { filter }', "filter", CONTRACT),
+    ("customer-sees-anothers-device", "src/portal.rs", "where d.tenant_id = $1 and d.id = $2 and d.edge_customer = any($3) and d.lifecycle <> 'Retired'", "where d.tenant_id = $1 and d.id = $2 and cardinality($3::uuid[]) >= 0", PORTAL),
+    ("customer-sees-every-device", "src/portal.rs", "where d.tenant_id = $1 and d.edge_customer = any($2) and d.lifecycle <> 'Retired') r", "where d.tenant_id = $1 and cardinality($2::uuid[]) >= 0 and d.lifecycle <> 'Retired') r", PORTAL),
+    ("customer-sees-anothers-dashboard", "src/portal.rs", "and id = $2 and customer = any($3)", "and id = $2 and cardinality($3::uuid[]) >= 0", PORTAL),
+    ("customer-clears-anothers-alarm", "src/portal.rs", 'device_of(k, ctx, device).await.map_err(|_| Error::NotFound("alarm".into()))?;', "let _ = device;", PORTAL),
+    ("customer-gets-the-controls", "src/site.rs", "widgets.retain(|w| !crate::data::CONTROLS.contains(&w[\"type\"].as_str().unwrap_or_default()));", "", PORTAL),
+    ("report-goes-out-every-minute", "src/reports.rs", "noted(&mut tx, ctx, s.id, now, &format!(\"Sent to", "noted(&mut tx, ctx, s.id, now - Duration::days(2), &format!(\"Sent to", PORTAL),
     ("served-on-a-port-nobody-listed", "gateway/src/export.rs", "if !self.limits.listen.contains(&bind) {", "if false {", EXPORTS),
     ("served-variable-can-be-written", "gateway/src/adapters/opcua_server.rs", ".value(0.0f64).organized_by(&folder)", ".value(0.0f64).writable().organized_by(&folder)", EXPORTS),
     ("served-to-any-client", "gateway/src/adapters/opcua_server.rs", ".pki_dir(pki)", ".pki_dir(pki).trust_client_certs(true)", EXPORTS),

@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{Notify, mpsc, watch};
 use uuid::Uuid;
 
 /// Readings waiting for the next read. A chatty device costs samples, never memory.
@@ -74,6 +74,7 @@ pub struct Link {
     transport: Arc<dyn Transport>,
     devices: RwLock<Vec<DeviceLink>>,
     secrets: Value,
+    pressing: Arc<Notify>,
     shared: Mutex<Shared>,
     up: AtomicBool,
     counters: Counters,
@@ -210,7 +211,14 @@ async fn fetched(limits: &Limits, payload: &Value) -> Result<PathBuf, String> {
 }
 
 impl Link {
-    fn start(compiled: Arc<Compiled>, address: String, devices: Vec<DeviceLink>, secrets: Value, limits: &Limits) -> Result<Arc<Link>, String> {
+    fn start(
+        compiled: Arc<Compiled>,
+        address: String,
+        devices: Vec<DeviceLink>,
+        secrets: Value,
+        pressing: Arc<Notify>,
+        limits: &Limits,
+    ) -> Result<Arc<Link>, String> {
         let d = &compiled.definition;
         let vars = json!({"secret": secrets, "device": devices.first().map(|x| x.code.clone()), "settings": devices.first().map(|x| x.settings.clone())});
         let mut headers = Vec::new();
@@ -242,6 +250,7 @@ impl Link {
             compiled,
             address,
             transport,
+            pressing,
             devices: RwLock::new(devices),
             secrets,
             shared: Mutex::default(),
@@ -512,6 +521,10 @@ impl Link {
                 self.counters.dropped.fetch_add(1, Ordering::Relaxed);
             }
             s.readings.push_back(reading);
+            // Waiting for the next read would lose them, so the read comes to them.
+            if s.readings.len() == MAX_WAITING / 2 {
+                self.pressing.notify_one();
+            }
             self.counters.readings.fetch_add(1, Ordering::Relaxed);
         }
         for node in s.memory.rebirths() {
@@ -858,6 +871,8 @@ pub struct Defined {
     by_device: RwLock<HashMap<String, Arc<Link>>>,
     pub limits: Limits,
     pub secrets: Value,
+    /// Says that readings are piling up faster than they are being read.
+    pub pressing: Arc<Notify>,
 }
 
 impl Defined {
@@ -910,7 +925,7 @@ impl Defined {
                 }
                 None => {
                     let Some(c) = devices.first().and_then(|d| compiled.get(d.definition.as_str())) else { continue };
-                    match Link::start(c.clone(), address, devices.clone(), self.secrets.clone(), &self.limits) {
+                    match Link::start(c.clone(), address, devices.clone(), self.secrets.clone(), self.pressing.clone(), &self.limits) {
                         Ok(link) => {
                             links.insert(key, link.clone());
                             link

@@ -54,6 +54,8 @@
 //! |---|---|---|
 //! | `POST /config` | a gateway, signed | [`ConfigRequest`]: what it should be, if that changed |
 //! | `POST /ingest` | a device, by token | `{values, state?, attributes?, at?}` |
+//! | `GET /aas/shells`, `/aas/shells/{id}`, `/aas/submodels/{id}` | Edge Viewer | AAS Part 2's repository, reading only |
+//! | `GET /epcis/events?from=&to=` | Edge Viewer | What scanners saw, as a GS1 EPCIS 2.0 document |
 //! | `GET /shared/{token}` | anyone with the link | what a shared dashboard shows, and nothing it does not |
 
 use crate::{config, fleet};
@@ -142,9 +144,18 @@ async fn open_gateways(k: &Kernel, ctx: &Ctx) -> Result<Value> {
     .bind(ctx.tenant)
     .fetch_one(&mut *tx)
     .await?;
+    // The operator's limit, if there is one, and how today stands: reaching it holds readings back.
+    let allowance: Option<Value> = sqlx::query_scalar(
+        "select jsonb_build_object('per_day', (t.quotas->>'measurements_per_day')::bigint, 'today', \
+           coalesce((select quantity from usage_day u where u.tenant_id = t.id and u.day = current_date and u.meter = 'measurements'), 0)) \
+         from tenant t where t.id = $1 and t.quotas ? 'measurements_per_day'",
+    )
+    .bind(ctx.tenant)
+    .fetch_optional(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(
-        json!({"gateways": gateways, "alarms": alarms.into_iter().map(|(s, n)| (s.unwrap_or_default(), n)).collect::<std::collections::BTreeMap<_, _>>(), "devices": counts.0, "defined": counts.1, "definitions": counts.2, "strangers": strangers}),
+        json!({"gateways": gateways, "alarms": alarms.into_iter().map(|(s, n)| (s.unwrap_or_default(), n)).collect::<std::collections::BTreeMap<_, _>>(), "devices": counts.0, "defined": counts.1, "definitions": counts.2, "strangers": strangers, "allowance": allowance}),
     )
 }
 
@@ -205,8 +216,18 @@ async fn device(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
         .bind(id)
         .fetch_one(&mut *tx)
         .await?;
+    let related: Value = sqlx::query_scalar(
+        "select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'relation', r.relation, 'to', r.other, 'code', o.device_code, 'name', o.device_name, 'out', r.out) order by r.relation, o.device_code), '[]') \
+         from (select id, relation, to_device as other, true as out from e_edge_relation where tenant_id = $1 and from_device = $2 \
+               union all select id, relation, from_device, false from e_edge_relation where tenant_id = $1 and to_device = $2) r \
+         join e_device o on o.tenant_id = $1 and o.id = r.other",
+    )
+    .bind(ctx.tenant)
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
     tx.commit().await?;
-    Ok(json!({"latest": latest, "attributes": attributes, "alarms": alarms, "events": events}))
+    Ok(json!({"latest": latest, "attributes": attributes, "alarms": alarms, "events": events, "related": related}))
 }
 
 /// Asks for an attribute. This is a command like any other: the device's definition says what
@@ -480,17 +501,23 @@ async fn shared(k: &Kernel, req: &SiteRequest, token: &str) -> Result<SiteRespon
         .await?;
     tx.commit().await?;
     let Some((name, Some(body))) = row else { return Ok(SiteResponse::json(404, &json!({"error": "this link does not lead anywhere"}))) };
-    let mut board = crate::data::check(&body).map_err(Error::invalid)?;
+    let ctx = Ctx::system(req.tenant, k.registry.schema(req.tenant).await?);
+    Ok(ok(laid_out(k, &ctx, &name, &body).await?))
+}
+
+/// A dashboard for someone with no roles: what the saved layout reads, without its controls, since
+/// a command takes someone who may give it.
+pub(crate) async fn laid_out(k: &Kernel, ctx: &Ctx, name: &str, body: &str) -> Result<Value> {
+    let mut board = crate::data::check(body).map_err(Error::invalid)?;
     if let Some(widgets) = board["widgets"].as_array_mut() {
         widgets.retain(|w| !crate::data::CONTROLS.contains(&w["type"].as_str().unwrap_or_default()));
     }
-    let ctx = Ctx::system(req.tenant, k.registry.schema(req.tenant).await?);
     let plan = crate::data::plan(&board, &Map::new(), board["last_secs"].as_i64().unwrap_or(3600));
-    let data = crate::data::board(k, &ctx, &plan).await?;
-    Ok(ok(json!({"name": name, "board": board, "data": data})))
+    let data = crate::data::board(k, ctx, &plan).await?;
+    Ok(json!({"name": name, "board": board, "data": data}))
 }
 
-async fn history(k: &Kernel, ctx: &Ctx, id: Uuid, req: &SiteRequest) -> Result<Value> {
+pub(crate) async fn history(k: &Kernel, ctx: &Ctx, id: Uuid, req: &SiteRequest) -> Result<Value> {
     let text = |key: &str| req.query.get(key).and_then(Value::as_str);
     let when = |key: &str, default: DateTime<Utc>| text(key).map_or(Ok(default), |t| t.parse().map_err(|_| Error::field(key, "that is not a time")));
     let to = when("to", Utc::now())?;
@@ -504,6 +531,8 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
     let path = req.path.trim_matches('/').to_string();
     let parts: Vec<&str> = path.split('/').collect();
     let value = match (req.method.as_str(), parts.as_slice()) {
+        // Answered by who is asking: portal people hold no roles, and none is needed here.
+        (_, ["portal", rest @ ..]) => crate::portal::answer(k, ctx, req, rest).await?,
         ("GET", ["overview"]) => {
             may(ctx, READ)?;
             open_gateways(k, ctx).await?
@@ -583,6 +612,16 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
         ("GET", ["devices", id, "aas"]) => {
             may(ctx, READ)?;
             crate::twins::administration_shell(k, ctx, uuid(id)?).await?
+        }
+        ("GET", ["aas", rest @ ..]) => {
+            may(ctx, READ)?;
+            crate::twins::repository(k, ctx, rest).await?
+        }
+        ("GET", ["epcis", "events"]) => {
+            may(ctx, READ)?;
+            let when = |key: &str| req.query.get(key).and_then(Value::as_str).and_then(|t| t.parse::<DateTime<Utc>>().ok());
+            let to = when("to").unwrap_or_else(Utc::now);
+            crate::twins::epcis(k, ctx, when("from").unwrap_or(to - chrono::Duration::days(1)), to).await?
         }
         ("GET", ["devices", id, "availability"]) => {
             may(ctx, READ)?;

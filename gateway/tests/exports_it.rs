@@ -209,6 +209,8 @@ async fn a_served_login_wants_a_password_and_a_client_someone_trusted() {
 
     let secure = |password: &str| format!("opcua://{bind}/?security=Basic256Sha256&mode=SignAndEncrypt&user=reader&password={password}");
     assert!(reach(&secure("s3cret"), &limits).await.is_err(), "that server has not said it trusts this client");
+    let kept = std::fs::read_dir(server.join("opcua-server/rejected")).unwrap().count();
+    assert_eq!(kept, 1, "it is kept back for a person to look at");
     trust(&server.join("opcua-server"));
     assert!(reach(&secure("s3cret"), &limits).await.is_err(), "and this client has not said it trusts that server");
     trust(&client.join("opcua"));
@@ -218,6 +220,33 @@ async fn a_served_login_wants_a_password_and_a_client_someone_trusted() {
     assert_eq!(serde_json::from_slice::<Value>(&m.body).unwrap()["value"], json!(1.5));
     assert!(link.send(Out::Node { node: "ns=2;s=PRESS-1/temp.c".into(), value: Some(json!(9.0)) }).await.is_err(), "a login reads, and no more");
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn a_table_of_someone_elses_takes_a_batch_once() {
+    let url = std::env::var("FERRUM_SITE_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_site_test".into());
+    let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls).await.unwrap();
+    tokio::spawn(connection);
+    let table = format!("t{}", Uuid::now_v7().simple());
+    client
+        .batch_execute(&format!("create table {table} (device text, metric text, value float8, at timestamptz, primary key (device, metric, at))"))
+        .await
+        .unwrap();
+    let url: reqwest::Url = url.parse().unwrap();
+    let to = format!("postgres://{}@{}:{}{}?table={table}", url.username(), url.host_str().unwrap(), url.port().unwrap_or(5432), url.path());
+    let e = export(&to, None, Some("password"));
+    let secrets = json!({"password": url.password().unwrap_or_default()});
+    sender().deliver(&e, &readings(3), &secrets).await.expect("taken");
+    sender().deliver(&e, &readings(3), &secrets).await.expect("a batch sent twice");
+    let count: i64 = client.query_one(&format!("select count(*) from {table}"), &[]).await.unwrap().get(0);
+    assert_eq!(count, 3, "lands once");
+    let value: f64 = client
+        .query_one(&format!("select value from {table} where device = 'PRESS-0' and metric = 'temp.c' order by value limit 1"), &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(value, 0.5);
+    client.batch_execute(&format!("drop table {table}")).await.unwrap();
 }
 
 #[tokio::test]

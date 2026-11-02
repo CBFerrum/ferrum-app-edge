@@ -4,10 +4,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, Link, RouterProvider, useRouteError } from "react-router";
-import { routeBase, shell } from "@ferrum/client";
+import { createBrowserRouter, Link, Outlet, RouterProvider, useRouteError } from "react-router";
+import { bootstrap, routeBase, shell } from "@ferrum/client";
 import { ConfirmHost, EmptyState, ErrorState, Toaster } from "@ferrum/kit";
 import { RequireAuth, setFrameMode } from "@ferrum/records/frame";
+import { useFreshReadings } from "./live";
 import "./styles.css";
 
 const page = (name: "FormView" | "ListView" | "ReportView" | "AppSettingsPage" | "ScreenPage") => () => import("./records").then((m) => ({ Component: m[name] }));
@@ -31,15 +32,44 @@ function Started() {
   return null;
 }
 
-setFrameMode("app", ["edge"]);
+function Fresh() {
+  useFreshReadings();
+  return null;
+}
+
+/** The portal's page, when the platform serves this release there. */
+const PORTAL = "portal/devices";
+const onPortal = bootstrap()?.app?.entry === PORTAL;
+
+if (!onPortal) setFrameMode("app", ["edge"]);
+
+const portalRoutes = [
+  {
+    path: "/",
+    element: (
+      <main className="edge-page edge-portal">
+        <Started />
+        <Outlet />
+      </main>
+    ),
+    errorElement: <RouteError />,
+    children: [
+      { index: true, lazy: () => import("./Portal").then((m) => ({ Component: m.PortalDevices })) },
+      { path: "d/:id", lazy: () => import("./Portal").then((m) => ({ Component: m.PortalDevice })) },
+      { path: "b/:id", lazy: () => import("./Portal").then((m) => ({ Component: m.PortalBoard })) },
+      { path: "*", element: <NotFound /> },
+    ],
+  },
+];
 
 const router = createBrowserRouter(
-  [
+  onPortal ? portalRoutes : [
     {
       path: "/",
       element: (
         <>
           <Started />
+          <Fresh />
           <RequireAuth />
         </>
       ),
@@ -68,7 +98,7 @@ const router = createBrowserRouter(
       ],
     },
   ],
-  { basename: routeBase("edge") },
+  { basename: routeBase(onPortal ? PORTAL : "edge") },
 );
 
 createRoot(document.getElementById("root")!).render(

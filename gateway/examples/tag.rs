@@ -49,6 +49,16 @@ async fn main() {
             }
             continue;
         }
+        if step == "call" {
+            let object = steps.next().expect("which object").clone();
+            let method = steps.next().expect("which method").clone();
+            let args = serde_json::from_str(steps.next().expect("what arguments, as a JSON list")).expect("a JSON list");
+            match link.send(Out::Call { object, method: method.clone(), args }).await {
+                Ok(Some(m)) => println!("{method} = {}", String::from_utf8_lossy(&m.body)),
+                other => println!("{method}: {other:?}"),
+            }
+            continue;
+        }
         if step == "publish" {
             let topic = steps.next().expect("which topic").clone();
             let body = steps.next().expect("what body").clone().into_bytes();

@@ -35,6 +35,9 @@ pub struct Selection {
     pub tag: Option<String>,
     #[serde(default)]
     pub asset: Option<Uuid>,
+    /// Devices related to this one, either way round.
+    #[serde(default)]
+    pub related: Option<Uuid>,
 }
 
 impl Selection {
@@ -45,11 +48,11 @@ impl Selection {
     pub fn from_query(q: &serde_json::Map<String, Value>) -> Selection {
         let text = |k: &str| q.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()).map(str::to_string);
         let id = |k: &str| text(k).and_then(|v| v.parse().ok());
-        Selection { ids: vec![], q: text("q"), site: id("site"), definition: id("definition"), tag: text("tag"), asset: id("asset") }
+        Selection { ids: vec![], q: text("q"), site: id("site"), definition: id("definition"), tag: text("tag"), asset: id("asset"), related: id("related") }
     }
 }
 
-/// `$2` to `$7`: what [`bind`] gives. A tag is one of a comma-separated list, and an asset takes in
+/// `$2` to `$8`: what [`bind`] gives. A tag is one of a comma-separated list, and an asset takes in
 /// everything under it.
 const CHOSEN: &str = "($2::uuid[] = '{}' or d.id = any($2)) \
    and ($3::text is null or d.device_code ilike '%' || $3 || '%' or d.device_name ilike '%' || $3 || '%') \
@@ -58,11 +61,14 @@ const CHOSEN: &str = "($2::uuid[] = '{}' or d.id = any($2)) \
    and ($6::text is null or ',' || replace(lower(d.edge_tags), ' ', '') || ',' like '%,' || lower($6) || ',%') \
    and ($7::uuid is null or d.edge_asset in ( \
      with recursive below as (select id from e_edge_asset where tenant_id = $1 and id = $7 \
-       union select a.id from e_edge_asset a join below b on a.parent = b.id where a.tenant_id = $1) select id from below))";
+       union select a.id from e_edge_asset a join below b on a.parent = b.id where a.tenant_id = $1) select id from below)) \
+   and ($8::uuid is null or d.id in ( \
+     select r.to_device from e_edge_relation r where r.tenant_id = $1 and r.from_device = $8 \
+     union select r.from_device from e_edge_relation r where r.tenant_id = $1 and r.to_device = $8))";
 
 macro_rules! bind {
     ($query:expr, $ctx:expr, $s:expr) => {
-        $query.bind($ctx.tenant).bind(&$s.ids).bind(&$s.q).bind($s.site).bind($s.definition).bind(&$s.tag).bind($s.asset)
+        $query.bind($ctx.tenant).bind(&$s.ids).bind(&$s.q).bind($s.site).bind($s.definition).bind(&$s.tag).bind($s.asset).bind($s.related)
     };
 }
 

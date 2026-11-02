@@ -35,6 +35,8 @@ chrono = { workspace = true }
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "fast"] }
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["sink"] }
 hex = { workspace = true }
+webrtc-dtls = "0.12"
+webrtc-util = { version = "0.11", default-features = false, features = ["conn"] }
 hmac = "0.12"
 libc = "0.2"
 rand = "0.9"

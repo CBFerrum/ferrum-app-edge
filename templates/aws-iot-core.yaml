@@ -1,0 +1,10 @@
+# about: Devices already on AWS IoT Core, over its MQTT endpoint with a certificate of the gateway's.
+# group: Messaging
+# Certificates are by name in the site's tls folder. The endpoint and topics are examples.
+name: aws-iot-core
+connect: mqtts://example-ats.iot.us-east-1.amazonaws.com:8883
+tls: {ca: AmazonRootCA1.pem, cert: gateway.pem, key: gateway.key}
+subscribe:
+  - things/+/telemetry
+read:
+  - {topic: things/+/telemetry, device: "{topic.1}", each: $, metric: "{each.key}", json: $.value}

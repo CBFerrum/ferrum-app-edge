@@ -5,7 +5,7 @@
   <img alt="Ferrum IoT Edge" src="docs/assets/banner-light.svg" width="100%">
 </picture>
 
-[![CI](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-0.2.0-0369a1?style=flat-square) ![Ferrum](https://img.shields.io/badge/Ferrum-%3E%3D0.3%2C%20%3C0.4-2f5bea?style=flat-square) ![License](https://img.shields.io/badge/license-AGPL--3.0-3b82f6?style=flat-square) ![Rust](https://img.shields.io/badge/Rust-native%20app-b7410e?style=flat-square&logo=rust&logoColor=white) ![Interface](https://img.shields.io/badge/interface-React%20%2B%20Vite-0ea5e9?style=flat-square&logo=react&logoColor=white) ![MCP](https://img.shields.io/badge/AI%20agents-MCP-8b5cf6?style=flat-square)
+[![CI](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-0.3.0-0369a1?style=flat-square) ![Ferrum](https://img.shields.io/badge/Ferrum-%3E%3D0.3%2C%20%3C0.4-2f5bea?style=flat-square) ![License](https://img.shields.io/badge/license-AGPL--3.0-3b82f6?style=flat-square) ![Rust](https://img.shields.io/badge/Rust-native%20app-b7410e?style=flat-square&logo=rust&logoColor=white) ![Interface](https://img.shields.io/badge/interface-React%20%2B%20Vite-0ea5e9?style=flat-square&logo=react&logoColor=white) ![MCP](https://img.shields.io/badge/AI%20agents-MCP-8b5cf6?style=flat-square)
 
 **A native app for [Ferrum](https://github.com/CBFerrum/Ferrum), the open-source, AI-first business platform.**
 
@@ -34,14 +34,14 @@ function stay with their own controllers.
 
 | At a glance | |
 |---|---|
-| 📦 Version | `0.2.0` |
+| 📦 Version | `0.3.0` |
 | 🧱 Platform | Ferrum `>=0.3, <0.4` |
 | 🔗 Requires | ops `>=0.1` |
 | 🖥️ Interface | its own, at `/edge/` |
-| 🗃️ Records | 13 entities in 1 package |
+| 🗃️ Records | 18 entities in 1 package |
 | 👥 Roles | 3: Edge Viewer, Edge Engineer, Edge Reviewer |
 | 📊 Reports | 0 |
-| 🧪 Tests | 303 Rust tests, 5 interface test files |
+| 🧪 Tests | 358 Rust tests, 6 interface test files |
 
 
 > [!IMPORTANT]
@@ -55,21 +55,21 @@ function stay with their own controllers.
 <td width="50%" valign="top">
 
 ### 📝 Devices as data
-One line per thing to read, for S7, EtherNet/IP, ADS, BACnet, OPC UA, Modbus, SNMP, KNX, IEC 104 and M-Bus, and a few lines for TCP, serial, HTTP, MQTT, Sparkplug B and MTConnect. Anything else is an external driver in any language.
+One line per thing to read, for S7, EtherNet/IP, ADS, BACnet, OPC UA, Modbus, SNMP, KNX, IEC 104, DNP3, DLMS and M-Bus, and a few lines for TCP, serial, HTTP, MQTT, Kafka, AMQP, Sparkplug B and MTConnect. Anything else is an external driver in any language.
 
 </td>
 <td width="50%" valign="top">
 
 ### 📡 Devices that call in
-MQTT, HTTP and CoAP on ThingsBoard's own topics and paths, LwM2M, and OCPP 1.6 and 2.0.1 for EV chargers, with tokens, passwords or certificates.
+MQTT, HTTP and CoAP on ThingsBoard's own topics and paths, so its own client library works unchanged, in CI. LwM2M, OCPP 1.6 and 2.0.1 for EV chargers, and DTLS for what leaves a private network, with tokens, passwords or certificates.
 
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
 
-### 🧩 Thirty-nine templates
-VDA 5050, Open-RMF, openTCS, ROS 2 through rosbridge, ChirpStack, Zigbee2MQTT and more, and whole solutions in one file.
+### 🧩 49 templates
+VDA 5050, Open-RMF, openTCS, ROS 2 through rosbridge, ChirpStack, The Things Stack, Sigfox, Zigbee2MQTT and more, and whole solutions in one file.
 
 </td>
 <td width="50%" valign="top">
@@ -97,21 +97,27 @@ Reading, deciding, alarms and commands carry on through outages, crashes and res
 <td width="50%" valign="top">
 
 ### 📊 Dashboards and alarms
-Drag-and-drop dashboards with shared links, history charts, alarms that are assigned, shelved and escalated, and reports.
+Drag-and-drop dashboards with shared links and live updates, history charts, alarms that are assigned, shelved and escalated, and reports by the clock.
 
 </td>
 <td width="50%" valign="top">
 
-### 🚚 A fleet at once
-Import from CSV, tags and assets, bulk commands, schedules, and firmware rollouts that stop by themselves. Never for a robot, a controller or anything a safety function runs on.
+### 🤝 Customers of your own
+They sign in to your portal and see their devices, their alarms and the dashboards you gave them, and nothing else of the workspace.
 
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
 
+### 🚚 A fleet at once
+Import from CSV, tags and assets, bulk commands, schedules, and firmware rollouts that stop by themselves. Never for a robot, a controller or anything a safety function runs on.
+
+</td>
+<td width="50%" valign="top">
+
 ### 🔗 Everywhere else
-NATS, Kafka, RabbitMQ, InfluxDB, ClickHouse, S3, SQS, SNS, Pub/Sub, Azure and Sparkplug, held until delivered, plus peers, relays, twins, Thing Descriptions and Asset Administration Shells.
+NATS, Kafka, RabbitMQ, InfluxDB, ClickHouse, PostgreSQL, S3, SQS, SNS, Pub/Sub, Azure and Sparkplug, held until delivered. A gateway as an OPC UA server, read only, plus peers, relays, twins, Thing Descriptions, Asset Administration Shells and EPCIS.
 
 </td>
 </tr>
@@ -201,7 +207,7 @@ flowchart LR
     subgraph Server["Ferrum server"]
         API["REST · MCP · live"]
         K["Kernel<br/><small>permissions · row-level security · audit</small>"]
-        APP["IoT Edge<br/><small>13 entities · 3 roles</small>"]
+        APP["IoT Edge<br/><small>18 entities · 3 roles</small>"]
         OB[("Outbox")]
     end
     DB[("PostgreSQL")]
@@ -226,7 +232,9 @@ with them under the same rules as people.
 | ➕ Create menu | Device definition |
 | ➕ Create menu | Flow |
 | ➕ Create menu | Dashboard |
+| 🔔 Notification | Alarms raised and cleared |
 | 🌐 Public page | Dashboard |
+| 🧑‍💼 Portal | Your devices |
 
 ## The gateway
 
@@ -251,7 +259,7 @@ cargo build --release --locked -p ferrum-site
 
 ## Data model
 
-The main records and how they connect (13 entities in all; `packages/` has every field).
+The main records and how they connect (18 entities in all; `packages/` has every field).
 
 ```mermaid
 erDiagram
@@ -291,8 +299,8 @@ erDiagram
 
 | Role | What it is for | Entities |
 |---|---|---|
-| **Edge Viewer** | Sees gateways, devices, alarms and robots. | 14 |
-| **Edge Engineer** | Writes and publishes definitions, rules and exports, and acknowledges alarms. | 17 |
+| **Edge Viewer** | Sees gateways, devices, alarms and robots. | 17 |
+| **Edge Engineer** | Writes and publishes definitions, rules and exports, and acknowledges alarms. | 20 |
 | **Edge Reviewer** | Reviews flows drawn by others, and decides when they run. | 8 |
 
 ## Install
@@ -366,7 +374,7 @@ ui/           its own interface (React + Vite), built into ui/dist
 tests/        integration tests against a real PostgreSQL
 contract/     ferrum-edge-contract: definitions, flows and Sparkplug, pure code a simulation and a gateway share
 gateway/      ferrum-site, the gateway: journal, transports, flows, links between servers, a console
-templates/    definitions to start from
+templates/    the twenty definitions to start from
 deploy/       the systemd unit, a starting configuration, Mosquitto beside the gateway
 docs/         guides, what was tried on what, licenses and accepted advisories
 scripts/      mutants, the license inventory, the advisory check
@@ -377,6 +385,7 @@ CHANGELOG.md  what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.3.0** | Customers who own devices: their people see those devices, their alarms and the dashboards given to them in the workspace's portal, and nothing else. |
 | **0.2.0** | Devices that call in: MQTT 3.1 to 5, HTTP and CoAP on ThingsBoard's own topics and paths, with tokens, passwords and certificates, provisioning … |
 | **0.1.0** | Definitions: devices described in a few lines of YAML over TCP, UDP, serial, HTTP, WebSocket, MQTT, Modbus TCP and RTU, OPC UA, listeners and … |
 

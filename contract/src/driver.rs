@@ -60,6 +60,7 @@ pub const SCHEMES: &[&str] = &[
     "listen+http",
     "listen+https",
     "listen+coap",
+    "listen+coaps",
     "s7",
     "enip",
     "ads",
@@ -77,6 +78,7 @@ pub const SCHEMES: &[&str] = &[
     "file",
     "ftp",
     "listen+lwm2m",
+    "listen+lwm2ms",
     "mtconnect",
     "mtconnects",
     "postgres",
@@ -89,10 +91,11 @@ pub const SCHEMES: &[&str] = &[
 ];
 
 /// What is read and written a named thing at a time, with `node`.
-const TAGGED: &[&str] = &["opcua", "s7", "enip", "ads", "bacnet", "snmp", "knx", "iec104", "dnp3", "mbus", "listen+lwm2m", "postgres", "sqlite", "dlms"];
+const TAGGED: &[&str] =
+    &["opcua", "s7", "enip", "ads", "bacnet", "snmp", "knx", "iec104", "dnp3", "mbus", "listen+lwm2m", "listen+lwm2ms", "postgres", "sqlite", "dlms"];
 
 /// What devices can prove themselves on.
-const DEVICE_SERVERS: [&str; 7] = ["listen+mqtt", "listen+mqtts", "listen+http", "listen+https", "listen+coap", "listen+ocpp", "listen+ocpps"];
+const DEVICE_SERVERS: [&str; 8] = ["listen+mqtt", "listen+mqtts", "listen+http", "listen+https", "listen+coap", "listen+coaps", "listen+ocpp", "listen+ocpps"];
 
 /// The longest message a site will assemble. A stream that never frames costs this much, not memory.
 pub const MAX_FRAME: usize = 1 << 20;
@@ -560,13 +563,17 @@ pub struct ReadRule {
     pub pattern: Option<String>,
     pub when: Option<When>,
     /// Whose message this is, for a connection several devices share: `{topic.1}`, `{group.id}`,
-    /// `{each.x}`.
+    /// `{each.x}` or `{json.x.y}`.
     pub device: Option<String>,
     pub format: Format,
     /// A list or map in the message: the rule is applied to each element, its paths start there,
     /// and a value's name can come from it: `metric: "{each.name}"`. A map's elements are
     /// `{key, value}`. This is what makes a device that reports hundreds of values one line.
     pub each: Option<String>,
+    /// Where the bytes are, for a network that delivers a device's payload inside JSON: a path to
+    /// hexadecimal, or base64 with `encoding: base64`. A value's `at` then counts from there.
+    pub bytes: Option<String>,
+    pub base64: bool,
     pub fields: Vec<Field>,
 }
 
@@ -578,6 +585,12 @@ impl<'de> Deserialize<'de> for ReadRule {
         let pattern = text(&mut m, "match");
         let device = text(&mut m, "device");
         let each = text(&mut m, "each");
+        let bytes = text(&mut m, "bytes");
+        let base64 = match text(&mut m, "encoding").as_deref() {
+            None | Some("hex") => false,
+            Some("base64") => true,
+            Some(other) => return Err(de::Error::custom(format!("{other} is not an encoding: say hex or base64"))),
+        };
         let format = m.remove("format").map(serde_json::from_value).transpose().map_err(de::Error::custom)?.unwrap_or_default();
         let when = m.remove("when").map(serde_json::from_value).transpose().map_err(de::Error::custom)?;
         // One value inline or several under `values`: most rules want one, and that should read so.
@@ -590,7 +603,7 @@ impl<'de> Deserialize<'de> for ReadRule {
             }
             None => vec![serde_json::from_value(Value::Object(m)).map_err(de::Error::custom)?],
         };
-        Ok(ReadRule { topic, pattern, when, device, format, each, fields })
+        Ok(ReadRule { topic, pattern, when, device, format, each, bytes, base64, fields })
     }
 }
 
@@ -1053,7 +1066,14 @@ fn named(template: &str, each: &Value) -> Option<String> {
     (!clean.is_empty()).then_some(clean)
 }
 
-fn device_of(rule: &ReadRule, wild: &[&str], groups: Option<&regex::Captures<'_>>, pattern: Option<&Regex>, each: Option<&Value>) -> Option<String> {
+fn device_of(
+    rule: &ReadRule,
+    wild: &[&str],
+    groups: Option<&regex::Captures<'_>>,
+    pattern: Option<&Regex>,
+    each: Option<&Value>,
+    message: Option<&Value>,
+) -> Option<String> {
     let template = rule.device.as_ref()?;
     let mut group = Map::new();
     if let (Some(c), Some(p)) = (groups, pattern) {
@@ -1065,7 +1085,7 @@ fn device_of(rule: &ReadRule, wild: &[&str], groups: Option<&regex::Captures<'_>
     }
     // `{topic.1}` counts from one, as people do.
     let topic: Map<String, Value> = wild.iter().enumerate().map(|(i, w)| ((i + 1).to_string(), json!(w))).collect();
-    render(template, &json!({"topic": topic, "group": group, "each": each})).ok()
+    render(template, &json!({"topic": topic, "group": group, "each": each, "json": message})).ok()
 }
 
 /// A time as equipment gives it. Below 10^11 a number is seconds: as milliseconds that is 1973.
@@ -1078,6 +1098,12 @@ fn when_of(v: &Value) -> Option<DateTime<Utc>> {
         }
         _ => None,
     }
+}
+
+/// A device's payload as a network delivered it, back to bytes.
+fn unpacked(text: &str, base64: bool) -> Option<Vec<u8>> {
+    use base64::Engine;
+    if base64 { base64::engine::general_purpose::STANDARD.decode(text.trim()).ok() } else { hex::decode(text.trim()).ok() }
 }
 
 /// Everything one element or whole message says, by one rule.
@@ -1163,7 +1189,7 @@ impl Compiled {
                 for element in elements {
                     let one = seen.element(element.clone());
                     if rule.when.as_ref().is_none_or(|w| one.holds(w)) {
-                        let device = device_of(rule, &wild, groups.as_ref(), compiled.pattern.as_ref(), Some(&element));
+                        let device = device_of(rule, &wild, groups.as_ref(), compiled.pattern.as_ref(), Some(&element), seen.json());
                         say(rule, &one, device, &element, groups.as_ref(), &mut out);
                     }
                 }
@@ -1172,8 +1198,16 @@ impl Compiled {
             if rule.when.as_ref().is_some_and(|w| !seen.holds(w)) {
                 continue;
             }
-            let device = device_of(rule, &wild, groups.as_ref(), compiled.pattern.as_ref(), None);
-            say(rule, &seen, device, &Value::Null, groups.as_ref(), &mut out);
+            let device = device_of(rule, &wild, groups.as_ref(), compiled.pattern.as_ref(), None, seen.json());
+            match &rule.bytes {
+                Some(path) => {
+                    let Some(inner) = seen.json().and_then(|j| at_path(j, path)).and_then(Value::as_str).and_then(|text| unpacked(text, rule.base64)) else {
+                        continue;
+                    };
+                    say(rule, &Seen::new(seen.topic, &inner), device, &Value::Null, groups.as_ref(), &mut out);
+                }
+                None => say(rule, &seen, device, &Value::Null, groups.as_ref(), &mut out),
+            }
         }
         out
     }
@@ -1390,7 +1424,7 @@ pub fn parse(text: &str) -> Result<Compiled, String> {
             return Err(format!("also: {other} is not a way for devices to call in"));
         }
     }
-    if matches!(scheme_of, Some("listen+http" | "listen+https" | "listen+coap")) && d.api != Some(Api::Device) {
+    if matches!(scheme_of, Some("listen+http" | "listen+https" | "listen+coap" | "listen+coaps")) && d.api != Some(Api::Device) {
         return Err("connect: this speaks the device API: say api: device".into());
     }
     if matches!(scheme_of, Some("listen+ocpp" | "listen+ocpps")) != (d.api == Some(Api::Ocpp)) {
@@ -1486,6 +1520,29 @@ mod tests {
 
     fn def(text: &str) -> Compiled {
         parse(text).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    #[test]
+    fn a_payload_inside_json_is_read_as_bytes() {
+        let hexed = parse("name: a\nconnect: \"webhook://0.0.0.0:1\"\nread:\n  - {device: \"{json.device}\", bytes: $.data, metric: temp, at: 0, type: i16, order: le, scale: 0.01}\n").unwrap();
+        let said = hexed.decode("/s", br#"{"device": "AB12", "data": "9808"}"#);
+        assert_eq!(
+            said,
+            vec![Decoded::Metric {
+                device: Some("AB12".into()),
+                metric: "temp".into(),
+                value: 22.0,
+                unit: None,
+                class: None,
+                deadband: None,
+                every: None,
+                at: None
+            }]
+        );
+        assert!(hexed.decode("/s", br#"{"device": "AB12", "data": "not hex"}"#).is_empty(), "a value that cannot be read is left out");
+        let encoded = parse("name: a\nconnect: \"webhook://0.0.0.0:1\"\nread:\n  - {bytes: $.d, encoding: base64, metric: v, at: 1}\n").unwrap();
+        assert_eq!(encoded.decode("/s", br#"{"d": "AAc="}"#).len(), 1);
+        assert!(parse("name: a\nconnect: \"webhook://0.0.0.0:1\"\nread:\n  - {bytes: $.d, encoding: rot13, metric: v, at: 1}\n").is_err());
     }
 
     #[test]

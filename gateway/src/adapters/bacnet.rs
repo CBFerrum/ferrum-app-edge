@@ -5,7 +5,7 @@
 
 use crate::adapters::tags::{ANSWER, Tags, Trouble, host_port, number, query, yes};
 use async_trait::async_trait;
-use ferrum_edge_contract::tags::BacnetAddress;
+use ferrum_edge_contract::tags::{BacnetAddress, DISCOVER};
 use serde_json::{Value, json};
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
@@ -13,8 +13,30 @@ use tokio::time::timeout;
 const READ_PROPERTY: u8 = 12;
 const WRITE_PROPERTY: u8 = 15;
 
+/// A broadcast of Who-Is: BACnet/IP, to every network, and the unconfirmed service 8.
+const WHO_IS: [u8; 12] = [0x81, 0x0b, 0, 12, 0x01, 0x20, 0xff, 0xff, 0, 0xff, 0x10, 0x08];
+/// How long answers are waited for.
+const LISTEN: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The device instance and vendor an I-Am says, by the tags of its four values.
+fn i_am(b: &[u8]) -> Option<(u32, u64)> {
+    let at = b.windows(2).position(|w| w == [0x10, 0x00])? + 2;
+    let apdu = b.get(at..)?;
+    let [0xc4, a, b1, c, d, rest @ ..] = apdu else { return None };
+    let instance = u32::from_be_bytes([*a, *b1, *c, *d]) & 0x3f_ffff;
+    let number = |tag: &u8, bytes: &[u8]| bytes.iter().take(usize::from(tag & 7)).fold(0u64, |n, x| n << 8 | u64::from(*x));
+    let [max, tail @ ..] = rest else { return None };
+    let tail = tail.get(usize::from(max & 7)..)?;
+    let [segmentation, tail @ ..] = tail else { return None };
+    let tail = tail.get(usize::from(segmentation & 7)..)?;
+    let [vendor, value @ ..] = tail else { return None };
+    Some((instance, number(vendor, value)))
+}
+
 pub struct Bacnet {
     socket: UdpSocket,
+    /// Where this was told to look, which a broadcast address makes everyone on that network.
+    target: String,
     invoke: u8,
     /// Who a write speaks as: 16 is the lowest in the priority array, and the default.
     priority: Option<u8>,
@@ -90,7 +112,23 @@ impl Bacnet {
         let (host, port) = host_port(rest, 47808);
         let socket = UdpSocket::bind("0.0.0.0:0").await.map_err(|e| e.to_string())?;
         socket.connect((host.as_str(), port)).await.map_err(|e| format!("{host}:{port}: {e}"))?;
-        Ok(Box::new(Bacnet { socket, invoke: 0, priority: query(rest, "priority").and_then(|p| p.parse().ok()) }))
+        Ok(Box::new(Bacnet { socket, target: format!("{host}:{port}"), invoke: 0, priority: query(rest, "priority").and_then(|p| p.parse().ok()) }))
+    }
+
+    /// Who answers a Who-Is, from a socket of its own, since an answer comes from anywhere on the
+    /// network. It is for a person finding out what is there: the node `discover`.
+    async fn discover(&self) -> Result<Value, Trouble> {
+        let socket = UdpSocket::bind("0.0.0.0:0").await?;
+        socket.set_broadcast(true)?;
+        socket.send_to(&WHO_IS, &self.target).await?;
+        let (mut found, mut buffer) = (Vec::new(), [0u8; 1500]);
+        let until = tokio::time::Instant::now() + LISTEN;
+        while let Ok(Ok((n, peer))) = tokio::time::timeout_at(until, socket.recv_from(&mut buffer)).await {
+            if let Some((instance, vendor)) = i_am(&buffer[..n]) {
+                found.push(json!({"device": instance, "vendor": vendor, "address": peer.to_string()}));
+            }
+        }
+        Ok(json!(found))
     }
 
     async fn ask(&mut self, service: u8, body: &[u8]) -> Result<Vec<u8>, Trouble> {
@@ -144,6 +182,9 @@ impl Bacnet {
 #[async_trait]
 impl Tags for Bacnet {
     async fn read(&mut self, tag_text: &str) -> Result<Value, Trouble> {
+        if tag_text == DISCOVER {
+            return self.discover().await;
+        }
         let a = BacnetAddress::parse(tag_text).map_err(Trouble::Refused)?;
         let mut body = Vec::new();
         address(&a, &mut body);
@@ -170,6 +211,15 @@ impl Tags for Bacnet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn who_is_there() {
+        // BVLC, NPDU, then I-Am: device 1234, 1476 bytes, no segmentation, vendor 15.
+        let frame = [0x81, 0x0b, 0, 20, 0x01, 0x00, 0x10, 0x00, 0xc4, 0x02, 0x00, 0x04, 0xd2, 0x22, 0x05, 0xc4, 0x91, 0x03, 0x21, 0x0f];
+        assert_eq!(i_am(&frame), Some((1234, 15)));
+        assert_eq!(i_am(&[0x81, 0x0a, 0, 4]), None);
+        assert_eq!(WHO_IS.len(), usize::from(WHO_IS[3]), "BVLC says its own length");
+    }
 
     #[test]
     fn a_request_names_an_object_in_22_bits() {

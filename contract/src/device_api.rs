@@ -279,6 +279,13 @@ pub fn may_hear(filter: &str) -> bool {
     filter.starts_with("v1/devices/me/") || filter.starts_with(GATEWAY) || filter.starts_with(FIRMWARE_ANSWER)
 }
 
+/// What a device is really asking to hear. ThingsBoard's own libraries subscribe to
+/// `v2/fw/response/+` and expect `v2/fw/response/{id}/chunk/{n}`, which that filter does not match
+/// and ThingsBoard sends regardless. Only a device's own answers come here, so this costs nothing.
+pub fn heard_by(filter: &str) -> &str {
+    if filter.starts_with(FIRMWARE_ANSWER) { "v2/fw/response/#" } else { filter }
+}
+
 /// Whether a device may say this: the device API, as itself.
 pub fn may_say(topic: &str) -> bool {
     topic.starts_with("v1/devices/me/") || topic.starts_with(GATEWAY) || topic.starts_with(FIRMWARE_ASKED)
@@ -287,6 +294,12 @@ pub fn may_say(topic: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn firmware_reaches_a_library_that_subscribed_as_thingsboards_does() {
+        assert_eq!(heard_by("v2/fw/response/+"), "v2/fw/response/#");
+        assert_eq!(heard_by("v1/devices/me/attributes"), "v1/devices/me/attributes");
+    }
 
     #[test]
     fn firmware_goes_by_the_piece_under_its_own_names() {

@@ -81,3 +81,35 @@ It says who holds the device and nothing more: it still has to be commissioned b
 
 Device Availability, Alarm History and Readings by the Hour are in the Reports page with the rest of
 the workspace's reports, and can be exported from there.
+
+## Customers
+
+An **Edge Customer** names who owns what, and the people who may look. Set **Owned By** on a device and
+**Customer** on a dashboard, and add the people as portal people of the workspace. They sign in to the
+workspace's portal and find **Your devices**: how each is doing, its readings and alarms, and the
+dashboards given to them, without their controls. They can acknowledge an alarm, and it says who did.
+They cannot send a command, and a device of anyone else's is simply not there. **Shows Its Customer** on
+a device limits them to some of its readings, as `temp.*, power`.
+
+## Relations
+
+An **Edge Relation** says any way two devices belong together that assets do not: this pump feeds that
+tank, this meter measures that line. It shows on both devices, and `GET /devices?related=` finds them
+from either end, which is enough to ask them all something at once. It moves nothing by itself, and
+flows do not follow relations.
+
+## Reports by the clock
+
+An **Edge Report Schedule** runs a report at a time of day and sends it to the people it names. A mailer
+that can attach sends the whole report as CSV, or PDF if this server has a renderer, and every mail shows
+the first rows. The mail goes through the platform's outbox in one transaction with the note that it ran,
+so a crash neither loses a report nor sends it twice. A report that cannot be made says why on the
+schedule and is not tried again until its next day.
+
+## Allowances
+
+The operator of a server can give a workspace limits, in `tenant.quotas`: `measurements_per_day` and
+`devices`. Past the first, gateways keep their readings, within their own budget, until the next day or
+until it is raised, and commands, leases and reports go on: an allowance is never what stops a site. The
+home page says when this is happening. Gateways before 0.3 do not know to keep them and lose those
+readings, so upgrade them first.

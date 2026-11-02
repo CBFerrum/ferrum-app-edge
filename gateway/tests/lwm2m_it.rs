@@ -2,12 +2,14 @@
 //! Eclipse Leshan's demo client, when `FERRUM_TEST_LESHAN` names its jar, proves someone else's device
 //! can register and be read.
 
-use ferrum_edge_contract::edge::DeviceLink;
+use ferrum_edge_contract::edge::{Credentials, DeviceLink};
 use ferrum_site::adapter::{Adapter, Reading};
 use ferrum_site::adapters::coap::Coap;
 use ferrum_site::adapters::defined::Defined;
+use ferrum_site::adapters::hub::hash;
 use ferrum_site::adapters::transport::Limits;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -104,4 +106,61 @@ async fn a_device_written_by_someone_else() {
     }
     let _ = client.kill().await;
     assert!(found, "Leshan's client registered and said who made it");
+}
+
+/// The same device, by key, through a DTLS stack that is not ours. The identity has to be the name
+/// it registers under, or it could speak for any device whose key it did not need.
+#[tokio::test]
+async fn a_device_written_by_someone_else_over_dtls() {
+    let Ok(jar) = std::env::var("FERRUM_TEST_LESHAN") else {
+        eprintln!("skipped: FERRUM_TEST_LESHAN is not set");
+        return;
+    };
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let body = format!(
+        "name: meters\nconnect: listen+lwm2ms://{bind}\nsubscribe: [/3/0/0]\nread:\n  - {{topic: +/3/0/0, device: \"{{topic.0}}\", attribute: manufacturer, json: $.value}}\n  - {{topic: +/3/0/9, device: \"{{topic.0}}\", metric: battery.pct, json: $.value}}\n"
+    );
+    let definitions = BTreeMap::from([("meters".to_string(), body)]);
+    let links: Vec<DeviceLink> = ["meter-1", "meter-2"]
+        .iter()
+        .map(|code| DeviceLink {
+            code: code.to_string(),
+            definition: "meters".into(),
+            credentials: Credentials { token: Some(hash(code.as_bytes())), ..Default::default() },
+            ..Default::default()
+        })
+        .collect();
+    let d = Defined::new(Limits { listen: vec![bind.clone()], ..Default::default() }, json!({}));
+    assert_eq!(d.apply(&definitions, &links), Vec::<String>::new());
+    let client = |name: &str, identity: &str| {
+        tokio::process::Command::new("java")
+            .args(["-jar", &jar, "-n", name, "-u", &format!("coaps://{bind}"), "-i", identity, "-p", &hex::encode(Sha256::digest(identity.as_bytes()))])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap()
+    };
+
+    // With meter-2's key, as meter-2 proved it was, and asking to be meter-1.
+    let mut pretender = client("meter-1", "meter-2");
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    let early = d.read().await.unwrap();
+    assert!(!early.iter().any(|r| matches!(r, Reading::Attribute { key, .. } if key == "manufacturer")), "it was refused: {early:?}");
+    let _ = pretender.kill().await;
+
+    let mut honest = client("meter-1", "meter-1");
+    let mut seen = Vec::new();
+    for _ in 0..600 {
+        seen.extend(d.read().await.unwrap());
+        if seen.iter().any(|r| matches!(r, Reading::Attribute { device, key, .. } if device == "meter-1" && key == "manufacturer")) {
+            let _ = honest.kill().await;
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let _ = honest.kill().await;
+    panic!("Leshan's client should have registered and been read over DTLS: {seen:?}");
 }

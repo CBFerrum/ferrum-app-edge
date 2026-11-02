@@ -80,6 +80,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     <h2>Waiting</h2>
     <p class="empty" id="queued-empty">Nothing is waiting.</p>
     <div id="queued-list"></div>
+    <h2>Lately</h2>
+    <p class="empty" id="readings-empty">Nothing read yet.</p>
+    <div id="readings-list"></div>
   </section>
   <section>
     <h2>Connections</h2>
@@ -128,6 +131,22 @@ function taskItem(c) {
   box.append(l, scan, button('Done', step('done')), button('Could not do it', step('fail'), true), error);
   return box;
 }
+const NS = 'http://www.w3.org/2000/svg';
+function reading(r) {
+  const b = text('div', '', 'item');
+  const values = r.points.map(p => p[1]);
+  const now = values[values.length - 1];
+  b.append(text('h3', `${r.device} ${r.metric}`), text('p', now.toLocaleString(undefined, { maximumFractionDigits: 3 })));
+  const low = Math.min(...values), span = (Math.max(...values) - low) || 1;
+  const line = document.createElementNS(NS, 'polyline');
+  line.setAttribute('points', values.map((v, i) => `${i * 300 / Math.max(values.length - 1, 1)},${36 - (v - low) / span * 32}`).join(' '));
+  line.setAttribute('fill', 'none'); line.setAttribute('stroke', 'currentColor'); line.setAttribute('stroke-width', '1.5');
+  const chart = document.createElementNS(NS, 'svg');
+  chart.setAttribute('viewBox', '0 0 300 40'); chart.setAttribute('preserveAspectRatio', 'none'); chart.setAttribute('width', '100%'); chart.setAttribute('height', '40');
+  chart.setAttribute('role', 'img'); chart.setAttribute('aria-label', `${r.metric} lately, now ${now}`);
+  chart.append(line); b.append(chart);
+  return b;
+}
 function fill(listId, emptyId, items, make) {
   const list = $(listId); list.replaceChildren(...items.map(make)); $(emptyId).hidden = items.length > 0;
 }
@@ -151,6 +170,7 @@ async function refresh() {
       const w = await call('/api/work');
       fill('unknown-list', 'unknown-empty', w.unknown, unknownItem);
       fill('task-list', 'tasks-empty', w.tasks, taskItem);
+      fill('readings-list', 'readings-empty', (await call('/api/readings')).series, reading);
       fill('queued-list', 'queued-empty', w.queued, c => { const b = text('div', '', 'item'); b.append(text('h3', c.operation), text('p', describe(c))); if (c.held) b.append(text('p', c.held)); return b; });
     }
   } catch (e) { if (/sign in/i.test(e.message)) { token = null; show(); } }

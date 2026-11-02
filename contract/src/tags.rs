@@ -202,10 +202,14 @@ pub fn read_only(sql: &str) -> bool {
     matches!(first.as_str(), "select" | "with" | "values") && !sql.trim_end().trim_end_matches(';').contains(';')
 }
 
+/// A BACnet node that asks who is there, with a Who-Is, rather than reading a property.
+pub const DISCOVER: &str = "discover";
+
 /// Whether a protocol's tag can be read at all, for checking a definition.
 pub fn check(scheme: &str, tag: &str) -> Result<(), String> {
     match scheme {
         "s7" => S7Address::parse(tag).map(drop),
+        "bacnet" if tag == DISCOVER => Ok(()),
         "bacnet" => BacnetAddress::parse(tag).map(drop),
         "snmp" => oid(tag).map(drop),
         "dlms" => cosem(tag).map(drop),

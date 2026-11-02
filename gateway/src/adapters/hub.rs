@@ -167,6 +167,12 @@ impl Hub {
         *self.directory.write().unwrap_or_else(|e| e.into_inner()) = directory;
     }
 
+    /// A device's key for DTLS: the hash of its token, which is what is held here.
+    pub fn key_of(&self, device: &str) -> Option<Vec<u8>> {
+        let directory = self.directory.read().unwrap_or_else(|e| e.into_inner());
+        directory.tokens.iter().find(|(_, code)| *code == device).and_then(|(token, _)| hex::decode(token).ok())
+    }
+
     pub fn who(&self, proof: &Proof<'_>) -> Option<String> {
         self.directory.read().unwrap_or_else(|e| e.into_inner()).who(proof)
     }
@@ -202,6 +208,7 @@ impl Hub {
 
     /// False when it holds as many as it may.
     pub fn listen(&self, id: u64, filter: &str) -> bool {
+        let filter = device_api::heard_by(filter);
         let mut sessions = locked(&self.sessions);
         let Some(s) = sessions.get_mut(&id) else { return false };
         if s.filters.iter().any(|f| f == filter) {
@@ -215,6 +222,7 @@ impl Hub {
     }
 
     pub fn stop_listening(&self, id: u64, filter: &str) {
+        let filter = device_api::heard_by(filter);
         if let Some(s) = locked(&self.sessions).get_mut(&id) {
             s.filters.retain(|f| f != filter);
         }
