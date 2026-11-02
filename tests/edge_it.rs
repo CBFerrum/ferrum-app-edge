@@ -152,6 +152,7 @@ async fn scenario() {
                 problems: vec!["bad: broken".into()],
                 links: json!([{"address": "tcp://a", "up": true}]),
                 runtime: "0.1.0".into(),
+                ..Default::default()
             },
         )
         .await;

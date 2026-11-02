@@ -21,8 +21,8 @@ pub async fn apply(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: &str, payload: &Val
         "attribute" => {
             let (Some(device), Some(key)) = (body["device"].as_str().and_then(|d| d.parse::<Uuid>().ok()), body["key"].as_str()) else { return Ok(()) };
             sqlx::query(
-                "insert into edge_attribute (tenant_id, device_id, key, value, reported_at) values ($1, $2, $3, $4, $5) \
-                 on conflict (tenant_id, device_id, key) do update set value = excluded.value, reported_at = excluded.reported_at \
+                "insert into edge_attribute (tenant_id, device_id, key, value, reported_at, received_at) values ($1, $2, $3, $4, $5, now()) \
+                 on conflict (tenant_id, device_id, key) do update set value = excluded.value, reported_at = excluded.reported_at, received_at = now() \
                  where edge_attribute.reported_at is null or edge_attribute.reported_at < excluded.reported_at",
             )
             .bind(ctx.tenant)

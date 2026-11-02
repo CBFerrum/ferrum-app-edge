@@ -37,6 +37,7 @@ const NOT_ALLOWED: u8 = 0x85;
 const INCOMPLETE: u8 = 0x88;
 const TOO_LARGE: u8 = 0x8d;
 const UNAVAILABLE: u8 = 0xa3;
+const GATEWAY_TIMEOUT: u8 = 0xa4;
 
 const OBSERVE: u16 = 6;
 const URI_PATH: u16 = 11;
@@ -54,6 +55,8 @@ const REMEMBER: Duration = Duration::from_secs(247);
 const MAX_REMEMBERED: usize = 20_000;
 const MAX_TRANSFERS: usize = 1024;
 const MAX_OBSERVERS: usize = 10_000;
+/// How long a device that asked something waits for an answer.
+const WAIT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Coap {
@@ -343,6 +346,23 @@ impl Served {
         if self.hub.said(&self.tx, device, topic, body).await { m.answer(CHANGED, Vec::new()) } else { m.answer(UNAVAILABLE, Vec::new()) }
     }
 
+    /// An answer may take longer than a device waits for its message to be acknowledged, and it would
+    /// send it again. So it is acknowledged now and answered apart, under the same token (RFC 7252, 5.2.2).
+    async fn asked(&self, peer: SocketAddr, m: &Coap, device: &str, body: Vec<u8>) -> Coap {
+        if m.kind == CON {
+            let bytes = Coap { kind: ACK, code: 0, id: m.id, ..Default::default() }.to_bytes();
+            self.memory.lock().await.keep(peer, m.id, bytes.clone());
+            let _ = self.socket.send_to(&bytes, peer).await;
+        }
+        let (code, payload) = match self.hub.asked(&self.tx, device, body, WAIT).await {
+            Ok(Some(answer)) => (CONTENT, answer),
+            Ok(None) => (GATEWAY_TIMEOUT, Vec::new()),
+            Err(()) => (UNAVAILABLE, Vec::new()),
+        };
+        let options = if payload.is_empty() { Vec::new() } else { vec![(CONTENT_FORMAT, uint(50))] };
+        Coap { kind: NON, code, id: rand::random(), token: m.token.clone(), options, payload }
+    }
+
     async fn answer(&self, peer: SocketAddr, m: &Coap) -> Coap {
         let path = m.path();
         if path == ["api", "v1", "provision"] && m.code == POST {
@@ -367,10 +387,7 @@ impl Served {
             (POST | PUT, ["telemetry" | "attributes"]) => m.answer(BAD_REQUEST, Vec::new()),
             (POST, ["claim"]) => self.say(m, &device, "v1/devices/me/claim", if body.is_empty() { b"{}".to_vec() } else { body }).await,
             (POST, ["rpc", id]) => self.say(m, &device, &format!("v1/devices/me/rpc/response/{id}"), body).await,
-            (POST, ["rpc"]) if is_json => {
-                let id = self.hub.next_request();
-                self.say(m, &device, &format!("v1/devices/me/rpc/request/{id}"), body).await
-            }
+            (POST, ["rpc"]) if is_json => self.asked(peer, m, &device, body).await,
             (GET, ["attributes"]) if m.option(OBSERVE).is_some() => self.observe(peer, m, &device, "v1/devices/me/attributes").await,
             (GET, ["rpc"]) if m.option(OBSERVE).is_some() => self.observe(peer, m, &device, "v1/devices/me/rpc/request/+").await,
             (GET, ["attributes"]) => {

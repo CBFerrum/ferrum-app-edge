@@ -710,6 +710,57 @@ async fn one_device_can_use_any_way_in() {
 }
 
 #[tokio::test]
+async fn a_device_can_ask_and_be_answered() {
+    let Doors { plant, http, coap: server } = every_way_in(token("PRESS-1", PRESS)).await;
+    let asked = |r: &Reading| matches!(r, Reading::Event { name, .. } if name == "rpc.request");
+    let id_of = |r: Reading| match r {
+        Reading::Event { value, .. } => value["id"].as_str().unwrap().to_string(),
+        other => panic!("{other:?}"),
+    };
+
+    // Over HTTP the answer is what the call returns.
+    let call = {
+        let url = format!("{http}/{PRESS}/rpc");
+        tokio::spawn(
+            async move { reqwest::Client::new().post(url).header("content-type", "application/json").body(r#"{"method": "time"}"#).send().await.unwrap() },
+        )
+    };
+    let id = id_of(plant.reading(asked).await);
+    plant.d.reply("PRESS-1", &id, &json!({"now": 1}));
+    let answer = call.await.unwrap();
+    assert_eq!(answer.status(), 200);
+    assert_eq!(answer.json::<Value>().await.unwrap(), json!({"now": 1}));
+
+    // So it is over CoAP, apart from the acknowledgement, because an answer can be slow.
+    let device = coap::Client::to(server).await;
+    let call = device.request(2, coap::path(PRESS, &["rpc"]), br#"{"method": "time"}"#);
+    let ack = device.ask(&call).await;
+    assert_eq!((ack.kind, ack.code), (2, 0), "acknowledged at once, or it would be sent again");
+    let id = id_of(plant.reading(asked).await);
+    plant.d.reply("PRESS-1", &id, &json!({"now": 2}));
+    let reply = device.hear().await;
+    assert_eq!(reply.code, 0x45);
+    assert_eq!(reply.token, call.token, "by the token it asked with");
+    assert_eq!(serde_json::from_slice::<Value>(&reply.payload).unwrap(), json!({"now": 2}));
+
+    // Over MQTT it listens for the answer itself.
+    let mut press = with_token(plant.port, PRESS).await;
+    assert!(press.up().await);
+    press.listens("v1/devices/me/rpc/response/+").await;
+    press.says("v1/devices/me/rpc/request/5", json!({"method": "time"})).await;
+    let id = id_of(plant.reading(asked).await);
+    assert_eq!(id, "5");
+    plant.d.reply("PRESS-1", &id, &json!({"now": 3}));
+    let (topic, body) = press.hears().await;
+    assert_eq!(topic, "v1/devices/me/rpc/response/5");
+    assert_eq!(body, json!({"now": 3}));
+
+    // An answer for one device is nobody else's, and one nobody is waiting for goes nowhere.
+    plant.d.reply("PRESS-1", "99", &json!({}));
+    plant.d.reply("NOBODY", "5", &json!({}));
+}
+
+#[tokio::test]
 async fn a_definition_only_opens_what_devices_can_call() {
     let bad = [
         ("name: a\nconnect: tcp://x:1\napi: device\n", "listen+mqtt"),

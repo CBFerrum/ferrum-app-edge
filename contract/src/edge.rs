@@ -5,6 +5,7 @@
 //! A rule watches a number here, at the edge, so an alarm is raised with the link down. It says only
 //! that something is wrong. Rules raise alarms and do not move equipment.
 
+use crate::flow::Trace;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -158,6 +159,31 @@ pub struct FlowSpec {
     pub name: String,
     pub revision: i64,
     pub body: String,
+    /// Someone is watching it, so what passes through is reported.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub debug: bool,
+}
+
+/// A message passing through a step of a flow someone is watching.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FlowTrace {
+    pub flow: Uuid,
+    pub at: DateTime<Utc>,
+    #[serde(flatten)]
+    pub step: Trace,
+}
+
+/// Longest value kept in a trace. Past that it is only said how long it was.
+const MAX_TRACED: usize = 2_000;
+
+impl FlowTrace {
+    pub fn new(flow: Uuid, at: DateTime<Utc>, mut step: Trace) -> FlowTrace {
+        let length = step.value.to_string().len();
+        if length > MAX_TRACED {
+            step.value = serde_json::json!({"too_long_to_show": length});
+        }
+        FlowTrace { flow, at, step }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -210,6 +236,9 @@ pub struct ConfigRequest {
     /// The release it is running.
     #[serde(default)]
     pub runtime: String,
+    /// What passed through the flows someone is watching, since the last exchange.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub traces: Vec<FlowTrace>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

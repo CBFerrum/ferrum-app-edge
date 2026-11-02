@@ -6,6 +6,7 @@
 //! * [`data`]: numbers over time, and what a dashboard shows;
 //! * [`facts`]: what gateways report, arriving when the link allows;
 //! * [`notices`]: telling people, in steps;
+//! * [`platform_flows`]: flows that run here, for what has to see across sites;
 //! * [`site`]: the HTTP endpoints;
 //! * [`templates`]: definitions to start from.
 //!
@@ -17,6 +18,7 @@ pub mod config;
 pub mod data;
 pub mod facts;
 pub mod notices;
+pub mod platform_flows;
 pub mod site;
 pub mod templates;
 
@@ -165,7 +167,7 @@ impl DocHook for FlowHook {
     async fn validate_change(&self, _hc: &mut HookCtx<'_>, old: Option<&Doc>, doc: &Doc) -> Result<()> {
         if let Some(old) = old
             && s(old, "status").is_some_and(|status| status != "Draft")
-            && s(old, "body") != s(doc, "body")
+            && (s(old, "body") != s(doc, "body") || s(old, "runs_at") != s(doc, "runs_at"))
         {
             return Err(Error::field("body", "what is under review cannot change: choose Change It to draft it again"));
         }
@@ -178,7 +180,15 @@ impl DocHook for FlowHook {
         let body = s(doc, "body").unwrap_or_default().to_string();
         let me = hc.ctx.email.clone();
         let now = chrono::Utc::now().to_rfc3339();
-        let parsed = |body: &str| ferrum_edge_contract::flow::parse(body).map_err(|why| Error::field("body", why));
+        let platform = s(doc, "runs_at") == Some("Platform");
+        // A step that needs a gateway is found here and not by a flow that quietly does nothing.
+        let parsed = |body: &str| {
+            let flow = ferrum_edge_contract::flow::parse(body).map_err(|why| Error::field("body", why))?;
+            match flow.needs_a_gateway() {
+                Some(node) if platform => Err(Error::field("runs_at", format!("{node} needs a gateway to run on"))),
+                _ => Ok(flow),
+            }
+        };
         let mut values = Doc::new();
         match name {
             "submit_for_review" => {
@@ -213,11 +223,27 @@ impl DocHook for FlowHook {
                 reviewer(hc.ctx)?;
                 flow_step(&status, &["Approved"], "run")?;
                 parsed(&body)?;
+                let revision = doc.get("revision").and_then(Value::as_i64).unwrap_or(0) + 1;
+                sqlx::query("insert into edge_flow_version (tenant_id, flow_id, revision, body, by_whom) values ($1, $2, $3, $4, $5)")
+                    .bind(hc.ctx.tenant)
+                    .bind(record)
+                    .bind(revision)
+                    .bind(&body)
+                    .bind(&me)
+                    .execute(&mut **hc.tx)
+                    .await?;
                 values.insert("published_body".into(), json!(body));
-                values.insert("revision".into(), json!(doc.get("revision").and_then(Value::as_i64).unwrap_or(0) + 1));
+                values.insert("revision".into(), json!(revision));
                 values.insert("live".into(), json!(true));
                 values.insert("activated_by".into(), json!(me));
                 values.insert("activated_at".into(), json!(now));
+            }
+            // Looking changes nothing that runs, so it needs no review. It has an end, because what
+            // passes through costs something and a person forgets.
+            "watch" => {
+                let minutes = params.get("minutes").and_then(Value::as_i64).unwrap_or(10).clamp(0, 60);
+                let until = (minutes > 0).then(|| (chrono::Utc::now() + chrono::Duration::minutes(minutes)).to_rfc3339());
+                values.insert("debug_until".into(), json!(until));
             }
             // Stopping is never a question of review: whoever may work on flows may stop one.
             "stop" => {
@@ -257,6 +283,7 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
     let mut tx = k.db.system_tx().await?;
     sqlx::query("delete from edge_event where at < now() - interval '90 days'").execute(&mut *tx).await?;
     sqlx::query("delete from edge_notice where status in ('Sent', 'Dropped', 'Failed') and due_at < now() - interval '90 days'").execute(&mut *tx).await?;
+    sqlx::query("delete from edge_flow_trace where at < now() - interval '1 hour'").execute(&mut *tx).await?;
     let tenants: Vec<Uuid> = sqlx::query_scalar("select id from tenant where status = 'active' order by id").fetch_all(&mut *tx).await?;
     tx.commit().await?;
     let mut first_error = None;
@@ -270,7 +297,7 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
             }
         };
         let ctx = Ctx::system(tenant, schema);
-        for outcome in [facts::watch_gateways(k, &ctx).await, notices::send_due(k, &ctx).await.map(drop)] {
+        for outcome in [facts::watch_gateways(k, &ctx).await, notices::send_due(k, &ctx).await.map(drop), platform_flows::run(k, &ctx).await] {
             if let Err(e) = outcome {
                 tracing::warn!(%tenant, "edge maintenance failed: {e}");
                 first_error.get_or_insert(e);

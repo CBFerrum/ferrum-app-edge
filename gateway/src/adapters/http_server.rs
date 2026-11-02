@@ -98,10 +98,11 @@ async fn handle(State(s): State<Served>, req: Request) -> Response {
             None => StatusCode::REQUEST_TIMEOUT.into_response(),
         },
         (&Method::POST, ["rpc", id]) => say(&format!("v1/devices/me/rpc/response/{id}"), body.to_vec()).await,
-        (&Method::POST, ["rpc"]) if is_json() => {
-            let id = s.hub.next_request();
-            say(&format!("v1/devices/me/rpc/request/{id}"), body.to_vec()).await
-        }
+        (&Method::POST, ["rpc"]) if is_json() => match s.hub.asked(&s.tx, &device, body.to_vec(), patience(q)).await {
+            Ok(Some(answer)) => (StatusCode::OK, [("content-type", "application/json")], answer).into_response(),
+            Ok(None) => StatusCode::REQUEST_TIMEOUT.into_response(),
+            Err(()) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        },
         (_, ["telemetry" | "attributes" | "rpc" | "claim", ..]) => StatusCode::METHOD_NOT_ALLOWED.into_response(),
         _ => StatusCode::NOT_FOUND.into_response(),
     }
