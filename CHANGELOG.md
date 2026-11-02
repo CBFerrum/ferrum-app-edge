@@ -12,6 +12,7 @@
 - CoAP and LwM2M over DTLS, by pre-shared key, so they can leave a private network: `listen+coaps` and
   `listen+lwm2ms`. Met Eclipse Leshan's client.
 - SNMP v3 traps, with `?user=` on `listen+snmp`, and BACnet's `discover`, by Who-Is.
+- LwM2M writes go as TLV, the one format every device has to take.
 - OCPP security profile 3: a charger known by its certificate. Charging profiles go as commands.
 - Templates for The Things Stack, Sigfox, LORIOT, ThingPark, AWS IoT Core and Azure Event Hubs. `bytes:`
   decodes a payload delivered inside JSON, and `device:` can come from the message.
@@ -32,6 +33,10 @@
 - DLMS/COSEM meters by OBIS code, over the wrapper, read only.
 - Kafka topics and AMQP queues as sources. A Kafka reader keeps its place across restarts in the
   gateway's state folder.
+
+Upgrading: gateways first if a workspace will have an allowance of measurements, since an older one treats
+a held exchange as delivered. An export to `postgres` or `listen+opcua` needs a gateway of this version. A
+site that wants `listen+opcua`, `listen+coaps` or `listen+lwm2ms` names the address under `listen`.
 
 ## 0.2.0
 

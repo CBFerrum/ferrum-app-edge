@@ -1,7 +1,9 @@
 //! An LwM2M server: constrained devices register here over CoAP, and are read, written and watched
 //! by object, instance and resource. A device is known by its endpoint name, and it has to have a
-//! record. There is no DTLS, so nothing here proves it is who it says: keep this on a private
-//! network, as a cellular APN is, or put it behind something that does.
+//! record. Plain, nothing proves it is who it says, so keep that on a private network, as a cellular
+//! APN is. `listen+lwm2ms` is DTLS, and a device has to register under the identity it proved.
+//!
+//! Writes go as TLV, the one format LwM2M 1.0 requires of every device, and reads ask for plain text.
 //!
 //! `listen+lwm2m://0.0.0.0:5683`, with `subscribe: [/3303/0/5700]` for what to watch on each device.
 
@@ -33,8 +35,51 @@ const OBSERVE: u16 = 6;
 const LOCATION: u16 = 8;
 const URI_PATH: u16 = 11;
 const ACCEPT: u16 = 17;
-/// Plain text: a single resource's value, which every LwM2M version takes.
+const CONTENT_FORMAT: u16 = 12;
+/// Plain text, for asking for a single resource's value.
 const TEXT: u8 = 0;
+/// `application/vnd.oma.lwm2m+tlv`.
+const TLV: [u8; 2] = [0x2d, 0x16];
+
+/// One resource as TLV: a whole number in as few bytes as it takes, a float in eight, text as it is.
+pub fn tlv(resource: u16, value: &Value) -> Option<Vec<u8>> {
+    let held = match value {
+        Value::Bool(b) => vec![u8::from(*b)],
+        Value::String(s) => s.clone().into_bytes(),
+        Value::Number(n) => match n.as_i64() {
+            Some(i) => {
+                let bytes = i.to_be_bytes();
+                let skip = [7, 6, 4, 0].into_iter().find(|&at| i64::from_be_bytes(sign_extended(&bytes[at..])) == i)?;
+                bytes[skip..].to_vec()
+            }
+            None => n.as_f64()?.to_be_bytes().to_vec(),
+        },
+        _ => return None,
+    };
+    // A resource with a value, its id in one or two bytes, and its length in the type or after the id.
+    let (wide, id) = if resource > 255 { (0x20, resource.to_be_bytes().to_vec()) } else { (0, vec![resource as u8]) };
+    let mut out = match held.len() {
+        n @ 0..=7 => vec![0xc0 | wide | n as u8],
+        _ if held.len() <= 0xff => vec![0xc8 | wide],
+        _ if held.len() <= 0xffff => vec![0xd0 | wide],
+        _ => return None,
+    };
+    out.extend(id);
+    match held.len() {
+        0..=7 => {}
+        n if n <= 0xff => out.push(n as u8),
+        n => out.extend((n as u16).to_be_bytes()),
+    }
+    out.extend(held);
+    Some(out)
+}
+
+fn sign_extended(bytes: &[u8]) -> [u8; 8] {
+    let fill = if bytes[0] & 0x80 != 0 { 0xff } else { 0 };
+    let mut whole = [fill; 8];
+    whole[8 - bytes.len()..].copy_from_slice(bytes);
+    whole
+}
 
 /// What a device registered with.
 pub fn registration(m: &Coap) -> Option<String> {
@@ -79,8 +124,8 @@ impl Lwm2m {
         }
         if code == GET {
             options.push((ACCEPT, vec![TEXT]));
-        } else {
-            options.push((12, vec![TEXT]));
+        } else if !payload.is_empty() {
+            options.push((CONTENT_FORMAT, TLV.to_vec()));
         }
         options.sort_by_key(|(n, _)| *n);
         Coap { kind: CON, code, id, token: id.to_be_bytes().to_vec(), options, payload }
@@ -186,8 +231,11 @@ impl Transport for Lwm2m {
             None => self.request(GET, &path, false, Vec::new()),
             // Nothing to write means execute: POST on a resource, which is how LwM2M runs one.
             Some(Value::Null) => self.request(POST, &path, false, Vec::new()),
-            Some(Value::String(s)) => self.request(PUT, &path, false, s.clone().into_bytes()),
-            Some(other) => self.request(PUT, &path, false, other.to_string().into_bytes()),
+            Some(written) => {
+                let wrong = || Failure::NotSent(format!("{node}: a resource takes a number, text or true or false"));
+                let resource = path.rsplit('/').next().and_then(|r| r.parse().ok()).ok_or_else(wrong)?;
+                self.request(PUT, &path, false, tlv(resource, written).ok_or_else(wrong)?)
+            }
         };
         self.ask(endpoint, peer, request, &path).await.map_err(Failure::NotSent)?;
         Ok(None)
@@ -201,6 +249,23 @@ impl Transport for Lwm2m {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_value_is_written_as_the_specification_has_it() {
+        assert_eq!(tlv(1, &json!(5)), Some(vec![0xc1, 1, 5]));
+        assert_eq!(tlv(1, &json!(-1)), Some(vec![0xc1, 1, 0xff]));
+        assert_eq!(tlv(1, &json!(300)), Some(vec![0xc2, 1, 0x01, 0x2c]));
+        assert_eq!(tlv(1, &json!(200)), Some(vec![0xc2, 1, 0, 200]), "200 in one byte would read as negative");
+        assert_eq!(tlv(1, &json!(70_000)), Some(vec![0xc4, 1, 0, 1, 0x11, 0x70]));
+        assert_eq!(tlv(1, &json!(5_000_000_000i64)).map(|v| v.len()), Some(11), "a byte each for its type, id and length, and eight");
+        assert_eq!(tlv(1, &json!(true)), Some(vec![0xc1, 1, 1]));
+        assert_eq!(tlv(1, &json!("+05:30")), Some([&[0xc6, 1][..], b"+05:30"].concat()));
+        assert_eq!(tlv(5700, &json!(1)), Some(vec![0xe1, 0x16, 0x44, 1]), "an id past a byte takes two");
+        assert_eq!(tlv(1, &json!(2.5)), Some([&[0xc8, 1, 8][..], &2.5f64.to_be_bytes()].concat()), "eight bytes go after the id");
+        let long = "x".repeat(300);
+        assert_eq!(tlv(1, &json!(long)).map(|v| v[..4].to_vec()), Some(vec![0xd0, 1, 0x01, 0x2c]));
+        assert_eq!(tlv(1, &json!(["a"])), None);
+    }
 
     #[test]
     fn a_resource_is_a_number_or_it_is_text() {
