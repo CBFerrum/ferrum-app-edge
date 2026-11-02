@@ -463,7 +463,7 @@ fn base64_of(bytes: &[u8]) -> String {
     out
 }
 
-fn base64(text: &str) -> Option<Vec<u8>> {
+pub fn base64(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     let (mut bits, mut n) = (0u32, 0u32);
     for c in text.bytes().filter(|c| !c.is_ascii_whitespace() && *c != b'=') {

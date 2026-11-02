@@ -1,0 +1,8 @@
+# about: EV chargers calling in over OCPP 1.6-J or 2.0.1, with their meters, status and sessions.
+# group: Energy
+# Point a charger at ws://gateway:9000/ocpp/ and its own name, with its token as the password. A device
+# record with that code is what lets it in, and settings: {id_tags: [...]} limits who may charge.
+# Commands are OCPP's own actions, as ocpp.Reset or ocpp.RemoteStartTransaction with its payload.
+name: ocpp-chargers
+connect: listen+ocpp://0.0.0.0:9000/ocpp
+api: ocpp

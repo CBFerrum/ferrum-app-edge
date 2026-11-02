@@ -35,6 +35,7 @@ pub fn hash(secret: &[u8]) -> String {
 
 #[derive(Default)]
 struct Directory {
+    settings: HashMap<String, Value>,
     tokens: HashMap<String, String>,
     basic: Vec<(Basic, String)>,
     certificates: HashMap<String, String>,
@@ -65,6 +66,7 @@ impl Directory {
         let mut d = Directory::default();
         for link in devices {
             let code = &link.code;
+            d.settings.insert(code.clone(), link.settings.clone());
             if let Some(token) = &link.credentials.token {
                 d.tokens.insert(token.clone(), code.clone());
             }
@@ -167,6 +169,15 @@ impl Hub {
 
     pub fn who(&self, proof: &Proof<'_>) -> Option<String> {
         self.directory.read().unwrap_or_else(|e| e.into_inner()).who(proof)
+    }
+
+    pub fn known(&self, device: &str) -> bool {
+        self.directory.read().unwrap_or_else(|e| e.into_inner()).settings.contains_key(device)
+    }
+
+    /// One of a device's settings, for a protocol that needs one to answer it.
+    pub fn setting(&self, device: &str, key: &str) -> Option<Value> {
+        self.directory.read().unwrap_or_else(|e| e.into_inner()).settings.get(device)?.get(key).cloned()
     }
 
     /// A session for a device. One client id has one session: a second one with the same id replaces

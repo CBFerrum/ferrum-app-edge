@@ -20,6 +20,8 @@ pub mod modbus;
 #[cfg(feature = "mqtt")]
 pub mod mqtt;
 pub mod mqtt_server;
+#[cfg(feature = "ws")]
+pub mod ocpp;
 #[cfg(feature = "opcua")]
 pub mod opcua;
 #[cfg(feature = "mqtt")]

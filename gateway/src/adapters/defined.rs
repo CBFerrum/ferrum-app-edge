@@ -13,9 +13,9 @@ use crate::adapters::hub::{Hub, Offered};
 use crate::adapters::transport::{self, Limits, Message, Out, Transport};
 use async_trait::async_trait;
 use chrono::Utc;
-use ferrum_edge_contract::device_api;
 use ferrum_edge_contract::driver::{self, Api, Compiled, Decoded, Ending, Format, Memory, Step, render, render_json};
 use ferrum_edge_contract::edge::{DeviceLink, Provisioning};
+use ferrum_edge_contract::{device_api, ocpp};
 use ferrum_ops_contract::telemetry::Class;
 use ferrum_ops_contract::{Command, sync::SiteDevice};
 use serde::Serialize;
@@ -425,6 +425,8 @@ impl Link {
         let mut s = locked(&self.shared);
         let decoded = if self.device_api() {
             device_api::decode(&m.topic, body)
+        } else if self.ocpp() {
+            ocpp::decode(&m.topic, body)
         } else if self.native() {
             native_decode(body)
         } else {
@@ -517,6 +519,8 @@ impl Link {
                 device_api::firmware_ended(&m.topic, &f.device, body)
             } else if self.device_api() {
                 device_api::status(&m.topic, body, &names)
+            } else if self.ocpp() {
+                ocpp::status(&m.topic, body, &names)
             } else if self.native() {
                 native_status(body, &names)
             } else {
@@ -530,6 +534,25 @@ impl Link {
 
     fn device_api(&self) -> bool {
         self.compiled.definition.api == Some(Api::Device)
+    }
+
+    fn ocpp(&self) -> bool {
+        self.compiled.definition.api == Some(Api::Ocpp)
+    }
+
+    /// A call to a charger, which answers it by its id.
+    async fn dispatch_to_charger(&self, c: &Command, device: &SiteDevice) -> Result<Dispatched, Failure> {
+        let action = ocpp::action(&c.operation).ok_or_else(|| Failure::NotSent(format!("a charger takes ocpp.Reset and the like, and not {}", c.operation)))?;
+        let id = self.seq.fetch_add(1, Ordering::Relaxed);
+        let out = Out::Publish { topic: ocpp::call(&device.code, id, action), body: c.payload.to_string().into_bytes(), expiry: None, retain: false };
+        let waiting =
+            Inflight { operation: c.operation.clone(), device: device.code.clone(), external: Some(id.to_string()), ending: Ending::Waiting, evidence: None };
+        locked(&self.shared).inflight.insert(c.id, waiting);
+        if let Err(e) = self.send(out, Some(&device.code)).await {
+            locked(&self.shared).inflight.remove(&c.id);
+            return Err(e);
+        }
+        Ok(Dispatched::Accepted { external: Some(id.to_string()) })
     }
 
     /// A command for a device that called in: it hears it if it is connected and listening, and
@@ -577,6 +600,9 @@ impl Link {
         let link = self.settings_of(&device.code);
         if self.device_api() {
             return self.dispatch_to_device(c, device, link.as_ref()).await;
+        }
+        if self.ocpp() {
+            return self.dispatch_to_charger(c, device).await;
         }
         let vars = self.vars(link.as_ref(), Some(c), None);
         let expires = (c.expires_at - Utc::now()).num_seconds().max(1) as u32;
@@ -646,7 +672,7 @@ impl Link {
                 evidence: None,
             });
         }
-        if !self.native() && !self.device_api() {
+        if !self.native() && !self.device_api() && !self.ocpp() {
             let Some(def) = self.compiled.command(&c.operation) else { return Ok(Observation::NotFound) };
             if def.once {
                 return Ok(Observation::Completed(json!({"sent": true, "proved": "nothing beyond the send: this device gives no answer"})));

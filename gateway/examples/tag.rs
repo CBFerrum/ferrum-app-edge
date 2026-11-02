@@ -38,6 +38,12 @@ async fn main() {
             tokio::time::sleep(Duration::from_secs(secs)).await;
             continue;
         }
+        if step == "publish" {
+            let topic = steps.next().expect("which topic").clone();
+            let body = steps.next().expect("what body").clone().into_bytes();
+            println!("{topic}: {:?}", link.send(Out::Publish { topic: topic.clone(), body, expiry: None, retain: false }).await.map(drop));
+            continue;
+        }
         let node = steps.next().expect("which node").clone();
         let value = (step == "write").then(|| {
             let text = steps.next().expect("what value");
