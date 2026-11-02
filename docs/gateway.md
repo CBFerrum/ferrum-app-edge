@@ -8,8 +8,23 @@ simulator first.
 
 ## Install
 
-Build `ferrum-site` from this repository for the gateway's architecture (`cargo build --release --locked -p
-ferrum-site`, with `--no-default-features` and the features you want to leave protocols out), then:
+Take `ferrum-site` from [the releases](https://github.com/CBFerrum/ferrum-app-edge/releases) for the
+gateway's architecture, `x86_64` or `aarch64`, and check it:
+
+```bash
+curl -fLO https://github.com/CBFerrum/ferrum-app-edge/releases/latest/download/ferrum-site-aarch64-linux
+curl -fLO https://github.com/CBFerrum/ferrum-app-edge/releases/latest/download/ferrum-site-aarch64-linux.sha256
+sha256sum -c ferrum-site-aarch64-linux.sha256
+mv ferrum-site-aarch64-linux ferrum-site
+```
+
+It is static, so it asks nothing of the machine but 64-bit Linux, which on a Raspberry Pi means the 64-bit
+edition of its system. Each release is started on Ubuntu 22.04, Debian 12, CentOS 7 and Alpine before it
+is published. Names come from `/etc/hosts` and DNS alone: for a `.local` name found by mDNS, give an
+address instead, or build your own.
+
+To build it, or to leave protocols out, use `cargo build --release --locked -p ferrum-site`, with
+`--no-default-features` and the features you want. Then:
 
 ```bash
 sudo useradd --system --home /var/lib/ferrum-site --create-home ferrum-site
@@ -119,13 +134,14 @@ with nothing running, checks the file against the signed hash, keeps the old bin
 and restarts. A new build that keeps dying before it has spoken to the platform is put back, and that
 version is refused from then on.
 
-To make one, tag this repository `v0.3.0`: CI builds `ferrum-site` for 64-bit Intel and ARM Linux and
-attaches them to a GitHub release, with their hashes. CI holds no key, because a release is a person's to
-sign:
+To make one, tag this repository with the version in `Cargo.toml`. CI builds `ferrum-site` for 64-bit
+Intel and ARM Linux, starts each on the systems above with `scripts/starts.sh`, runs the gateway's tests
+on the C library it ships with, and only then attaches them to a GitHub release, with their hashes. CI
+holds no key, because a release is a person's to sign:
 
 ```
 ferrum-site release-key > release.key     # once: public goes in update_keys, secret stays off every gateway
-ferrum-site sign --key secret.txt --version 0.3.0 --url https://…/ferrum-site --file ferrum-site --days 90
+ferrum-site sign --key secret.txt --version 0.3.1 --url https://…/ferrum-site --file ferrum-site --days 90
 ```
 
 `sign` prints the version, hash, signature and expiry for the Edge Release. Keep the secret half on a
