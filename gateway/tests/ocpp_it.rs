@@ -1,14 +1,17 @@
 //! EV chargers calling a gateway. A charger written here says what the specification says, and one
 //! written with the Python `ocpp` library, when `FERRUM_TEST_PYTHON` names a Python that has it,
 //! proves that someone else reads it the same way. No charger made by anyone was involved.
+//!
+//! What a charger says about money is kept before it hears that it was heard, here in a real journal
+//! that is closed and opened again, the way a crash and a restart leave it.
 
 use chrono::{Duration, Utc};
 use ferrum_edge_contract::edge::{Credentials, DeviceLink};
 use ferrum_ops_contract::Command;
-use ferrum_ops_contract::sync::SiteDevice;
+use ferrum_ops_contract::sync::{Fact, SiteDevice};
 use ferrum_site::adapter::{Adapter, Dispatched, Observation, Reading};
 use ferrum_site::adapters::defined::Defined;
-use ferrum_site::adapters::hub::hash;
+use ferrum_site::adapters::hub::{Keeper, hash};
 use ferrum_site::adapters::transport::Limits;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -44,10 +47,14 @@ fn charger(code: &str, token: Option<&str>, id_tags: Value) -> DeviceLink {
 
 impl Plant {
     async fn up(links: &[DeviceLink], query: &str) -> Plant {
+        Plant::with_keeper(links, query, None).await
+    }
+
+    async fn with_keeper(links: &[DeviceLink], query: &str, keeper: Option<Arc<dyn Keeper>>) -> Plant {
         let port = free_port();
         let body = format!("name: chargers\nconnect: listen+ocpp://127.0.0.1:{port}/ocpp{query}\napi: ocpp\n");
         let definitions = BTreeMap::from([("chargers".to_string(), body)]);
-        let d = Defined::new(Limits { listen: vec![format!("127.0.0.1:{port}/ocpp"), format!("127.0.0.1:{port}")], ..Default::default() }, json!({}));
+        let d = Defined::new(Limits { listen: vec![format!("127.0.0.1:{port}/ocpp"), format!("127.0.0.1:{port}")], keeper, ..Default::default() }, json!({}));
         assert_eq!(d.apply(&definitions, links), Vec::<String>::new());
         for _ in 0..200 {
             if d.links().iter().all(|l| l.up) {
@@ -135,6 +142,71 @@ fn site_device(code: &str) -> SiteDevice {
 
 fn is_metric(r: &Reading, name: &str, want: f64) -> bool {
     matches!(r, Reading::Value { metric, value, .. } if metric == name && (*value - want).abs() < 1e-6)
+}
+
+/// A keeper that can be made to fail, in front of a real journal.
+struct Flaky {
+    journal: Arc<ferrum_site::journal::Journal>,
+    down: std::sync::atomic::AtomicBool,
+}
+
+impl Keeper for Flaky {
+    fn keep(&self, device: &str, _call: &str, action: &str, said: &Value) -> Result<(), String> {
+        if self.down.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("the disk is full".into());
+        }
+        let hash = hash(format!("{device}/{action}/{said}").as_bytes());
+        let id = Uuid::parse_str(&hash[..32]).unwrap();
+        self.journal
+            .add_fact(&Fact { fact_id: id, kind: "edge.transaction".into(), at_source: Utc::now(), actor: None, body: json!({"said": said}) })
+            .map_err(|e| e.to_string())
+    }
+
+    fn number(&self, device: &str, said: &Value) -> Result<i32, String> {
+        self.journal.transaction_number(&format!("{device}/{said}"), Utc::now().timestamp_millis()).map_err(|e| e.to_string())
+    }
+}
+
+#[tokio::test]
+async fn what_a_charger_says_about_money_is_kept_before_it_is_answered() {
+    let dir = std::env::temp_dir().join(format!("ferrum-ocpp-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("journal.db");
+    let journal = Arc::new(ferrum_site::journal::Journal::open(&path).unwrap());
+    let keeper = Arc::new(Flaky { journal: journal.clone(), down: Default::default() });
+    let plant = Plant::with_keeper(&[charger("CP-1", Some("sesame"), json!(null))], "", Some(keeper.clone())).await;
+    let mut socket = connect(plant.port, "CP-1", "ocpp1.6", Some("sesame")).await.unwrap();
+    let start = json!({"connectorId": 1, "idTag": "A", "meterStart": 1000, "timestamp": "2026-11-02T10:00:00Z"});
+
+    // AT-OPS-008: it cannot be kept, so the charger is not told it was, and says it again.
+    keeper.down.store(true, std::sync::atomic::Ordering::SeqCst);
+    let refused = call(&mut socket, "1", "StartTransaction", start.clone()).await;
+    assert_eq!((&refused[0], &refused[2]), (&json!(4), &json!("InternalError")), "{refused}");
+    assert!(journal.facts(10).unwrap().is_empty());
+    keeper.down.store(false, std::sync::atomic::Ordering::SeqCst);
+    let first = call(&mut socket, "1", "StartTransaction", start.clone()).await;
+    let number = first[2]["transactionId"].as_i64().expect("a number");
+
+    // AT-OPS-010: the same start over a new connection, after a restart, is the same transaction.
+    drop(socket);
+    let mut socket = connect(plant.port, "CP-1", "ocpp1.6", Some("sesame")).await.unwrap();
+    let again = call(&mut socket, "2", "StartTransaction", start.clone()).await;
+    assert_eq!(again[2]["transactionId"].as_i64(), Some(number));
+    let other = call(&mut socket, "3", "StartTransaction", json!({"connectorId": 2, "idTag": "B", "meterStart": 5, "timestamp": "2026-11-02T10:05:00Z"})).await;
+    let other = other[2]["transactionId"].as_i64().unwrap();
+    assert_ne!(other, number, "and a new one is a new number");
+    let stop = json!({"transactionId": number, "meterStop": 2000, "timestamp": "2026-11-02T10:30:00Z"});
+    assert_eq!(call(&mut socket, "4", "StopTransaction", stop.clone()).await[0], json!(3));
+    assert_eq!(call(&mut socket, "5", "StopTransaction", stop).await[0], json!(3), "a stop it did not hear answered, said again");
+    assert_eq!(journal.facts(10).unwrap().len(), 3, "one start, another and one stop, however often they were said");
+
+    // A crash here loses nothing the charger was told was heard, and starts no number again.
+    drop(socket);
+    let reopened = ferrum_site::journal::Journal::open(&path).unwrap();
+    assert_eq!(reopened.facts(10).unwrap().len(), 3);
+    let later = reopened.transaction_number("a later one", Utc::now().timestamp_millis()).unwrap();
+    assert!(i64::from(later) > other, "{later} after {other}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[tokio::test]

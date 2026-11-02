@@ -239,6 +239,9 @@ impl Link {
         topics.dedup();
         let hub = Arc::new(Hub::default());
         hub.set(&devices);
+        if let Some(keeper) = &limits.keeper {
+            hub.keep_with(keeper.clone());
+        }
         let options = transport::Options {
             frame: d.frame.clone(),
             subscribe: &topics,

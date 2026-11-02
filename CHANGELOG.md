@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+**No charger or meter has been connected to any of this.**
+
+- **What a charger says about money is kept before it hears that it was heard.** Starts, stops and meter
+  readings reach the journal first, so a crash loses nothing a charger was told was safe. One that cannot be
+  kept gets an error, and says it again. Saying the same thing twice, on any connection, counts once.
+- **Transaction numbers survive restarts.** They came from a counter in memory, which started again and could
+  hand a number a charger still held to someone else. The same start gets the same number.
+- **Charging sessions.** A session is worked out from everything said about it, in whatever order it arrived.
+  It is charging only once a register has moved, because a charger accepting a start has only said it will
+  try. A reset, late, missing, unconverted or unverified reading gives no figure to bill on, and only a person
+  can settle such a session, with a reason that stays on it.
+- **A gateway says who is connected to it,** for the platform to give that gateway the device's work. A
+  domain shared by several gateways still needs its devices given to each: that waits for the platform change.
+
 ## 0.4.0
 
 From a review of the connected system under retries, crashes, configuration changes, clock changes

@@ -597,6 +597,21 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
             may(ctx, READ)?;
             crate::firmware::progress(k, ctx, uuid(id)?).await?
         }
+        ("GET", ["charging"]) => {
+            may(ctx, READ)?;
+            let device = req.query.get("device").and_then(Value::as_str).map(uuid).transpose()?;
+            crate::charging::list(k, ctx, device).await?
+        }
+        ("POST", ["charging", id, "settle"]) => {
+            may(ctx, OPERATE)?;
+            let b = body(req)?;
+            let s = crate::charging::Settle {
+                reference: b["reference"].as_str().unwrap_or_default().to_string(),
+                energy_wh: b["energy_wh"].as_f64(),
+                note: b["note"].as_str().map(str::to_string),
+            };
+            crate::charging::settle(k, ctx, uuid(id)?, s).await?
+        }
         ("GET", ["fleet"]) => {
             may(ctx, READ)?;
             fleet::health(k, ctx).await?

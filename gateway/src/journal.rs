@@ -29,6 +29,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 const SCHEMA: &str = "
 create table if not exists meta (key text primary key, value text not null);
+create table if not exists device_transaction (key text primary key, number integer not null, at integer not null);
 create table if not exists command (
   id text primary key,
   body text not null,
@@ -374,6 +375,7 @@ impl Journal {
         tx.execute(&format!("insert or replace into outcome (id, state, at) select id, state, ?1 from command where {DONE}"), [now])?;
         tx.execute(&format!("delete from command where {DONE}"), [])?;
         tx.execute("delete from outcome where at < ?1", [now - KEEP_OUTCOMES_MS])?;
+        tx.execute("delete from device_transaction where at < ?1", [now - KEEP_OUTCOMES_MS])?;
         tx.commit()?;
         Ok(())
     }
@@ -393,6 +395,28 @@ impl Journal {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// The number a new transaction goes by, the same one for the same start however often it arrives.
+    /// It carries on from where it was: a process's counter would start again, and hand a number that
+    /// chargers still hold to someone else.
+    pub fn transaction_number(&self, key: &str, at: i64) -> Result<i32> {
+        let mut db = self.db();
+        let tx = db.transaction()?;
+        if let Some(number) = tx.query_row("select number from device_transaction where key = ?1", [key], |r| r.get(0)).optional()? {
+            return Ok(number);
+        }
+        let last: Option<String> = tx.query_row("select value from meta where key = 'device_transaction'", [], |r| r.get(0)).optional()?;
+        // From the clock the first time, so a journal lost with its disk does not begin again at one.
+        let next = last.and_then(|v| v.parse::<i64>().ok()).map_or((at / 1000) & 0x7fff_ffff, |n| n + 1);
+        let next = if next > i64::from(i32::MAX) { 1 } else { next };
+        tx.execute(
+            "insert into meta (key, value) values ('device_transaction', ?1) on conflict (key) do update set value = excluded.value",
+            [next.to_string()],
+        )?;
+        tx.execute("insert into device_transaction (key, number, at) values (?1, ?2, ?3)", params![key, next, at])?;
+        tx.commit()?;
+        Ok(next as i32)
     }
 
     pub fn add_fact(&self, f: &Fact) -> Result<()> {
