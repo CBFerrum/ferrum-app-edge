@@ -32,14 +32,14 @@ the detail of what each thing was tried against.
 | OCPP 1.6-J and 2.0.1 | ThingsBoard Gateway, OpenRemote | **Verified** | 1.6 against the Python `ocpp` library, including a charging profile held to OCPP's own schema; 2.0.1 against frames written here. Security profiles 0 to 3. Smart charging is a command like any other: nothing here works out a schedule |
 | Modbus TCP and RTU | Everyone | **Verified** | TCP against pymodbus, in CI: typed reads, and writes read back. RTU against a pseudo-terminal only |
 | OPC UA client: watch, read, write, call, encryption, users, browse | Ignition, Kura, Azure IoT Operations | **Verified** | Against async-opcua's server |
-| OPC UA events and history | Ignition | **Verified** | Against asyncua: events with their ids, and a node's history from where this last got to. Acknowledging a condition is a `call` to its `i=9111`, which no server has answered yet |
+| OPC UA events, conditions and history | Ignition | **Verified** | Against asyncua: events with their ids, and a node's history from where this last got to. Against open62541's alarm server, by hand: a condition acknowledged by the ids its event carried, and refused with a wrong one |
 | OPC UA server | Ignition, Kura | **Verified** | As an export, read only, against asyncua's client; with encryption, a login and certificates a person trusts, against async-opcua's. **No history**, and a variable appears with its first reading |
 | Siemens S7 | PLC4X, Ignition, ThingsBoard Gateway | **Verified** | Against python-snap7's server. Its emulation of bit writes differs, so a bit write has only met the standard's description |
 | EtherNet/IP, Logix tags | PLC4X, Ignition | **Verified** | Against cpppo, direct and routed. **No I/O connections, by design** |
 | TwinCAT ADS | PLC4X, Ignition | **Verified** | Against pyads's test server, by symbol |
 | BACnet/IP | ThingsBoard Gateway, OpenRemote | **Verified** | Against BACpypes3, read and write, and `discover` asks who is there with a Who-Is. **No COV**: it polls |
 | KNX over IP | ThingsBoard Gateway, OpenRemote | **Built** | Tunnelling, against a stand-in |
-| IEC 60870-5-104 | Ignition modules | **Verified** | Against lib60870: interrogation, spontaneous data, commands sent |
+| IEC 60870-5-104 | Ignition modules | **Verified** | Against lib60870: interrogation, spontaneous data, and a single command it reported receiving. Double and setpoint commands were sent and its example has nothing to say about them |
 | DLMS/COSEM | Metering head ends, Ignition modules | **Built** | Over the wrapper, by OBIS code, with blocks and low-level security, read only. The requests compare equal to Gurux's client. **No HDLC, no high-level security or ciphering** |
 | DNP3 | Ignition modules | **Verified** | As a master over TCP against opendnp3: integrity, events, unsolicited, select-before-operate. **No Secure Authentication, no TLS, no serial** |
 | M-Bus | OpenRemote, metering | **Verified** | Frames read as pyMeterBus reads them. No meter |
@@ -57,6 +57,7 @@ the detail of what each thing was tried against.
 | Kafka and AMQP as sources | ThingsBoard PE | **Verified** | Against Apache Kafka and RabbitMQ, in CI. A Kafka reader keeps its place in a file and has no consumer group |
 | HTTP polling, WebSocket, TCP, UDP, serial, webhooks | Everyone | **Built** | Against real sockets |
 | Any other protocol | EdgeX, Kura | **Verified** | External drivers, as JSON lines in any language |
+| XMPP | ThingsBoard Gateway | **External** | By an external driver. Nothing here has met one |
 | Discovery of devices | EdgeX | **Partly** | Strangers on a connection are noticed and a person claims them. No network scanning, on purpose |
 
 ## Robots
@@ -88,6 +89,7 @@ the detail of what each thing was tried against.
 | Calculated fields | ThingsBoard | **Built** | `derive` in a definition, at the gateway, and flows for anything across devices |
 | Statistical anomaly detection | StreamPipes | **Built** | Per device. It is a statistic, not a diagnosis |
 | Machine learning at the edge | Greengrass, Azure, StreamPipes | **External** | An external driver can run a model and report events. No ONNX runtime is built in |
+| AI in a rule chain | ThingsBoard | **By design** | No model decides anything about equipment. Ferrum's assistant can read and explain, and a model's opinion can arrive as an event from an external driver |
 
 ## Alarms and notifications
 
@@ -111,11 +113,12 @@ the detail of what each thing was tried against.
 | Drill-down between dashboards | ThingsBoard states | **Built** | Links and table rows open another dashboard with its device variable set |
 | Custom widgets in JavaScript | ThingsBoard | **By design** | No code a reviewer cannot read |
 | History: long ranges by rollup, short by sample | ThingsBoard, Ignition | **Verified** | |
-| Time-series at scale | ThingsBoard with Cassandra, TimescaleDB | **Partly** | PostgreSQL carries this to what one database can take. Past that, export to ClickHouse or InfluxDB |
+| Time-series at scale | ThingsBoard with Cassandra, TimescaleDB | **Partly** | One gateway stored 28,500 readings a second end to end on a laptop, with 37,000 the sustained limit, in partitions and rollups on PostgreSQL. Many gateways and long runs are not measured. Past one database, export to ClickHouse or InfluxDB |
 | Live updates over a socket | ThingsBoard | **Built** | Pages hear on the platform's socket that a site's readings landed and ask again at once, paced to one ask in three seconds, so a reading shows as soon as its gateway has sent it. The socket says that something changed and not what: a page still asks, with its reader's rights. Shared dashboards poll |
 | Reports | ThingsBoard PE | **Built** | Availability, alarms and readings, to read and export, and by schedule to anyone by email as CSV or PDF, with the mail in one transaction with the note that it ran. The PDF path needs the server's renderer and has not been run |
 | Assets and hierarchy | ThingsBoard, OpenRemote | **Built** | Assets inside assets, devices on them, selection by what is under an asset |
 | Arbitrary entity relations | ThingsBoard | **Built** | Between devices, by any name, and devices can be chosen by them. Assets contain. Flows do not follow them |
+| Entity views | ThingsBoard | **Partly** | A dashboard given to a customer shows a chosen part of a device. The portal's device page shows all of its readings |
 | Customers owning devices | ThingsBoard | **Built** | A customer's people sign in to the workspace's portal and see their devices, alarms and given dashboards, and nothing else. They can acknowledge an alarm, and they cannot command |
 
 ## Fleet
@@ -130,6 +133,7 @@ the detail of what each thing was tried against.
 | Tenants, roles, audit, SSO, API tokens | ThingsBoard, Hono | **Verified** | The platform's own |
 | Usage limits per tenant | ThingsBoard | **Built** | The operator's, per workspace: measurements a day and devices. Past the first, gateways hold readings until there is room, and commands and leases go on. Other limits are budgets at the gateway |
 | Container workloads at the edge | Greengrass, Kura | **By design** | One binary, and external drivers |
+| Automatic failover of a gateway | Ignition redundancy | **By design** | Authority over a domain moves by a person's word, with an epoch that fences the old holder: two gateways that each think they are in charge is the failure this exists to prevent. Readings wait in the journal meanwhile |
 | Local dashboards at a gateway | Ignition Edge | **Built** | The console shows work, links and problems, and to whoever signs in, the last 120 readings of up to 200 series, drawn. There is no designing a screen for it |
 | Federation between platforms | Ignition GAN | **Partly** | A gateway can export to another platform's ingest, and peers work through each other. Platforms do not share a view |
 
@@ -142,6 +146,7 @@ the detail of what each thing was tried against.
 | Kafka | ThingsBoard | **Verified** | Apache Kafka, in CI |
 | RabbitMQ and other AMQP 0-9-1 | ThingsBoard | **Verified** | RabbitMQ, in CI, with publisher confirms |
 | InfluxDB, ClickHouse | StreamPipes, Azure | **Verified** | The real servers, in CI |
+| A table of your own in PostgreSQL | Ignition transaction groups, ThingsBoard's custom table | **Verified** | The real server, in CI, once per batch with a unique index |
 | S3, SQS, SNS | ThingsBoard, Greengrass | **Built** | Against moto, with signatures that match Amazon's published examples. Not sent to AWS |
 | Google Pub/Sub, Azure IoT Hub, Event Hubs | ThingsBoard | **Built** | Against the documented shape of the calls only. Not sent to Google or Azure |
 

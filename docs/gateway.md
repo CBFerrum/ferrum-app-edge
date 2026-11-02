@@ -175,6 +175,7 @@ queue when the far end has said yes.
 | `azure://hub.azure-devices.net/device` | Azure IoT Hub, as that device | | The device's key |
 | `eventhub://namespace.servicebus.windows.net/hub` | Azure Event Hubs | | `policy:key` |
 | `sparkplug://broker:1883/group/node`, `sparkplugs://` | This gateway as a Sparkplug edge node: births, data in sequence, and everything again if a host asks | | |
+| `postgres://writer@historian/plant?table=readings` | Rows in a table of someone else's, with columns `device`, `metric`, `value` and `at`, and the password as `sign_with`. A unique index on those makes a repeated batch land once. Plain TCP, so it belongs on a control network |
 | `listen+opcua://0.0.0.0:4840`, `listen+opcua://reader@0.0.0.0:4840` | This gateway as an OPC UA server, read only: each device a folder and each metric a variable, `ns=2;s=PRESS-1/temp.c`, stamped with the device's time. The address must be in `listen`. With a user and `sign_with`, only Basic256Sha256 with that password, and a client's certificate is trusted once a person moves it from `rejected` to `trusted` under `state_dir/tls/opcua-server`. The port closes when no export names it. Nothing can be written: a command goes through the ledger |
 
 A secret is named by the export and kept in the site's `secrets`. An address with a password in it is

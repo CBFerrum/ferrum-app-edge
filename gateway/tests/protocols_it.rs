@@ -276,6 +276,23 @@ async fn several_units_share_one_modbus_serial_line() {
     seen.reading(&d, |r| of(r, "M4") && metric(r, "power", 40.0)).await;
 }
 
+#[tokio::test]
+async fn a_burst_wakes_the_reader_rather_than_waiting_for_its_turn() {
+    let port = free_port();
+    let address = format!("127.0.0.1:{port}");
+    let definition = format!("name: chatty\nconnect: listen://{address}\nframe: {{line: \"\\n\"}}\nread:\n  - {{metric: level}}\n");
+    let d = start(Limits { listen: vec![address.clone()], ..Default::default() }, &definition, &[("CHATTY", Value::Null)]);
+    until("the port", async || TcpStream::connect(&address).await.is_ok()).await;
+    let woken = d.pressing.clone();
+    let mut chatty = TcpStream::connect(&address).await.unwrap();
+    let burst = "1.5\n".repeat(6_000);
+    let woke = tokio::time::timeout(Wait::from_secs(5), async {
+        tokio::join!(woken.notified(), async { chatty.write_all(burst.as_bytes()).await.unwrap() });
+    })
+    .await;
+    assert!(woke.is_ok(), "half full is when a read is due, whatever the clock says");
+}
+
 /// Someone else's Modbus at the far end, when `FERRUM_TEST_PYTHON` has pymodbus, as CI's does.
 #[tokio::test]
 async fn a_controller_written_by_someone_else_over_modbus_tcp() {

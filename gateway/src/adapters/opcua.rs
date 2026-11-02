@@ -114,6 +114,7 @@ fn json_of(v: &Variant) -> Value {
         Variant::String(s) => json!(s.as_ref()),
         Variant::Array(a) => Value::Array(a.values.iter().map(json_of).collect()),
         Variant::ByteString(b) => json!(b.as_base64()),
+        Variant::LocalizedText(t) => json!(t.text.as_ref()),
         other => json!(other.to_string()),
     }
 }

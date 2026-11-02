@@ -39,6 +39,7 @@ TIMEOUT = 600
 
 # name, file, text to replace, what breaks it, test
 MUTANTS = [
+    ("a-burst-waits-for-the-clock", "gateway/src/adapters/defined.rs", "                self.pressing.notify_one();\n", "", PROTOCOLS),
     ("held-readings-thrown-away", "gateway/src/runtime.rs", "        if !r.measurements_held {\n", "        if true {\n", SITE),
     ("firmware-unheard-by-thingsboards-client", "contract/src/device_api.rs", 'if filter.starts_with(FIRMWARE_ANSWER) { "v2/fw/response/#" } else { filter }', "filter", CONTRACT),
     ("customer-sees-anothers-device", "src/portal.rs", "where d.tenant_id = $1 and d.id = $2 and d.edge_customer = any($3) and d.lifecycle <> 'Retired'", "where d.tenant_id = $1 and d.id = $2 and cardinality($3::uuid[]) >= 0", PORTAL),
