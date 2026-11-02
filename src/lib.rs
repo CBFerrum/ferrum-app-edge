@@ -2,11 +2,16 @@
 //! working on their own.
 //!
 //! * [`alarms`]: what people do about an alarm;
+//! * [`bundles`]: a solution in one file;
 //! * [`config`]: what each gateway should be, worked out from the records;
 //! * [`data`]: numbers over time, and what a dashboard shows;
 //! * [`facts`]: what gateways report, arriving when the link allows;
+//! * [`firmware`]: new firmware for devices, a few at a time;
+//! * [`fleet`]: many devices at once;
 //! * [`notices`]: telling people, in steps;
 //! * [`platform_flows`]: flows that run here, for what has to see across sites;
+//! * [`reports`]: availability, alarms and readings on paper;
+//! * [`schedules`]: asking devices for something by the clock;
 //! * [`site`]: the HTTP endpoints;
 //! * [`templates`]: definitions to start from.
 //!
@@ -14,11 +19,16 @@
 //! and looked after. Rules raise alarms and move nothing: anything physical goes through the ledger.
 
 pub mod alarms;
+pub mod bundles;
 pub mod config;
 pub mod data;
 pub mod facts;
+pub mod firmware;
+pub mod fleet;
 pub mod notices;
 pub mod platform_flows;
+pub mod reports;
+pub mod schedules;
 pub mod site;
 pub mod templates;
 
@@ -49,6 +59,9 @@ pub fn register(h: &mut HookRegistry) {
     h.register("EdgeFlow", Arc::new(FlowHook));
     h.register("EdgeDashboard", Arc::new(BoardHook));
     h.register("EdgeExport", Arc::new(ExportHook));
+    h.register("EdgeFirmware", Arc::new(firmware::FirmwareHook));
+    h.register("EdgeRollout", Arc::new(firmware::RolloutHook));
+    h.register("EdgeSchedule", Arc::new(schedules::ScheduleHook));
     h.add_event_sink(Arc::new(Facts));
     h.add_site("edge", Arc::new(site::EdgeSite));
     h.add_job_handler(Arc::new(notices::Notices));
@@ -56,7 +69,7 @@ pub fn register(h: &mut HookRegistry) {
 
 /// This app's reports.
 pub fn reports() -> Vec<Arc<dyn ReportSource>> {
-    vec![]
+    vec![Arc::new(reports::EdgeReports)]
 }
 
 /// A dashboard is checked when it is saved, so that nothing is left for a person looking at it to find.
@@ -312,7 +325,12 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
             }
         };
         let ctx = Ctx::system(tenant, schema);
-        for outcome in [facts::watch_gateways(k, &ctx).await, notices::send_due(k, &ctx).await.map(drop), platform_flows::run(k, &ctx).await] {
+        for outcome in [
+            facts::watch_gateways(k, &ctx).await,
+            notices::send_due(k, &ctx).await.map(drop),
+            platform_flows::run(k, &ctx).await,
+            firmware::advance(k, &ctx).await,
+        ] {
             if let Err(e) = outcome {
                 tracing::warn!(%tenant, "edge maintenance failed: {e}");
                 first_error.get_or_insert(e);

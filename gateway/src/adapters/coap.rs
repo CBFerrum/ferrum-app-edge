@@ -388,6 +388,13 @@ impl Served {
             (POST, ["claim"]) => self.say(m, &device, "v1/devices/me/claim", if body.is_empty() { b"{}".to_vec() } else { body }).await,
             (POST, ["rpc", id]) => self.say(m, &device, &format!("v1/devices/me/rpc/response/{id}"), body).await,
             (POST, ["rpc"]) if is_json => self.asked(peer, m, &device, body).await,
+            (GET, ["firmware"]) => {
+                let number = |key| m.query(key).and_then(|n| n.parse().ok()).unwrap_or(0);
+                match self.hub.firmware_chunk(&device, m.query("title"), m.query("version"), number("size"), number("chunk")) {
+                    Some(piece) => m.answer(CONTENT, piece),
+                    None => m.answer(NOT_FOUND, Vec::new()),
+                }
+            }
             (GET, ["attributes"]) if m.option(OBSERVE).is_some() => self.observe(peer, m, &device, "v1/devices/me/attributes").await,
             (GET, ["rpc"]) if m.option(OBSERVE).is_some() => self.observe(peer, m, &device, "v1/devices/me/rpc/request/+").await,
             (GET, ["attributes"]) => {

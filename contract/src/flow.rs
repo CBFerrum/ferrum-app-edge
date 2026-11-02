@@ -784,7 +784,7 @@ struct Run<'a> {
     known: &'a Known,
 }
 
-fn minutes_of(text: &str) -> Option<i32> {
+pub fn minutes_of(text: &str) -> Option<i32> {
     let (h, m) = text.split_once(':')?;
     let (h, m): (i32, i32) = (h.parse().ok()?, m.parse().ok()?);
     ((0..24).contains(&h) && (0..60).contains(&m)).then_some(h * 60 + m)

@@ -126,6 +126,18 @@ read:
 This makes a device with hundreds of values one line. A name a device chose is made fit to be a
 metric's, and one link keeps track of at most 20,000 of them.
 
+## Numbers worked out from others
+
+```yaml
+derive:
+  - {metric: power.kw, formula: "[volts] * [amps] / 1000", unit: kW}
+  - {metric: cost.hour, formula: "[power.kw] * 0.2", fresh: 30s}
+```
+
+A derived number is worked out at the gateway whenever one of its inputs is reported, once all of
+them have been heard, so it works with the link down. Each can use those listed before it. An input
+older than `fresh` does not count: a stale reading is not a reading.
+
 ## Commands
 
 The name under `commands` is the operation a device is commissioned for. A step says what to send:

@@ -10,6 +10,8 @@ use ferrum_edge_contract::edge::{Basic, DeviceLink, Provisioning};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
+use std::io::{Read, Seek, SeekFrom};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -21,6 +23,9 @@ const MAILBOX: usize = 256;
 const MAX_FILTERS: usize = 100;
 /// Attributes kept per device, for it to ask for again.
 const MAX_ATTRIBUTES: usize = 1000;
+/// One piece of firmware, at most, and what a device gets by asking for no size in particular.
+const MAX_CHUNK: usize = 1 << 20;
+
 /// Devices that can add themselves in an hour. A leaked secret can fill a platform only this fast.
 const MAX_JOINS: usize = 120;
 
@@ -35,6 +40,14 @@ struct Directory {
     certificates: HashMap<String, String>,
     via: HashMap<String, String>,
     shared: HashMap<String, BTreeMap<String, Value>>,
+}
+
+/// Firmware a device has been told about.
+#[derive(Debug, Clone)]
+pub struct Offered {
+    pub title: String,
+    pub version: String,
+    pub path: PathBuf,
 }
 
 /// What a device said about itself when it connected.
@@ -116,6 +129,7 @@ pub struct Hub {
     /// Devices that added themselves here and the platform has not confirmed yet, by token hash.
     joined: Mutex<HashMap<String, String>>,
     joins: Mutex<Vec<Instant>>,
+    firmware: Mutex<HashMap<String, Offered>>,
 }
 
 /// A device that has just added itself: what it gets, and what the platform is to be told.
@@ -281,6 +295,12 @@ impl Hub {
             self.deliver(&format!("v1/devices/{device}/attributes/response/{id}"), found.to_string().as_bytes());
             return true;
         }
+        if let Some((request, chunk)) = device_api::firmware_asked(&topic) {
+            let size = String::from_utf8_lossy(&body).trim().parse().unwrap_or(0);
+            let piece = self.firmware_chunk(device, None, None, size, chunk).unwrap_or_default();
+            self.deliver(&format!("v1/devices/{device}/fw/response/{request}/chunk/{chunk}"), &piece);
+            return true;
+        }
         tx.send(Message { topic, body, status: None, from: Some(device.to_string()) }).await.is_ok()
     }
 
@@ -294,6 +314,26 @@ impl Hub {
         let answer = if taken { tokio::time::timeout(patience, mailbox.recv()).await.ok().flatten().map(|d| d.body) } else { None };
         self.close(session);
         if taken { Ok(answer) } else { Err(()) }
+    }
+
+    /// What a device may now fetch. It can fetch what it was told about, and nothing else.
+    pub fn offer_firmware(&self, device: &str, firmware: Offered) {
+        locked(&self.firmware).insert(device.to_string(), firmware);
+    }
+
+    /// A piece of what a device was offered, `size` bytes at chunk `chunk`. The title and version, if
+    /// it says them, have to be the ones it was told. Past the end there is nothing, which is how it knows.
+    pub fn firmware_chunk(&self, device: &str, title: Option<&str>, version: Option<&str>, size: usize, chunk: usize) -> Option<Vec<u8>> {
+        let offered = locked(&self.firmware).get(device).cloned()?;
+        if title.is_some_and(|t| t != offered.title) || version.is_some_and(|v| v != offered.version) {
+            return None;
+        }
+        let size = if size == 0 { MAX_CHUNK } else { size.min(MAX_CHUNK) };
+        let mut file = std::fs::File::open(&offered.path).ok()?;
+        file.seek(SeekFrom::Start((chunk * size) as u64)).ok()?;
+        let mut piece = Vec::with_capacity(size);
+        file.take(size as u64).read_to_end(&mut piece).ok()?;
+        Some(piece)
     }
 
     /// Sends what a definition published to whoever is listening for it. Nobody listening means it

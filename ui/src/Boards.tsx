@@ -191,7 +191,7 @@ function Setting({ p, w, set, options, variables }: { p: Param; w: Widget; set: 
 function Settings({ w, variables, onSave, onClose }: { w: Widget; variables: Variable[]; onSave: (w: Widget) => void; onClose: () => void }) {
   const id = useId();
   const [draft, setDraft] = useState(w);
-  const q = useQuery({ queryKey: ["edge", "devices", ""], queryFn: () => devices("") });
+  const q = useQuery({ queryKey: ["edge", "devices", ""], queryFn: () => devices({}) });
   const set = (patch: Partial<Widget>) => setDraft((d) => ({ ...d, ...patch }));
   const kind = kindOf(w.type);
   return (
@@ -400,7 +400,7 @@ export function BoardPage() {
   const { dialog } = useUnsavedGuard(dirty);
   useShellTitle(q.data?.dashboard_name ?? "Dashboard");
   const data = useQuery({ queryKey: ["edge", "board-data", id, body, vars, last], enabled: q.isSuccess, refetchInterval: 5_000, placeholderData: (old) => old, queryFn: () => boardData(body, vars, last) });
-  const list = useQuery({ queryKey: ["edge", "devices", ""], enabled: (board.variables?.length ?? 0) > 0, queryFn: () => devices("") });
+  const list = useQuery({ queryKey: ["edge", "devices", ""], enabled: (board.variables?.length ?? 0) > 0, queryFn: () => devices({}) });
   const save = useMutation({
     mutationFn: () => saveBoard(id, q.data!.version, { body: JSON.stringify({ ...board, last_secs: last }) }),
     onSuccess: () => {

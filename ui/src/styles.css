@@ -1034,7 +1034,7 @@ a.edge-row-main:hover strong {
   overflow-wrap: anywhere;
 }
 
-.edge-link {
+.edge-step-link {
   background: none;
   border: 0;
   color: var(--primary);
@@ -1057,4 +1057,25 @@ a.edge-row-main:hover strong {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.edge-refused {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  padding-left: 18px;
+}
+
+.edge-check {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+}
+
+.edge-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }

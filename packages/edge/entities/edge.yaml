@@ -33,7 +33,7 @@
     - {name: limit_value, type: decimal, label: Limit, in_list: true}
     - {name: clear_value, type: decimal, label: Clears At, description: "Where it stops, when that is not the limit: a gap stops a reading on the limit from raising and clearing for ever"}
     - {name: hold_secs, type: int, default: 0, min: "0", label: Must Hold (seconds), description: "How long before anyone is told, so that one spike is not an alarm. For Silent, how long nothing is heard"}
-    - {name: severity, type: select, options: [Info, Warning, Critical], default: Warning, in_list: true, in_filter: true}
+    - {name: severity, type: select, options: [Info, Warning, Minor, Major, Critical], default: Warning, in_list: true, in_filter: true}
     - {name: site, type: link, to: Site, description: "Every site, if empty"}
     - {name: device, type: link, to: Device, description: "One device. Empty means all with this metric"}
     - {name: definition, type: link, to: DeviceDefinition, description: "Every device of one definition"}
@@ -187,3 +187,84 @@
     - {name: steps, type: table, of: EdgeNotifyStep, label: Steps}
   list: {columns: [rule_name, trigger, min_severity, enabled], sort: rule_name asc}
 
+- name: EdgeAsset
+  label: Edge Asset
+  label_plural: Edge Assets
+  kind: master
+  module: edge
+  title_field: asset_name
+  search_fields: [asset_name]
+  description: A thing that matters here and is not a device, a building or a cold room, holding the devices that report on it and the other assets inside it.
+  fields:
+    - {name: asset_name, type: data, required: true, unique: true, in_list: true, max_length: 140}
+    - {name: asset_type, type: data, in_list: true, in_filter: true, label: Kind, description: "Building, floor, room, line: whatever a place calls them"}
+    - {name: parent, type: link, to: EdgeAsset, in_list: true, in_filter: true, label: Inside}
+    - {name: site, type: link, to: Site, in_list: true, in_filter: true}
+    - {name: notes, type: text}
+  list: {columns: [asset_name, asset_type, parent, site], sort: asset_name asc}
+
+- name: EdgeFirmware
+  label: Edge Firmware
+  label_plural: Edge Firmware
+  kind: master
+  module: edge
+  title_field: firmware_name
+  search_fields: [firmware_name, firmware_version]
+  description: New firmware for a kind of device. Only what its definition allows, and never for a robot, a controller or anything a safety function runs on.
+  fields:
+    - {name: firmware_name, type: data, required: true, in_list: true, label: Title, max_length: 140}
+    - {name: firmware_version, type: data, required: true, in_list: true, label: Version, max_length: 60}
+    - {name: definition, type: link, to: DeviceDefinition, required: true, in_list: true, in_filter: true, description: "Which devices it is for. Its definition has to say firmware: true"}
+    - {name: url, type: data, required: true, label: Where It Is, description: "Where a gateway can fetch it"}
+    - {name: sha256, type: data, required: true, label: SHA-256, description: "A gateway offers it to a device only if this matches"}
+    - {name: size, type: int, required: true, min: "1", description: "In bytes"}
+    - {name: notes, type: text}
+  list: {columns: [firmware_name, firmware_version, definition], sort: firmware_name asc}
+
+- name: EdgeRollout
+  label: Edge Rollout
+  label_plural: Edge Rollouts
+  kind: master
+  module: edge
+  title_field: rollout_name
+  search_fields: [rollout_name]
+  description: Taking new firmware to devices a few at a time, through the ledger, stopping by itself if they start to fail.
+  fields:
+    - {name: rollout_name, type: data, required: true, unique: true, in_list: true, max_length: 140}
+    - {name: firmware, type: link, to: EdgeFirmware, required: true, in_list: true}
+    - {name: site, type: link, to: Site, in_list: true, in_filter: true, description: "Every site, if empty"}
+    - {name: tag, type: data, in_list: true, description: "Only devices with this tag, if given"}
+    - {name: percent, type: int, default: 100, min: "1", max: "100", label: Share of Devices, description: "The share of those devices this ever reaches, which is how a change is tried"}
+    - {name: batch, type: int, default: 10, min: "1", label: At Once, description: "How many can be updating at the same time"}
+    - {name: stop_after, type: int, default: 3, min: "1", label: Stop After Failures}
+    - {name: status, type: select, options: [Draft, Running, Paused, Done], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: started_by, type: data, read_only: true, no_copy: true}
+    - {name: note, type: text, read_only: true, no_copy: true, label: Why It Stopped}
+  actions:
+    - {name: start, label: Start It, permission: write}
+    - {name: pause, label: Pause It, permission: write}
+  list: {columns: [rollout_name, firmware, status, site], sort: rollout_name asc}
+
+- name: EdgeSchedule
+  label: Edge Schedule
+  label_plural: Edge Schedules
+  kind: master
+  module: edge
+  title_field: schedule_name
+  search_fields: [schedule_name]
+  description: Asking devices for something by the clock. It goes through the ledger as automation, so it runs under an envelope someone approved, or waits for a person.
+  fields:
+    - {name: schedule_name, type: data, required: true, unique: true, in_list: true, max_length: 140}
+    - {name: enabled, type: check, default: true, in_list: true, in_filter: true}
+    - {name: every_minutes, type: int, min: "1", label: Every (Minutes), in_list: true, description: "This often, or at a time of day below"}
+    - {name: at_time, type: data, label: At, in_list: true, description: "A time of day, written 08:30"}
+    - {name: days, type: data, description: "1 is Monday: 1,2,3,4,5. Every day, if empty"}
+    - {name: offset_minutes, type: int, default: 0, label: Minutes From UTC, description: "The site's time zone: 330 for India"}
+    - {name: site, type: link, to: Site, in_filter: true}
+    - {name: definition, type: link, to: DeviceDefinition, in_filter: true}
+    - {name: tag, type: data}
+    - {name: operation, type: data, required: true, in_list: true}
+    - {name: payload, type: json}
+    - {name: last_run, type: datetime, read_only: true, no_copy: true, in_list: true}
+    - {name: last_result, type: text, read_only: true, no_copy: true}
+  list: {columns: [schedule_name, enabled, every_minutes, at_time, operation, last_run], sort: schedule_name asc}

@@ -13,8 +13,10 @@ use ferrum_site::adapters::hub::hash;
 use ferrum_site::adapters::transport::Limits;
 use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet, QoS, TlsConfiguration, Transport};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration as Wait;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -128,7 +130,8 @@ fn run(mut events: EventLoop, heard: mpsc::Sender<(String, Value)>, state: mpsc:
                     let _ = state.send(true).await;
                 }
                 Ok(Event::Incoming(Packet::Publish(p))) => {
-                    let _ = heard.send((p.topic, serde_json::from_slice(&p.payload).unwrap_or(Value::Null))).await;
+                    let body = serde_json::from_slice(&p.payload).unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&p.payload).into_owned()));
+                    let _ = heard.send((p.topic, body)).await;
                 }
                 Err(_) => {
                     let _ = state.send(false).await;
@@ -490,7 +493,8 @@ async fn every_way_in(link: DeviceLink) -> Doors {
     );
     let definitions = BTreeMap::from([("devices".to_string(), body)]);
     let listen = [mqtt, http, coap].map(|p| format!("127.0.0.1:{p}")).to_vec();
-    let d = Defined::new(Limits { listen, ..Default::default() }, json!({}));
+    let firmware_dir = Some(std::env::temp_dir().join(format!("firmware-{}", Uuid::now_v7().simple())));
+    let d = Defined::new(Limits { listen, firmware_dir, ..Default::default() }, json!({}));
     assert_eq!(d.apply(&definitions, &[link]), Vec::<String>::new());
     until("the ports", async || d.links().iter().all(|l| l.up)).await;
     Doors {
@@ -758,6 +762,87 @@ async fn a_device_can_ask_and_be_answered() {
     // An answer for one device is nobody else's, and one nobody is waiting for goes nowhere.
     plant.d.reply("PRESS-1", "99", &json!({}));
     plant.d.reply("NOBODY", "5", &json!({}));
+}
+
+/// Somewhere to fetch firmware from, which counts how often it is asked.
+async fn file_server(body: Vec<u8>) -> (String, Arc<AtomicUsize>) {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let counted = asked.clone();
+    let app = axum::Router::new().fallback(move || {
+        counted.fetch_add(1, Ordering::SeqCst);
+        let body = body.clone();
+        async move { body }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    (format!("http://{address}/fw.bin"), asked)
+}
+
+#[tokio::test]
+async fn firmware_is_fetched_once_checked_and_handed_over_in_pieces() {
+    let Doors { plant, http, coap: server } = every_way_in(token("PRESS-1", PRESS)).await;
+    let image: Vec<u8> = (0..100_000u32).map(|i| b'a' + (i % 26) as u8).collect();
+    let (url, asked) = file_server(image.clone()).await;
+    let sha256 = hex::encode(Sha256::digest(&image));
+    let order = |sha256: &str| json!({"title": "sensor-fw", "version": "2.0", "url": url, "sha256": sha256, "size": image.len()});
+    let press_device = site_device("PRESS-1");
+
+    let wrong = command("firmware.update", order(&"0".repeat(64)));
+    assert!(
+        matches!(plant.d.dispatch(&wrong, &press_device).await, Err(Failure::NotSent(why)) if why.contains("hash differs")),
+        "what does not match is never offered"
+    );
+    let web = reqwest::Client::new();
+    let piece = async |query: &str| web.get(format!("{http}/{PRESS}/firmware?{query}")).send().await.unwrap();
+    assert_eq!(piece("size=10&chunk=0").await.status(), 404, "and a device gets nothing it was not told about");
+
+    let mut press = with_token(plant.port, PRESS).await;
+    assert!(press.up().await);
+    press.listens("v1/devices/me/attributes").await;
+    let c = command("firmware.update", order(&sha256));
+    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &press_device).await else { panic!("not accepted") };
+    let (_, told) = press.hears().await;
+    assert_eq!((told["fw_title"].as_str(), told["fw_version"].as_str(), told["fw_size"].as_u64()), (Some("sensor-fw"), Some("2.0"), Some(100_000)));
+    assert_eq!((told["fw_checksum"].as_str(), told["fw_checksum_algorithm"].as_str()), (Some(sha256.as_str()), Some("SHA256")));
+
+    // A second device, or a second try, costs no download.
+    assert!(matches!(plant.d.dispatch(&command("firmware.update", order(&sha256)), &press_device).await, Ok(Dispatched::Accepted { .. })));
+    assert_eq!(asked.load(Ordering::SeqCst), 2, "one for the wrong hash, and one for the right");
+    press.hears().await;
+
+    // Over HTTP, by title and version, as ThingsBoard's clients ask.
+    let answer = piece("title=sensor-fw&version=2.0&size=30000&chunk=1").await;
+    assert_eq!(answer.status(), 200);
+    assert_eq!(answer.bytes().await.unwrap().to_vec(), image[30_000..60_000]);
+    assert_eq!(piece("title=sensor-fw&version=1.0&size=10&chunk=0").await.status(), 404, "not the version it was told about");
+    assert_eq!(piece("size=30000&chunk=9").await.bytes().await.unwrap().len(), 0, "past the end there is nothing");
+
+    // Over CoAP.
+    let device = coap::Client::to(server).await;
+    let mut options = coap::path(PRESS, &["firmware"]);
+    options.extend([(15, b"size=512".to_vec()), (15, b"chunk=2".to_vec())]);
+    let reply = device.ask(&device.request(1, options, b"")).await;
+    assert_eq!((reply.code, reply.payload.as_slice()), (0x45, &image[1024..1536]));
+
+    // Over MQTT, a piece at a time.
+    press.listens("v2/fw/response/+/chunk/+").await;
+    press.client.publish("v2/fw/request/9/chunk/0", QoS::AtLeastOnce, false, "26").await.unwrap();
+    let (topic, body) = press.hears().await;
+    assert_eq!(topic, "v2/fw/response/9/chunk/0");
+    assert_eq!(body, Value::String("abcdefghijklmnopqrstuvwxyz".into()));
+
+    // It is finished when the device says so.
+    press.says("v1/devices/me/telemetry", json!({"fw_state": "DOWNLOADING"})).await;
+    tokio::time::sleep(Wait::from_millis(100)).await;
+    assert!(matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Waiting)), "fetching it is not having taken it");
+    press.says("v1/devices/me/telemetry", json!({"fw_state": "UPDATED"})).await;
+    until("the end of it", async || matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Completed(_)))).await;
+
+    let again = command("firmware.update", order(&sha256));
+    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&again, &press_device).await else { panic!("not accepted") };
+    press.says("v1/devices/me/telemetry", json!({"ts": 1, "values": {"fw_state": "FAILED", "fw_error": "no room"}})).await;
+    until("the failure", async || matches!(plant.d.observe(&again, Some(&external)).await, Ok(Observation::Failed(_)))).await;
 }
 
 #[tokio::test]
