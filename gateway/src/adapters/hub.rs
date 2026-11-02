@@ -202,6 +202,7 @@ impl Hub {
 
     /// False when it holds as many as it may.
     pub fn listen(&self, id: u64, filter: &str) -> bool {
+        let filter = device_api::heard_by(filter);
         let mut sessions = locked(&self.sessions);
         let Some(s) = sessions.get_mut(&id) else { return false };
         if s.filters.iter().any(|f| f == filter) {
@@ -215,6 +216,7 @@ impl Hub {
     }
 
     pub fn stop_listening(&self, id: u64, filter: &str) {
+        let filter = device_api::heard_by(filter);
         if let Some(s) = locked(&self.sessions).get_mut(&id) {
             s.filters.retain(|f| f != filter);
         }
