@@ -533,6 +533,7 @@ fn apply(d: &Defined, definition: &str, devices: &[(&str, Option<String>)]) -> V
             connect: connect.clone(),
             settings: json!({"unit": 3}),
             concurrency: 1,
+            ..Default::default()
         })
         .collect();
     d.apply(&definitions, &links)
@@ -1032,9 +1033,9 @@ async fn a_change_touches_only_what_changed() {
     // One bad definition is reported, and what was running stays running.
     let mixed = BTreeMap::from([("it".to_string(), text.to_string()), ("bad".to_string(), "name: x\nconnect: foo://y\n".to_string())]);
     let links = vec![
-        DeviceLink { code: "A".into(), definition: "it".into(), connect: connect.clone(), settings: Value::Null, concurrency: 1 },
-        DeviceLink { code: "C".into(), definition: "bad".into(), connect: None, settings: Value::Null, concurrency: 1 },
-        DeviceLink { code: "D".into(), definition: "missing".into(), connect: None, settings: Value::Null, concurrency: 1 },
+        DeviceLink { code: "A".into(), definition: "it".into(), connect: connect.clone(), settings: Value::Null, concurrency: 1, ..Default::default() },
+        DeviceLink { code: "C".into(), definition: "bad".into(), connect: None, settings: Value::Null, concurrency: 1, ..Default::default() },
+        DeviceLink { code: "D".into(), definition: "missing".into(), connect: None, settings: Value::Null, concurrency: 1, ..Default::default() },
     ];
     let problems = d.apply(&mixed, &links);
     assert_eq!(problems.len(), 3, "{problems:?}");

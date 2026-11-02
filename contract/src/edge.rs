@@ -11,7 +11,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DeviceLink {
     pub code: String,
     /// The definition's name.
@@ -24,6 +24,45 @@ pub struct DeviceLink {
     /// Commands it may run at once.
     #[serde(default = "one")]
     pub concurrency: u32,
+    /// How it proves who it is when it calls in.
+    #[serde(default, skip_serializing_if = "Credentials::is_empty")]
+    pub credentials: Credentials,
+    /// The device it is reached through, for one behind a gateway of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
+    /// Values kept here for it to ask for: what it was last asked to be.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub shared: BTreeMap<String, Value>,
+}
+
+/// What a device can prove itself with. Only hashes come here, so a gateway that is lost gives
+/// nothing away, and checking one needs no link to the platform.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Credentials {
+    /// SHA-256 of an access token, sent as the MQTT user name or in an HTTP or CoAP path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// An MQTT client id, user and SHA-256 of a password, any of the first two of which can be empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basic: Option<Basic>,
+    /// SHA-256 of the device's certificate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificate: Option<String>,
+}
+
+impl Credentials {
+    pub fn is_empty(&self) -> bool {
+        self.token.is_none() && self.basic.is_none() && self.certificate.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Basic {
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    pub password: String,
 }
 
 fn one() -> u32 {

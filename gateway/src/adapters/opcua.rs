@@ -69,7 +69,7 @@ fn message(node: &str, value: &DataValue) -> Option<Message> {
     }
     let time = value.source_timestamp.as_ref().or(value.server_timestamp.as_ref()).map(|t| t.as_chrono().to_rfc3339());
     let body = json!({"value": value.value.as_ref().map_or(Value::Null, json_of), "status": status.to_string(), "time": time});
-    Some(Message { topic: node.to_string(), body: body.to_string().into_bytes(), status: None })
+    Some(Message { topic: node.to_string(), body: body.to_string().into_bytes(), status: None, from: None })
 }
 
 /// A value written as `{type: int32, value: 5}`, or as JSON, which says what it is well enough for
@@ -278,7 +278,7 @@ impl Transport for Opcua {
                 }
                 let output: Vec<Value> = answer.output_arguments.iter().flatten().map(json_of).collect();
                 let body = json!({"status": answer.status_code.to_string(), "output": output});
-                Ok(Some(Message { topic: method, body: body.to_string().into_bytes(), status: None }))
+                Ok(Some(Message { topic: method, body: body.to_string().into_bytes(), status: None, from: None }))
             }
             _ => Err(Failure::NotSent("OPC UA takes a node".into())),
         }

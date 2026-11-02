@@ -37,8 +37,26 @@ use std::time::Duration;
 
 /// The schemes a site can open. Anything else is an error when the definition is saved, not when it
 /// reaches a gateway at three in the morning.
-pub const SCHEMES: [&str; 16] =
-    ["tcp", "udp", "serial", "http", "https", "ws", "wss", "mqtt", "mqtts", "modbus+tcp", "modbus+rtu", "process", "opcua", "listen", "listen+udp", "webhook"];
+pub const SCHEMES: [&str; 18] = [
+    "tcp",
+    "udp",
+    "serial",
+    "http",
+    "https",
+    "ws",
+    "wss",
+    "mqtt",
+    "mqtts",
+    "modbus+tcp",
+    "modbus+rtu",
+    "process",
+    "opcua",
+    "listen",
+    "listen+udp",
+    "webhook",
+    "listen+mqtt",
+    "listen+mqtts",
+];
 
 /// The longest message a site will assemble. A stream that never frames costs this much, not memory.
 pub const MAX_FRAME: usize = 1 << 20;
@@ -65,6 +83,9 @@ pub struct Definition {
     /// Certificates for a plant's own authority, by name in the site's `tls` directory.
     #[serde(default)]
     pub tls: Option<Tls>,
+    /// `device`: what arrives is the device API (`crate::device_api`), and needs no rules of its own.
+    #[serde(default)]
+    pub api: Option<Api>,
     /// Said once on each new connection: a login, a subscription.
     #[serde(default)]
     pub on_connect: Vec<Step>,
@@ -74,6 +95,13 @@ pub struct Definition {
     pub read: Vec<ReadRule>,
     #[serde(default)]
     pub commands: BTreeMap<String, CommandDef>,
+}
+
+/// A protocol that needs no rules of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Api {
+    Device,
 }
 
 /// What a message is written in, when that is not JSON or plain bytes.
@@ -1234,11 +1262,14 @@ pub fn parse(text: &str) -> Result<Compiled, String> {
         Some(c) if !c.contains('{') => Some(scheme(c).ok_or_else(|| format!("connect: {c} is not an address this can open. Schemes: {}", SCHEMES.join(", ")))?),
         _ => None,
     };
+    if d.api.is_some() && !matches!(scheme_of, Some("listen+mqtt" | "listen+mqtts")) {
+        return Err("api: this is for a gateway devices call: connect: listen+mqtt://".into());
+    }
     if let Some(s) = scheme_of {
         if d.checksum.is_some() && !matches!(s, "tcp" | "udp" | "serial" | "listen" | "listen+udp") {
             return Err(format!("checksum: {s} has checks of its own"));
         }
-        if !d.on_connect.is_empty() && matches!(s, "listen" | "listen+udp" | "webhook") {
+        if !d.on_connect.is_empty() && matches!(s, "listen" | "listen+udp" | "webhook" | "listen+mqtt" | "listen+mqtts") {
             return Err(format!("on_connect: nothing is connected to at {s}: equipment calls in"));
         }
     }

@@ -84,6 +84,7 @@ pub async fn for_gateway(tx: &mut Tx, tenant: Uuid, gateway: Uuid, site: Option<
             connect: r.edge_connect.filter(|c| !c.trim().is_empty()),
             settings: r.edge_settings.unwrap_or(Value::Null),
             concurrency: r.edge_concurrency.unwrap_or(1).clamp(1, 100) as u32,
+            ..Default::default()
         });
     }
     let by_definition: BTreeMap<Uuid, Vec<String>> = {
