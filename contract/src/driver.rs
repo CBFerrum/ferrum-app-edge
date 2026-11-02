@@ -72,10 +72,14 @@ pub const SCHEMES: &[&str] = &[
     "iec104",
     "mbus",
     "coap",
+    "nats",
+    "file",
+    "ftp",
+    "listen+lwm2m",
 ];
 
 /// What is read and written a named thing at a time, with `node`.
-const TAGGED: &[&str] = &["opcua", "s7", "enip", "ads", "bacnet", "snmp", "knx", "iec104", "mbus"];
+const TAGGED: &[&str] = &["opcua", "s7", "enip", "ads", "bacnet", "snmp", "knx", "iec104", "mbus", "listen+lwm2m"];
 
 /// What devices can prove themselves on.
 const DEVICE_SERVERS: [&str; 7] = ["listen+mqtt", "listen+mqtts", "listen+http", "listen+https", "listen+coap", "listen+ocpp", "listen+ocpps"];

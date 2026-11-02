@@ -62,6 +62,8 @@ fn admitted(hub: &Hub, open: bool, request: &Request) -> Result<(String, String)
 
 async fn serve(stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static, s: Shared) {
     let mut who = None;
+    // The shape of this is the WebSocket library's.
+    #[allow(clippy::result_large_err)]
     let check = |request: &Request, mut response: Response| -> Result<Response, ErrorResponse> {
         match admitted(&s.hub, s.open, request) {
             Ok((station, version)) => {

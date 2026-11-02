@@ -16,7 +16,9 @@ async fn main() {
     };
     let bind = address.split_once("://").map(|(_, rest)| rest.split('?').next().unwrap_or(rest).to_string());
     let limits = Limits { listen: bind.into_iter().collect(), ..Default::default() };
-    let link = transport::open(address, Options::default(), &limits).unwrap_or_else(|e| panic!("{e}"));
+    let watch: Vec<String> = std::env::var("TAG_SUBSCRIBE").map(|w| w.split(',').map(str::to_string).collect()).unwrap_or_default();
+    let options = Options { subscribe: &watch, ..Options::default() };
+    let link = transport::open(address, options, &limits).unwrap_or_else(|e| panic!("{e}"));
     let (tx, mut rx) = mpsc::channel(16);
     let (ready, mut up) = mpsc::channel(1);
     let runner = link.clone();

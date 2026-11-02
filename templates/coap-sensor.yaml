@@ -1,0 +1,16 @@
+# about: A device that serves CoAP itself: read now and then, or watched with Observe.
+# group: Devices
+name: coap-sensor
+connect: coap://sensor:5683
+subscribe:
+  - /sensors/temp
+poll:
+  - {every: 1m, get: /sensors/humidity}
+read:
+  - {topic: /sensors/temp, metric: temp.c, json: $, unit: C}
+  - {topic: /sensors/humidity, metric: humidity.pct, json: $, unit: "%"}
+commands:
+  light.on:
+    put: /actuators/light
+    send: "1"
+    once: true

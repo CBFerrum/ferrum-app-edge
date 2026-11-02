@@ -163,20 +163,20 @@ impl Coap {
         out
     }
 
-    fn path(&self) -> Vec<&str> {
+    pub fn path(&self) -> Vec<&str> {
         self.options.iter().filter(|o| o.0 == URI_PATH).filter_map(|o| std::str::from_utf8(&o.1).ok()).collect()
     }
 
-    fn query(&self, key: &str) -> Option<&str> {
+    pub fn query(&self, key: &str) -> Option<&str> {
         self.options.iter().filter(|o| o.0 == URI_QUERY).find_map(|o| std::str::from_utf8(&o.1).ok()?.strip_prefix(key)?.strip_prefix('='))
     }
 
-    fn option(&self, number: u16) -> Option<&[u8]> {
+    pub fn option(&self, number: u16) -> Option<&[u8]> {
         self.options.iter().find(|o| o.0 == number).map(|o| o.1.as_slice())
     }
 
     /// The answer to this: in the same exchange if it was confirmable, and under its token.
-    fn answer(&self, code: u8, payload: Vec<u8>) -> Coap {
+    pub fn answer(&self, code: u8, payload: Vec<u8>) -> Coap {
         Coap { kind: if self.kind == CON { ACK } else { NON }, code, id: self.id, token: self.token.clone(), options: Vec::new(), payload }
     }
 }
