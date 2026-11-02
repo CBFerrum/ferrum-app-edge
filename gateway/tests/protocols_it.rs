@@ -64,7 +64,14 @@ fn start(limits: Limits, definition: &str, devices: &[(&str, Value)]) -> Defined
     let definitions = BTreeMap::from([("it".to_string(), definition.to_string())]);
     let links: Vec<DeviceLink> = devices
         .iter()
-        .map(|(code, settings)| DeviceLink { code: code.to_string(), definition: "it".into(), connect: None, settings: settings.clone(), concurrency: 1 })
+        .map(|(code, settings)| DeviceLink {
+            code: code.to_string(),
+            definition: "it".into(),
+            connect: None,
+            settings: settings.clone(),
+            concurrency: 1,
+            ..Default::default()
+        })
         .collect();
     assert_eq!(d.apply(&definitions, &links), Vec::<String>::new());
     d
@@ -162,7 +169,7 @@ async fn a_new_version_takes_over_the_port_from_the_old_one() {
         )
     };
     let d = Defined::new(Limits { listen: vec![address.clone()], ..Default::default() }, json!({}));
-    let links = [DeviceLink { code: "T-1".into(), definition: "it".into(), connect: None, settings: Value::Null, concurrency: 1 }];
+    let links = [DeviceLink { code: "T-1".into(), definition: "it".into(), connect: None, settings: Value::Null, concurrency: 1, ..Default::default() }];
     let first = BTreeMap::from([("it".to_string(), version("old"))]);
     assert_eq!(d.apply(&first, &links), Vec::<String>::new());
     until("the port", async || d.links()[0].up).await;

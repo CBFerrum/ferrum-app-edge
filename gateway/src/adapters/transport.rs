@@ -7,6 +7,8 @@
 //! and a port to listen on only if `listen` names it. See [`Limits`].
 
 use crate::adapter::Failure;
+use crate::adapters::hub::Hub;
+use crate::adapters::mqtt_server::MqttServer;
 use async_trait::async_trait;
 use ferrum_edge_contract::driver::{Frame, MAX_FRAME, Tls};
 use serde_json::Value;
@@ -17,6 +19,12 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::{Mutex, mpsc};
+use tokio_rustls::rustls;
+use tokio_rustls::rustls::DigitallySignedStruct;
+use tokio_rustls::rustls::client::danger::HandshakeSignatureValid;
+use tokio_rustls::rustls::pki_types::pem::PemObject;
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, UnixTime};
+use tokio_rustls::rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 
 /// Connections a listener holds. Past this a caller is turned away, not queued.
 const MAX_PEERS: usize = 1024;
@@ -33,6 +41,8 @@ pub struct Message {
     pub body: Vec<u8>,
     /// An HTTP status, where there is one.
     pub status: Option<u16>,
+    /// The device that said this, where it proved who it is. Nothing it says can be anyone else's.
+    pub from: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -182,14 +192,24 @@ pub struct Options<'a> {
     pub subscribe: &'a [String],
     pub headers: &'a [(String, String)],
     pub tls: Option<&'a Tls>,
+    /// Who may call, for a port devices prove themselves on.
+    pub hub: Option<Arc<Hub>>,
+    /// What arrives is the device API, and devices keep to it.
+    pub api: bool,
 }
 
 /// Opens what an address names, within what this site allows.
 pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<dyn Transport>, String> {
-    let Options { frame, subscribe, headers, tls } = options;
+    // Two of our libraries bring different cryptography, and with both present rustls will not choose
+    // one: the first TLS connection of a library that leaves it the choice would panic. So it is chosen here.
+    static CRYPTO: std::sync::Once = std::sync::Once::new();
+    CRYPTO.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+    let Options { frame, subscribe, headers, tls, hub, api } = options;
     let (scheme, rest) = address.split_once("://").ok_or_else(|| format!("{address} has no scheme"))?;
     let bind = rest.split('?').next().unwrap_or(rest);
-    if matches!(scheme, "listen" | "listen+udp" | "webhook") {
+    if matches!(scheme, "listen" | "listen+udp" | "webhook" | "listen+mqtt" | "listen+mqtts") {
         if !limits.listen.iter().any(|a| a == bind) {
             return Err(format!("{bind} is not in this site's listen list"));
         }
@@ -209,6 +229,14 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
         "listen" => Arc::new(Listen { address: bind.to_string(), frame, peers: Arc::default() }),
         "listen+udp" => Arc::new(ListenUdp { address: bind.to_string(), socket: Mutex::new(None) }),
         "webhook" => Arc::new(Webhook { address: bind.to_string(), token: query(rest, "token") }),
+        "listen+mqtt" | "listen+mqtts" => {
+            let secured = match (scheme, tls) {
+                ("listen+mqtts", Some(tls)) => Some(acceptor(tls, limits)?),
+                ("listen+mqtts", None) => return Err("listen+mqtts needs tls: cert and key, by name in the site's certificates".into()),
+                _ => None,
+            };
+            Arc::new(MqttServer { address: bind.to_string(), tls: secured, hub: hub.ok_or("nothing here can check who calls")?, api })
+        }
         "http" | "https" => Arc::new(Http::new(address, headers, tls, limits)?),
         #[cfg(feature = "ws")]
         "ws" | "wss" => {
@@ -239,6 +267,58 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
 
 type Reader = Box<dyn AsyncRead + Send + Unpin>;
 type Writer = Box<dyn AsyncWrite + Send + Unpin>;
+
+/// Takes any certificate a device presents. It proves the device holds that key, which the handshake
+/// checks, and whether that key is one we know is for the directory to say, by its fingerprint. A
+/// device with no certificate may still prove itself some other way.
+#[derive(Debug)]
+struct AnyCertificate(Arc<rustls::crypto::CryptoProvider>);
+
+impl ClientCertVerifier for AnyCertificate {
+    fn offer_client_auth(&self) -> bool {
+        true
+    }
+
+    fn client_auth_mandatory(&self) -> bool {
+        false
+    }
+
+    fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
+        &[]
+    }
+
+    fn verify_client_cert(&self, _: &CertificateDer<'_>, _: &[CertificateDer<'_>], _: UnixTime) -> Result<ClientCertVerified, rustls::Error> {
+        Ok(ClientCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    }
+
+    fn verify_tls13_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+/// What a port secured for devices presents, from the site's own store.
+fn acceptor(tls: &Tls, limits: &Limits) -> Result<tokio_rustls::TlsAcceptor, String> {
+    let (Some(cert), Some(key)) = (&tls.cert, &tls.key) else { return Err("tls: a port needs a cert and a key".into()) };
+    let chain: Vec<CertificateDer<'static>> =
+        CertificateDer::pem_slice_iter(&limits.certificate(cert)?).collect::<Result<_, _>>().map_err(|e| format!("{cert}: {e}"))?;
+    let key = PrivateKeyDer::from_pem_slice(&limits.certificate(key)?).map_err(|e| format!("{key}: {e}"))?;
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ServerConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .map_err(|e| e.to_string())?
+        .with_client_cert_verifier(Arc::new(AnyCertificate(provider)))
+        .with_single_cert(chain, key)
+        .map_err(|e| e.to_string())?;
+    Ok(tokio_rustls::TlsAcceptor::from(Arc::new(config)))
+}
 
 enum Opener {
     Tcp(String),
@@ -308,7 +388,7 @@ impl Stream {
 /// latter, and `Err` says how the stream ended.
 async fn pump(mut reader: Reader, frame: Option<&Frame>, topic: &str, idle: Option<Duration>, tx: &mpsc::Sender<Message>) -> Result<(), String> {
     let (mut buf, mut chunk) = (Vec::new(), vec![0u8; 8192]);
-    let message = |body| Message { topic: topic.to_string(), body, status: None };
+    let message = |body| Message { topic: topic.to_string(), body, status: None, from: None };
     loop {
         let read = reader.read(&mut chunk);
         let n = match idle {
@@ -481,7 +561,7 @@ impl Transport for ListenUdp {
         let mut buf = vec![0u8; 65536];
         loop {
             let (n, peer) = socket.recv_from(&mut buf).await.map_err(|e| e.to_string())?;
-            if tx.send(Message { topic: peer.to_string(), body: buf[..n].to_vec(), status: None }).await.is_err() {
+            if tx.send(Message { topic: peer.to_string(), body: buf[..n].to_vec(), status: None, from: None }).await.is_err() {
                 return Ok(());
             }
         }
@@ -522,7 +602,7 @@ async fn hook(
             return StatusCode::UNAUTHORIZED;
         }
     }
-    match s.tx.try_send(Message { topic: uri.path().to_string(), body: body.to_vec(), status: None }) {
+    match s.tx.try_send(Message { topic: uri.path().to_string(), body: body.to_vec(), status: None, from: None }) {
         Ok(()) => StatusCode::ACCEPTED,
         Err(_) => StatusCode::SERVICE_UNAVAILABLE,
     }
@@ -594,7 +674,7 @@ impl Transport for Http {
         };
         let status = response.status().as_u16();
         let body = response.bytes().await.map_err(|e| Failure::Unknown(e.to_string()))?.to_vec();
-        Ok(Some(Message { topic: path, body, status: Some(status) }))
+        Ok(Some(Message { topic: path, body, status: Some(status), from: None }))
     }
 }
 
@@ -731,7 +811,7 @@ impl Transport for Mqtt {
                 }
                 Ok(Event::Incoming(Incoming::Publish(p))) => {
                     let topic = String::from_utf8_lossy(&p.topic).to_string();
-                    if tx.send(Message { topic, body: p.payload.to_vec(), status: None }).await.is_err() {
+                    if tx.send(Message { topic, body: p.payload.to_vec(), status: None, from: None }).await.is_err() {
                         return Ok(());
                     }
                 }
@@ -837,7 +917,7 @@ impl Transport for Modbus {
                 })
                 .await;
                 match read {
-                    Ok(Ok(Ok(body))) => Ok(Some(Message { topic: format!("{table}/{at}"), body, status: None })),
+                    Ok(Ok(Ok(body))) => Ok(Some(Message { topic: format!("{table}/{at}"), body, status: None, from: None })),
                     Ok(Ok(Err(code))) => Err(Failure::NotSent(format!("the device refused: {code:?}"))),
                     Ok(Err(e)) => {
                         *guard = None;

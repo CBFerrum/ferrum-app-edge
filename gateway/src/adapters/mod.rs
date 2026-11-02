@@ -2,6 +2,7 @@
 //! each was tried on, and today that is simulators only.
 
 pub mod defined;
+pub mod hub;
 pub mod operator;
 pub mod sim;
 pub mod transport;
@@ -10,6 +11,7 @@ pub mod transport;
 pub mod modbus;
 #[cfg(feature = "mqtt")]
 pub mod mqtt;
+pub mod mqtt_server;
 #[cfg(feature = "opcua")]
 pub mod opcua;
 #[cfg(feature = "mqtt")]

@@ -3,6 +3,7 @@
 //! needs no database server and no kernel. What every site runtime agrees with the platform (commands,
 //! devices, telemetry, the sync call) is `ferrum-ops-contract`, in Ferrum.
 
+pub mod device_api;
 pub mod driver;
 pub mod edge;
 pub mod flow;
