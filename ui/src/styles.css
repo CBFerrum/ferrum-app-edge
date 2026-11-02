@@ -1007,3 +1007,12 @@ a.edge-row-main:hover strong {
     grid-template-columns: 1fr;
   }
 }
+
+.edge-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--border);
+  font-size: 0.8125rem;
+}

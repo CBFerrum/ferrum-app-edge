@@ -25,6 +25,11 @@
 //! | `DELETE /definitions/{id}/provisioning` | Edge Engineer | no more of that |
 //! | `POST /strangers/claim` | Edge Engineer | `{gateway, code, name?, definition?}`: a device heard on a shared connection becomes a record |
 //! | `POST /alarms/{id}/acknowledge` | Edge Engineer | `{note?}` |
+//! | `GET /alarms/{id}` | Edge Viewer | an alarm, its timeline and who was told |
+//! | `POST /alarms/{id}/clear` | Edge Engineer | `{note}`: closes it by hand, saying why |
+//! | `POST /alarms/{id}/assign` | Edge Engineer | `{user}`, or null |
+//! | `POST /alarms/{id}/shelve` | Edge Engineer | `{minutes}`: tells nobody for a while, and zero ends that |
+//! | `POST /alarms/{id}/note` | Edge Engineer | `{text}` |
 //! | `GET /robots` | Edge Viewer | robots, where each is and what it is doing |
 //!
 //! Under `/api/site/{tenant}/edge/`:
@@ -396,28 +401,6 @@ async fn claim(k: &Kernel, ctx: &Ctx, b: &Value) -> Result<Value> {
     Ok(json!({"id": made.get("id")}))
 }
 
-async fn acknowledge(k: &Kernel, ctx: &Ctx, id: Uuid, note: Option<&str>) -> Result<Value> {
-    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    let status: Option<Option<String>> = sqlx::query_scalar("select status from e_edge_alarm where tenant_id = $1 and id = $2 for update")
-        .bind(ctx.tenant)
-        .bind(id)
-        .fetch_optional(&mut *tx)
-        .await?;
-    let status = status.ok_or_else(|| Error::NotFound("alarm".into()))?.unwrap_or_default();
-    if status != "Active" {
-        return Err(Error::invalid(format!("this alarm is {status}")));
-    }
-    let mut v = Doc::new();
-    v.insert("status".into(), json!("Acknowledged"));
-    v.insert("acknowledged_by".into(), json!(ctx.email));
-    v.insert("acknowledged_at".into(), json!(Utc::now().to_rfc3339()));
-    v.insert("note".into(), json!(note));
-    k.set_values_tx(&sys(ctx), &mut tx, "EdgeAlarm", id, v).await?;
-    tx.commit().await?;
-    Ok(json!({"status": "Acknowledged"}))
-}
-
-/// What this tenant reaches. Sites a person may not see are left out, as everywhere.
 async fn device_list(k: &Kernel, ctx: &Ctx, q: Option<&str>) -> Result<Value> {
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let rows: Value = sqlx::query_scalar(
@@ -444,7 +427,7 @@ async fn alarm_list(k: &Kernel, ctx: &Ctx, all: bool) -> Result<Value> {
     let rows: Value = sqlx::query_scalar(
         "select coalesce(jsonb_agg(r order by r.raised_at desc), '[]') from ( \
            select a.id, a.summary, a.severity, a.status, a.raised_at, a.cleared_at, a.acknowledged_by, a.acknowledged_at, a.note, a.value, a.device, d.device_code as code, \
-             f.flow_name as flow, r.rule_name as rule \
+             a.assignee_email, a.shelved_until, f.flow_name as flow, r.rule_name as rule \
            from e_edge_alarm a left join e_device d on d.tenant_id = a.tenant_id and d.id = a.device \
            left join e_edge_flow f on f.tenant_id = a.tenant_id and f.id = a.flow \
            left join e_edge_rule r on r.tenant_id = a.tenant_id and r.id = a.rule \
@@ -614,7 +597,31 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
         ("POST", ["alarms", id, "acknowledge"]) => {
             may(ctx, ENGINEER)?;
             let b = body(req)?;
-            acknowledge(k, ctx, uuid(id)?, b["note"].as_str()).await?
+            crate::alarms::acknowledge(k, ctx, uuid(id)?, b["note"].as_str()).await?
+        }
+        ("POST", ["alarms", id, "clear"]) => {
+            may(ctx, ENGINEER)?;
+            crate::alarms::clear(k, ctx, uuid(id)?, body(req)?["note"].as_str()).await?
+        }
+        ("POST", ["alarms", id, "assign"]) => {
+            may(ctx, ENGINEER)?;
+            let user = match body(req)?["user"].as_str() {
+                Some(u) => Some(uuid(u)?),
+                None => None,
+            };
+            crate::alarms::assign(k, ctx, uuid(id)?, user).await?
+        }
+        ("POST", ["alarms", id, "shelve"]) => {
+            may(ctx, ENGINEER)?;
+            crate::alarms::shelve(k, ctx, uuid(id)?, body(req)?["minutes"].as_i64().unwrap_or(0)).await?
+        }
+        ("POST", ["alarms", id, "note"]) => {
+            may(ctx, ENGINEER)?;
+            crate::alarms::comment(k, ctx, uuid(id)?, body(req)?["text"].as_str()).await?
+        }
+        ("GET", ["alarms", id]) => {
+            may(ctx, READ)?;
+            crate::alarms::detail(k, ctx, uuid(id)?).await?
         }
         ("GET", ["robots"]) => {
             may(ctx, READ)?;

@@ -1,18 +1,22 @@
 //! IoT Edge (Ferrum docs/plan/edge.md): equipment reached by definitions, through gateways that keep
 //! working on their own.
 //!
+//! * [`alarms`]: what people do about an alarm;
 //! * [`config`]: what each gateway should be, worked out from the records;
 //! * [`data`]: numbers over time, and what a dashboard shows;
 //! * [`facts`]: what gateways report, arriving when the link allows;
+//! * [`notices`]: telling people, in steps;
 //! * [`site`]: the HTTP endpoints;
 //! * [`templates`]: definitions to start from.
 //!
 //! Commands, identity, telemetry and authority are Operations'. This adds how devices are described
 //! and looked after. Rules raise alarms and move nothing: anything physical goes through the ledger.
 
+pub mod alarms;
 pub mod config;
 pub mod data;
 pub mod facts;
+pub mod notices;
 pub mod site;
 pub mod templates;
 
@@ -23,6 +27,7 @@ use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, HookRegistry, Kernel, Result};
 use serde_json::{Value, json};
 use std::sync::Arc;
+use uuid::Uuid;
 
 include!(concat!(env!("OUT_DIR"), "/packages.rs"));
 include!(concat!(env!("OUT_DIR"), "/ui.rs"));
@@ -43,6 +48,7 @@ pub fn register(h: &mut HookRegistry) {
     h.register("EdgeDashboard", Arc::new(BoardHook));
     h.add_event_sink(Arc::new(Facts));
     h.add_site("edge", Arc::new(site::EdgeSite));
+    h.add_job_handler(Arc::new(notices::Notices));
 }
 
 /// This app's reports.
@@ -250,6 +256,26 @@ impl EventSink for Facts {
 pub async fn maintenance(k: &Kernel) -> Result<()> {
     let mut tx = k.db.system_tx().await?;
     sqlx::query("delete from edge_event where at < now() - interval '90 days'").execute(&mut *tx).await?;
+    sqlx::query("delete from edge_notice where status in ('Sent', 'Dropped', 'Failed') and due_at < now() - interval '90 days'").execute(&mut *tx).await?;
+    let tenants: Vec<Uuid> = sqlx::query_scalar("select id from tenant where status = 'active' order by id").fetch_all(&mut *tx).await?;
     tx.commit().await?;
-    Ok(())
+    let mut first_error = None;
+    for tenant in tenants {
+        let schema = match k.registry.schema(tenant).await {
+            Ok(schema) if schema.packages.iter().any(|p| p == "edge") => schema,
+            Ok(_) => continue,
+            Err(e) => {
+                first_error.get_or_insert(e);
+                continue;
+            }
+        };
+        let ctx = Ctx::system(tenant, schema);
+        for outcome in [facts::watch_gateways(k, &ctx).await, notices::send_due(k, &ctx).await.map(drop)] {
+            if let Err(e) = outcome {
+                tracing::warn!(%tenant, "edge maintenance failed: {e}");
+                first_error.get_or_insert(e);
+            }
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }

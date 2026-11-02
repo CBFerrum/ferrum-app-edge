@@ -26,7 +26,11 @@ pub fn run<F: Future<Output = ()> + Send + 'static>(scenario: F) {
 
 /// A fresh database with one workspace in it, with IoT Edge installed.
 pub async fn workspace(slug: &str) -> T {
-    let k = boot().await;
+    workspace_with(slug, KernelSettings::default()).await
+}
+
+pub async fn workspace_with(slug: &str, settings: KernelSettings) -> T {
+    let k = boot_with(settings).await;
     let email = format!("a@{slug}.test");
     let tenant = k
         .create_tenant(NewTenant {
@@ -60,6 +64,10 @@ pub struct T {
 }
 
 pub async fn boot() -> Arc<Kernel> {
+    boot_with(KernelSettings::default()).await
+}
+
+pub async fn boot_with(settings: KernelSettings) -> Arc<Kernel> {
     let url = std::env::var("FERRUM_EDGE_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_edge_test".into());
     let db = Db::connect(DbConfig { url, max_connections: 10, ..Default::default() }).await.expect("connect");
     sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
@@ -72,7 +80,7 @@ pub async fn boot() -> Arc<Kernel> {
     ferrum_domain::register(&mut hooks);
     ferrum_ops::register(&mut hooks);
     ferrum_app_edge::register(&mut hooks);
-    Kernel::boot(db, catalog, hooks, KernelSettings::default(), None).await.expect("boot")
+    Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot")
 }
 
 pub fn request(t: &T, user: Option<&Ctx>, method: &str, path: &str, headers: Map<String, Value>, body: Vec<u8>) -> SiteRequest {
@@ -109,6 +117,11 @@ impl T {
         let site = self.k.hooks.site("edge").unwrap().clone();
         let r = site.handle(&self.k, request(self, None, "GET", path, Map::new(), vec![])).await.expect("answered");
         (r.status, serde_json::from_slice(&r.body).unwrap_or(Value::Null))
+    }
+
+    /// This workspace as the system, for what runs with nobody at the keyboard.
+    pub fn system(&self) -> Ctx {
+        ferrum_domain::util::sys(&self.admin)
     }
 
     pub async fn person(&self, email: &str, roles: &[&str]) -> Ctx {

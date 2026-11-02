@@ -51,7 +51,7 @@ export function Acknowledge({ id }: { id: string }) {
   );
 }
 
-const tone = (s: string) => (s === "Critical" ? "red" : s === "Warning" ? "amber" : "blue");
+const tone = (s: string) => (s === "Critical" || s === "Major" ? "red" : s === "Warning" || s === "Minor" ? "amber" : "blue");
 
 export function Alarms() {
   useShellTitle("Alarms");
@@ -67,6 +67,8 @@ export function Alarms() {
         <label className="edge-check">
           <input type="checkbox" checked={all} onChange={(e) => setParams(e.target.checked ? { all: "1" } : {}, { replace: true })} /> Show cleared ones too
         </label>
+        <span className="edge-grow" />
+        <Link to="/e/EdgeNotifyRule">Who is told what</Link>
       </div>
       {q.isPending ? (
         <PageLoading />
@@ -81,21 +83,19 @@ export function Alarms() {
           {q.data.alarms.map((a) => (
             <li key={a.id}>
               <div className="edge-row-main">
-                {a.device ? (
-                  <Link to={`/d/${a.device}`}>
-                    <strong>{a.summary}</strong>
-                  </Link>
-                ) : (
+                <Link to={`/alarms/${a.id}`}>
                   <strong>{a.summary}</strong>
-                )}
+                </Link>
                 <div className="faint">
                   {a.status === "Cleared" && a.cleared_at ? `Cleared ${relativeTime(a.cleared_at)}` : `Raised ${relativeTime(a.raised_at)}`}
                   {a.flow ? `, by the flow ${a.flow}` : a.rule ? `, by the rule ${a.rule}` : ""}
                   {a.acknowledged_by ? `, seen by ${a.acknowledged_by}` : ""}
+                  {a.assignee_email ? `, with ${a.assignee_email}` : ""}
                 </div>
                 {a.note ? <div className="faint">{a.note}</div> : null}
               </div>
               <Badge tone={tone(a.severity)}>{a.severity}</Badge>
+              {a.shelved_until && Date.parse(a.shelved_until) > Date.now() ? <Badge tone="amber">Shelved</Badge> : null}
               {a.status === "Active" ? <Acknowledge id={a.id} /> : <Badge>{a.status}</Badge>}
             </li>
           ))}
