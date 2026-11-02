@@ -306,7 +306,7 @@ async fn a_command_is_followed_only_through_what_it_went_out_on() {
     site.rt.journal.establish(&r, None).unwrap();
     site.rt.follow().await;
     assert_eq!(site.state(moved), State::OutcomeUnknown, "nothing here can ask about it, and it says so at once");
-    assert_eq!(site.state(c), State::Executing, "what is bound carries on");
+    assert!(matches!(site.state(c), State::Executing | State::Completed), "what is bound carries on, and in 50 ms it may have finished");
 }
 
 #[tokio::test]
