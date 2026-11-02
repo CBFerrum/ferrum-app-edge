@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use ferrum_edge_contract::driver::{self, Api, Compiled, Decoded, Ending, Format, Memory, Step, render, render_json};
 use ferrum_edge_contract::edge::{DeviceLink, Provisioning};
-use ferrum_edge_contract::{device_api, ocpp};
+use ferrum_edge_contract::{device_api, ocpp, sparkplug};
 use ferrum_ops_contract::telemetry::Class;
 use ferrum_ops_contract::{Command, sync::SiteDevice};
 use serde::Serialize;
@@ -234,6 +234,7 @@ impl Link {
             hub: Some(hub.clone()),
             api: d.api == Some(Api::Device),
             also: &d.also,
+            will: d.primary_host.as_deref().map(|host| (sparkplug::state_topic(host), sparkplug::state_body(false, Utc::now().timestamp_millis()))),
         };
         let transport = transport::open(&address, options, limits)?;
         let (stop, _) = watch::channel(false);
@@ -323,6 +324,10 @@ impl Link {
     }
 
     async fn greet(&self) {
+        if let Some(host) = &self.compiled.definition.primary_host {
+            let body = sparkplug::state_body(true, Utc::now().timestamp_millis());
+            let _ = self.send(Out::Publish { topic: sparkplug::state_topic(host), body, expiry: None, retain: true }, None).await;
+        }
         let vars = self.vars(self.devices.read().unwrap_or_else(|e| e.into_inner()).first(), None, None);
         for step in &self.compiled.definition.on_connect {
             match outgoing(step, &vars, None) {
@@ -508,6 +513,12 @@ impl Link {
             }
             s.readings.push_back(reading);
             self.counters.readings.fetch_add(1, Ordering::Relaxed);
+        }
+        for node in s.memory.rebirths() {
+            if let Ok((topic, body)) = sparkplug::rebirth(&node, Utc::now().timestamp_millis()) {
+                let transport = self.transport.clone();
+                tokio::spawn(async move { transport.send(Out::Publish { topic, body, expiry: None, retain: false }).await });
+            }
         }
         // Whatever arrives may be the answer to something running.
         let ids: Vec<Uuid> = s.inflight.keys().copied().collect();

@@ -128,6 +128,10 @@ pub struct Definition {
     /// Devices of this kind can be sent new firmware. It has to be said, and it needs an `api`.
     #[serde(default)]
     pub firmware: bool,
+    /// This link is a Sparkplug primary host, by this id: it says it is there, follows each node's
+    /// sequence, asks for what it missed, and says when a node or device goes away.
+    #[serde(default)]
+    pub primary_host: Option<String>,
     #[serde(default)]
     pub commands: BTreeMap<String, CommandDef>,
 }
@@ -1113,13 +1117,17 @@ impl Compiled {
     /// As [`Self::decode`], for a link that keeps what earlier messages taught it.
     pub fn decode_with(&self, topic: &str, body: &[u8], memory: &mut Memory) -> Vec<Decoded> {
         let mut seen = Seen::new(topic, body);
+        let mut changed = Vec::new();
         if self.definition.read.iter().any(|r| r.format == Format::Sparkplug)
             && let Some(mut payload) = sparkplug::decode(body)
         {
             memory.resolve(topic, &mut payload);
+            if self.definition.primary_host.is_some() {
+                changed = memory.follow(topic, &payload);
+            }
             seen.sparkplug = OnceCell::from(Some(payload));
         }
-        let mut out = Vec::new();
+        let mut out: Vec<Decoded> = changed.into_iter().map(|(device, state)| Decoded::State { device: Some(device), state: state.to_string() }).collect();
         for (rule, compiled) in self.definition.read.iter().zip(&self.reads) {
             seen.format = rule.format;
             let wild = match &rule.topic {

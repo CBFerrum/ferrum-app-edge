@@ -211,19 +211,21 @@ pub struct Options<'a> {
     pub api: bool,
     /// Other ways in for the same devices.
     pub also: &'a [String],
+    /// What a broker says for this link if it goes away: a topic and a body, kept for whoever comes.
+    pub will: Option<(String, Vec<u8>)>,
 }
 
 /// Opens what an address names, within what this site allows.
 pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<dyn Transport>, String> {
     crypto();
-    let Options { frame, subscribe, headers, tls, hub, api, also } = options;
+    let Options { frame, subscribe, headers, tls, hub, api, also, will } = options;
     let (scheme, rest) = address.split_once("://").ok_or_else(|| format!("{address} has no scheme"))?;
     let bind = rest.split('?').next().unwrap_or(rest);
     if !also.is_empty() {
         let hub = hub.ok_or("nothing here can check who calls")?;
         let mut parts = Vec::with_capacity(also.len() + 1);
         for one in std::iter::once(address).chain(also.iter().map(String::as_str)) {
-            let options = Options { frame: None, subscribe: &[], headers: &[], tls, hub: Some(hub.clone()), api, also: &[] };
+            let options = Options { frame: None, subscribe: &[], headers: &[], tls, hub: Some(hub.clone()), api, also: &[], will: None };
             parts.push(open(one, options, limits)?);
         }
         return Ok(Arc::new(Together { parts, hub }));
@@ -271,7 +273,7 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
             Arc::new(Ws { address: address.to_string(), headers: headers.to_vec(), writer: Mutex::new(None) })
         }
         #[cfg(feature = "mqtt")]
-        "mqtt" | "mqtts" => Arc::new(Mqtt::new(address, subscribe, tls, limits)?),
+        "mqtt" | "mqtts" => Arc::new(Mqtt::new(address, subscribe, tls, will, limits)?),
         #[cfg(feature = "modbus")]
         "modbus+tcp" => Arc::new(Modbus {
             target: ModbusTarget::Tcp(bind.to_string()),
@@ -858,7 +860,7 @@ struct Mqtt {
 #[cfg(feature = "mqtt")]
 impl Mqtt {
     /// `mqtt://user:password@host:port`, and `?client=` for the id a broker's rules expect.
-    fn new(address: &str, subscribe: &[String], tls: Option<&Tls>, limits: &Limits) -> Result<Mqtt, String> {
+    fn new(address: &str, subscribe: &[String], tls: Option<&Tls>, will: Option<(String, Vec<u8>)>, limits: &Limits) -> Result<Mqtt, String> {
         use rumqttc::v5::{AsyncClient, MqttOptions};
         let (scheme, rest) = address.split_once("://").ok_or("no scheme")?;
         let (auth, tail) = rest.rsplit_once('@').map_or((None, rest), |(a, t)| (Some(a), t));
@@ -874,6 +876,9 @@ impl Mqtt {
         let client = query(rest, "client").unwrap_or_else(|| format!("ferrum-site-{}", uuid::Uuid::now_v7().simple()));
         let mut options = MqttOptions::new(client, host, port);
         options.set_keep_alive(Duration::from_secs(30));
+        if let Some((topic, body)) = will {
+            options.set_last_will(rumqttc::v5::mqttbytes::v5::LastWill::new(topic, body, rumqttc::v5::mqttbytes::QoS::AtLeastOnce, true, None));
+        }
         if let Some((user, password)) = auth.and_then(|a| a.split_once(':')) {
             options.set_credentials(user, password);
         }

@@ -7,12 +7,17 @@
 //! Connections to a bus last one batch. A site sends a batch every few seconds at most, so this costs
 //! a handshake each time and saves a connection to watch.
 
+use crate::adapter::Failure;
+use crate::adapters::transport::{Out, Transport};
 use chrono::{DateTime, Utc};
+use ferrum_edge_contract::sparkplug;
 use hmac::{Hmac, Mac};
 use reqwest::Url;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -534,13 +539,117 @@ pub async fn pubsub(http: &reqwest::Client, url: &Url, bodies: &[String], secret
     said(request).await.map(drop)
 }
 
+/// A gateway as a Sparkplug edge node, for a SCADA system to see what it reads: each device with a
+/// birth certificate, then its data, and it starts again if asked. `sparkplug://broker:1883/group/node`.
+pub struct EdgeNode {
+    group: String,
+    node: String,
+    /// Says which birth a death belongs to. It lasts as long as the process, as its will does.
+    birth: u64,
+    again: AtomicBool,
+    state: tokio::sync::Mutex<Birthed>,
+}
+
+#[derive(Default)]
+struct Birthed {
+    born: bool,
+    seq: u64,
+    devices: BTreeMap<String, BTreeMap<String, f64>>,
+}
+
+const REBIRTH: &str = "Node Control/Rebirth";
+
+impl EdgeNode {
+    pub fn new(url: &Url) -> Result<EdgeNode, String> {
+        let mut path = url.path().trim_matches('/').split('/');
+        let (Some(group), Some(node)) = (path.next().filter(|g| !g.is_empty()), path.next()) else {
+            return Err("say the group and the node: sparkplug://broker/group/node".into());
+        };
+        Ok(EdgeNode {
+            group: group.into(),
+            node: node.into(),
+            birth: Utc::now().timestamp().unsigned_abs() % 256,
+            again: AtomicBool::new(false),
+            state: Default::default(),
+        })
+    }
+
+    pub fn topic(&self, kind: &str, device: Option<&str>) -> String {
+        let (group, node) = (&self.group, &self.node);
+        device.map_or_else(|| format!("spBv1.0/{group}/{kind}/{node}"), |d| format!("spBv1.0/{group}/{kind}/{node}/{d}"))
+    }
+
+    /// What the broker says if this goes away.
+    pub fn will(&self) -> Result<(String, Vec<u8>), String> {
+        let body =
+            sparkplug::encode(&json!({"timestamp": Utc::now().timestamp_millis(), "metrics": [{"name": "bdSeq", "value": self.birth, "type": "int64"}]}))?;
+        Ok((self.topic("NDEATH", None), body))
+    }
+
+    /// A command to this node. The only one it takes is to start again.
+    pub fn heard(&self, body: &[u8]) {
+        let asked = sparkplug::decode(body).is_some_and(|p| p["metrics"].as_array().into_iter().flatten().any(|m| m["name"] == REBIRTH && m["value"] == true));
+        if asked {
+            self.again.store(true, Ordering::SeqCst);
+        }
+    }
+
+    async fn say(&self, broker: &dyn Transport, state: &mut Birthed, kind: &str, device: Option<&str>, metrics: Value) -> Result<(), String> {
+        let payload = json!({"timestamp": Utc::now().timestamp_millis(), "seq": state.seq, "metrics": metrics});
+        state.seq = (state.seq + 1) % 256;
+        let out = Out::Publish { topic: self.topic(kind, device), body: sparkplug::encode(&payload)?, expiry: None, retain: false };
+        broker.send(out).await.map(drop).map_err(|e| match e {
+            Failure::NotSent(w) | Failure::Unknown(w) => w,
+        })
+    }
+
+    async fn birth_of(&self, broker: &dyn Transport, state: &mut Birthed, device: &str) -> Result<(), String> {
+        let metrics: Vec<Value> = state.devices[device].iter().map(|(name, value)| json!({"name": name, "value": value, "type": "double"})).collect();
+        self.say(broker, state, "DBIRTH", Some(device), json!(metrics)).await
+    }
+
+    /// Everything this node has said so far, again, if it has to be. Then the new readings.
+    pub async fn send(&self, broker: &dyn Transport, bodies: &[String]) -> Result<(), String> {
+        let mut state = self.state.lock().await;
+        if !state.born || self.again.swap(false, Ordering::SeqCst) {
+            state.seq = 0;
+            let metrics = json!([{"name": "bdSeq", "value": self.birth, "type": "int64"}, {"name": REBIRTH, "value": false, "type": "boolean"}]);
+            self.say(broker, &mut state, "NBIRTH", None, metrics).await?;
+            state.born = true;
+            let devices: Vec<String> = state.devices.keys().cloned().collect();
+            for device in devices {
+                self.birth_of(broker, &mut state, &device).await?;
+            }
+        }
+        let mut by_device: BTreeMap<String, Vec<(String, f64)>> = BTreeMap::new();
+        for body in bodies {
+            let v: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+            if let (Some(device), Some(metric), Some(value)) = (v["device"].as_str(), v["metric"].as_str(), v["value"].as_f64()) {
+                by_device.entry(device.to_string()).or_default().push((metric.to_string(), value));
+            }
+        }
+        for (device, readings) in by_device {
+            let known = state.devices.entry(device.clone()).or_default();
+            let new = readings.iter().any(|(metric, _)| !known.contains_key(metric));
+            known.extend(readings.iter().cloned());
+            if new {
+                self.birth_of(broker, &mut state, &device).await?;
+            } else {
+                let metrics: Vec<Value> = readings.iter().map(|(name, value)| json!({"name": name, "value": value, "type": "double"})).collect();
+                self.say(broker, &mut state, "DDATA", Some(&device), json!(metrics)).await?;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(feature = "kafka")]
 mod kafka {
     use super::*;
     use rskafka::client::partition::{Compression, UnknownTopicHandling};
     use rskafka::client::{Client, ClientBuilder, Credentials, SaslConfig};
     use rskafka::record::Record;
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::HashMap;
 
     /// A client stays connected and finds the leaders itself.
     #[derive(Default)]
