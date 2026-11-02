@@ -1,0 +1,5 @@
+# about: Bluetooth Low Energy sensors through an external driver, by what they notify.
+# group: Devices
+# drivers/ble_bridge.py goes in the site's drivers_dir. It needs bleak, and has met no device.
+name: ble-sensor
+connect: process://ble_bridge.py SENSOR-1=AA:BB:CC:DD:EE:FF=2a6e

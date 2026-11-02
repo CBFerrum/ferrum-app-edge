@@ -9,19 +9,24 @@
 //! only when its status says so, and a write that was not answered leaves it unknown.
 
 use crate::adapter::{Adapter, Dispatched, Failure, Observation, Reading};
+use crate::adapters::hub::{Hub, Offered};
 use crate::adapters::transport::{self, Limits, Message, Out, Transport};
 use async_trait::async_trait;
 use chrono::Utc;
-use ferrum_edge_contract::driver::{self, Compiled, Decoded, Ending, Format, Memory, Step, render, render_json};
-use ferrum_edge_contract::edge::DeviceLink;
+use ferrum_edge_contract::driver::{self, Api, Compiled, Decoded, Ending, Format, Memory, Step, render, render_json};
+use ferrum_edge_contract::edge::{DeviceLink, Provisioning};
+use ferrum_edge_contract::{device_api, ocpp, sparkplug};
 use ferrum_ops_contract::telemetry::Class;
 use ferrum_ops_contract::{Command, sync::SiteDevice};
 use serde::Serialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
@@ -75,6 +80,9 @@ pub struct Link {
     /// For `{seq}`. From the clock, so that it keeps rising across a restart.
     seq: AtomicU64,
     stop: watch::Sender<bool>,
+    /// Who may call, and who is connected, where devices call in.
+    hub: Arc<Hub>,
+    limits: Limits,
 }
 
 fn locked<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -150,6 +158,57 @@ fn body_of(template: &Value, vars: &Value) -> Result<Vec<u8>, String> {
     })
 }
 
+/// The most firmware this will fetch for a device.
+const MAX_FIRMWARE: u64 = 512 << 20;
+
+/// Fetches firmware once for a whole site and keeps it by what is in it, so that a thousand devices
+/// cost one download, and only what matches its hash is ever offered to a device.
+// ponytail: this holds up the command it is for while it downloads, which is the first of a rollout
+// and not the rest. A batch that must not wait belongs behind a file already here.
+async fn fetched(limits: &Limits, payload: &Value) -> Result<PathBuf, String> {
+    let (Some(url), Some(sha256)) = (payload["url"].as_str(), payload["sha256"].as_str()) else { return Err("this firmware does not say where it is".into()) };
+    let dir = limits.firmware_dir.as_ref().ok_or("this site keeps no firmware")?;
+    if !sha256.chars().all(|c| c.is_ascii_hexdigit()) || sha256.len() != 64 {
+        return Err("that is not a SHA-256".into());
+    }
+    let path = dir.join(sha256.to_lowercase());
+    if path.exists() {
+        return Ok(path);
+    }
+    if !limits.reaches(url) {
+        return Err(format!("{url} is not in this site's allow list"));
+    }
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let client = reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10)).build().map_err(|e| e.to_string())?;
+    let mut response = client.get(url).send().await.map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("{url} answered {}", response.status()));
+    }
+    let part = dir.join(format!("{}.part", Uuid::now_v7()));
+    let mut file = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;
+    let (mut hash, mut size) = (Sha256::new(), 0u64);
+    let outcome = async {
+        while let Some(piece) = response.chunk().await.map_err(|e| e.to_string())? {
+            size += piece.len() as u64;
+            if size > MAX_FIRMWARE {
+                return Err("that is more firmware than a device should need".to_string());
+            }
+            hash.update(&piece);
+            file.write_all(&piece).await.map_err(|e| e.to_string())?;
+        }
+        file.flush().await.map_err(|e| e.to_string())?;
+        if hex::encode(hash.finalize()) != sha256.to_lowercase() {
+            return Err(format!("{url} is not what it should be: its hash differs"));
+        }
+        tokio::fs::rename(&part, &path).await.map_err(|e| e.to_string())
+    }
+    .await;
+    if outcome.is_err() {
+        let _ = tokio::fs::remove_file(&part).await;
+    }
+    outcome.map(|()| path)
+}
+
 impl Link {
     fn start(compiled: Arc<Compiled>, address: String, devices: Vec<DeviceLink>, secrets: Value, limits: &Limits) -> Result<Arc<Link>, String> {
         let d = &compiled.definition;
@@ -165,7 +224,18 @@ impl Link {
         }
         topics.sort();
         topics.dedup();
-        let options = transport::Options { frame: d.frame.clone(), subscribe: &topics, headers: &headers, tls: d.tls.as_ref() };
+        let hub = Arc::new(Hub::default());
+        hub.set(&devices);
+        let options = transport::Options {
+            frame: d.frame.clone(),
+            subscribe: &topics,
+            headers: &headers,
+            tls: d.tls.as_ref(),
+            hub: Some(hub.clone()),
+            api: d.api == Some(Api::Device),
+            also: &d.also,
+            will: d.primary_host.as_deref().map(|host| (sparkplug::state_topic(host), sparkplug::state_body(false, Utc::now().timestamp_millis()))),
+        };
         let transport = transport::open(&address, options, limits)?;
         let (stop, _) = watch::channel(false);
         let link = Arc::new(Link {
@@ -179,6 +249,8 @@ impl Link {
             counters: Counters::default(),
             seq: AtomicU64::new(Utc::now().timestamp().unsigned_abs()),
             stop,
+            hub,
+            limits: limits.clone(),
         });
         link.clone().spawn();
         Ok(link)
@@ -252,6 +324,10 @@ impl Link {
     }
 
     async fn greet(&self) {
+        if let Some(host) = &self.compiled.definition.primary_host {
+            let body = sparkplug::state_body(true, Utc::now().timestamp_millis());
+            let _ = self.send(Out::Publish { topic: sparkplug::state_topic(host), body, expiry: None, retain: true }, None).await;
+        }
         let vars = self.vars(self.devices.read().unwrap_or_else(|e| e.into_inner()).first(), None, None);
         for step in &self.compiled.definition.on_connect {
             match outgoing(step, &vars, None) {
@@ -327,6 +403,16 @@ impl Link {
     /// Takes in a message: what it says about the equipment, and what it says about commands.
     fn heard(&self, m: &Message, owner: Option<&str>) {
         self.counters.messages.fetch_add(1, Ordering::Relaxed);
+        if let Some(code) = device_api::joiner(&m.topic) {
+            let said: Value = serde_json::from_slice(&m.body).unwrap_or(Value::Null);
+            let (definition, token_hash) = (said["definition"].as_str().unwrap_or_default(), said["token_hash"].as_str().unwrap_or_default());
+            locked(&self.shared).readings.push_back(Reading::Joined {
+                device: code.to_string(),
+                definition: definition.to_string(),
+                token_hash: token_hash.to_string(),
+            });
+            return;
+        }
         let body = match self.compiled.definition.checksum {
             Some(check) => match check.open(&m.body) {
                 Some(body) => body,
@@ -340,9 +426,17 @@ impl Link {
             None => &m.body[..],
         };
         let known: Vec<String> = self.devices.read().unwrap_or_else(|e| e.into_inner()).iter().map(|d| d.code.clone()).collect();
-        let sole = owner.map(str::to_string).or_else(|| (known.len() == 1).then(|| known[0].clone()));
+        let sole = m.from.clone().or_else(|| owner.map(str::to_string)).or_else(|| (known.len() == 1).then(|| known[0].clone()));
         let mut s = locked(&self.shared);
-        let decoded = if self.native() { native_decode(body) } else { self.compiled.decode_with(&m.topic, body, &mut s.memory) };
+        let decoded = if self.device_api() {
+            device_api::decode(&m.topic, body)
+        } else if self.ocpp() {
+            ocpp::decode(&m.topic, body)
+        } else if self.native() {
+            native_decode(body)
+        } else {
+            self.compiled.decode_with(&m.topic, body, &mut s.memory)
+        };
         for d in decoded {
             let named = match &d {
                 Decoded::Metric { device, .. } | Decoded::State { device, .. } | Decoded::Attribute { device, .. } | Decoded::Event { device, .. } => {
@@ -350,6 +444,17 @@ impl Link {
                 }
             };
             let Some(code) = named.or_else(|| sole.clone()) else { continue };
+            // A device speaks for itself, and for what is reached through it. Anything else is a
+            // device claiming to be another, and its word is not taken.
+            if let Some(from) = m.from.as_deref()
+                && code != from
+                && !self.hub.behind(&code, from)
+                && (known.contains(&code) || device_api::gateway_of(&m.topic) != Some(from))
+            {
+                self.counters.dropped.fetch_add(1, Ordering::Relaxed);
+                s.last_error = Some(format!("{from} said something as {code}"));
+                continue;
+            }
             if !known.contains(&code) {
                 if s.strangers.len() < MAX_STRANGERS {
                     s.strangers.insert(code, ());
@@ -377,10 +482,29 @@ impl Link {
                         _ => {}
                     }
                     s.reported.insert(key, (value, now));
-                    Reading::Value { device: code, metric, value, unit, class: class_of(class.as_deref()), source_time: at }
+                    let newest = |name: &str, fresh: Option<Duration>| {
+                        s.reported
+                            .get(&(code.clone(), name.to_string()))
+                            .filter(|(_, when)| fresh.is_none_or(|f| now.duration_since(*when) <= f))
+                            .map(|(v, _)| *v)
+                    };
+                    let worked_out = self.compiled.derive(&metric, newest);
+                    for (name, v, _) in &worked_out {
+                        s.reported.insert((code.clone(), name.clone()), (*v, now));
+                    }
+                    let class = class_of(class.as_deref());
+                    let extra: Vec<Reading> = worked_out
+                        .into_iter()
+                        .map(|(name, v, u)| Reading::Value { device: code.clone(), metric: name, value: v, unit: u, class, source_time: at })
+                        .collect();
+                    s.readings.extend(extra);
+                    Reading::Value { device: code, metric, value, unit, class, source_time: at }
                 }
                 Decoded::State { state, .. } => Reading::State { device: code, state, reason: None },
-                Decoded::Attribute { key, value, .. } => Reading::Attribute { device: code, key, value },
+                Decoded::Attribute { key, value, .. } => {
+                    self.hub.heard(&code, &key, &value);
+                    Reading::Attribute { device: code, key, value }
+                }
                 Decoded::Event { name, value, .. } => Reading::Event { device: code, name, value },
             };
             if s.readings.len() >= MAX_WAITING {
@@ -390,17 +514,88 @@ impl Link {
             s.readings.push_back(reading);
             self.counters.readings.fetch_add(1, Ordering::Relaxed);
         }
+        for node in s.memory.rebirths() {
+            if let Ok((topic, body)) = sparkplug::rebirth(&node, Utc::now().timestamp_millis()) {
+                let transport = self.transport.clone();
+                tokio::spawn(async move { transport.send(Out::Publish { topic, body, expiry: None, retain: false }).await });
+            }
+        }
         // Whatever arrives may be the answer to something running.
         let ids: Vec<Uuid> = s.inflight.keys().copied().collect();
         for id in ids {
             let Some(f) = s.inflight.get_mut(&id) else { continue };
             let text = id.to_string();
             let names: Vec<&str> = std::iter::once(text.as_str()).chain(f.external.as_deref()).collect();
-            let said = if self.native() { native_status(body, &names) } else { self.compiled.status(&f.operation, &f.device, &m.topic, body, &names) };
+            let said = if f.operation == device_api::FIRMWARE {
+                device_api::firmware_ended(&m.topic, &f.device, body)
+            } else if self.device_api() {
+                device_api::status(&m.topic, body, &names)
+            } else if self.ocpp() {
+                ocpp::status(&m.topic, body, &names)
+            } else if self.native() {
+                native_status(body, &names)
+            } else {
+                self.compiled.status(&f.operation, &f.device, &m.topic, body, &names)
+            };
             if let Some(ending) = said {
                 merge(f, ending, body);
             }
         }
+    }
+
+    fn device_api(&self) -> bool {
+        self.compiled.definition.api == Some(Api::Device)
+    }
+
+    fn ocpp(&self) -> bool {
+        self.compiled.definition.api == Some(Api::Ocpp)
+    }
+
+    /// A call to a charger, which answers it by its id.
+    async fn dispatch_to_charger(&self, c: &Command, device: &SiteDevice) -> Result<Dispatched, Failure> {
+        let action = ocpp::action(&c.operation).ok_or_else(|| Failure::NotSent(format!("a charger takes ocpp.Reset and the like, and not {}", c.operation)))?;
+        let id = self.seq.fetch_add(1, Ordering::Relaxed);
+        let out = Out::Publish { topic: ocpp::call(&device.code, id, action), body: c.payload.to_string().into_bytes(), expiry: None, retain: false };
+        let waiting =
+            Inflight { operation: c.operation.clone(), device: device.code.clone(), external: Some(id.to_string()), ending: Ending::Waiting, evidence: None };
+        locked(&self.shared).inflight.insert(c.id, waiting);
+        if let Err(e) = self.send(out, Some(&device.code)).await {
+            locked(&self.shared).inflight.remove(&c.id);
+            return Err(e);
+        }
+        Ok(Dispatched::Accepted { external: Some(id.to_string()) })
+    }
+
+    /// A command for a device that called in: it hears it if it is connected and listening, and
+    /// that being said out loud is what a retry depends on.
+    async fn dispatch_to_device(&self, c: &Command, device: &SiteDevice, link: Option<&DeviceLink>) -> Result<Dispatched, Failure> {
+        if c.operation == device_api::FIRMWARE {
+            let path = fetched(&self.limits, &c.payload).await.map_err(Failure::NotSent)?;
+            let text = |key: &str| c.payload[key].as_str().unwrap_or_default().to_string();
+            self.hub.offer_firmware(&device.code, Offered { title: text("title"), version: text("version"), path });
+        }
+        let id = self.seq.fetch_add(1, Ordering::Relaxed);
+        let sending = device_api::command(&device.code, link.and_then(|l| l.via.as_deref()), id, &c.operation, &c.payload);
+        if let Some(key) = c.operation.strip_prefix("set.") {
+            self.hub.shared(&device.code, key, c.payload.get("value").unwrap_or(&Value::Null));
+        }
+        let expires = (c.expires_at - Utc::now()).num_seconds().max(1) as u32;
+        let out = Out::Publish { topic: sending.topic, body: sending.body.to_string().into_bytes(), expiry: Some(expires), retain: false };
+        locked(&self.shared).inflight.insert(
+            c.id,
+            Inflight {
+                operation: c.operation.clone(),
+                device: device.code.clone(),
+                external: Some(id.to_string()),
+                ending: if sending.answers { Ending::Waiting } else { Ending::Done },
+                evidence: (!sending.answers).then(|| json!({"sent": true, "proved": "it was told. Its next report says whether it took"})),
+            },
+        );
+        if let Err(e) = self.send(out, Some(&device.code)).await {
+            locked(&self.shared).inflight.remove(&c.id);
+            return Err(e);
+        }
+        Ok(Dispatched::Accepted { external: Some(id.to_string()) })
     }
 
     /// A process that defines nothing itself speaks the driver protocol.
@@ -414,6 +609,12 @@ impl Link {
 
     async fn dispatch(&self, c: &Command, device: &SiteDevice) -> Result<Dispatched, Failure> {
         let link = self.settings_of(&device.code);
+        if self.device_api() {
+            return self.dispatch_to_device(c, device, link.as_ref()).await;
+        }
+        if self.ocpp() {
+            return self.dispatch_to_charger(c, device).await;
+        }
         let vars = self.vars(link.as_ref(), Some(c), None);
         let expires = (c.expires_at - Utc::now()).num_seconds().max(1) as u32;
         let (out, id_path) = if self.native() {
@@ -482,7 +683,7 @@ impl Link {
                 evidence: None,
             });
         }
-        if !self.native() {
+        if !self.native() && !self.device_api() && !self.ocpp() {
             let Some(def) = self.compiled.command(&c.operation) else { return Ok(Observation::NotFound) };
             if def.once {
                 return Ok(Observation::Completed(json!({"sent": true, "proved": "nothing beyond the send: this device gives no answer"})));
@@ -703,6 +904,7 @@ impl Defined {
             let key = (digest, address.clone());
             let link = match links.get(&key) {
                 Some(link) => {
+                    link.hub.set(&devices);
                     *link.devices.write().unwrap_or_else(|e| e.into_inner()) = devices.clone();
                     link.clone()
                 }
@@ -728,6 +930,21 @@ impl Defined {
         problems
     }
 
+    /// Who can add themselves, on the links that take their definition.
+    pub fn allow_joining(&self, provisioning: &[Provisioning]) {
+        for link in self.links.read().unwrap_or_else(|e| e.into_inner()).values() {
+            let name = &link.compiled.definition.name;
+            link.hub.allow_joining(provisioning.iter().filter(|p| p.definition == *name).cloned().collect());
+        }
+    }
+
+    /// Answers a device that asked something, on the link it came in by.
+    pub fn reply(&self, code: &str, id: &str, value: &Value) {
+        if let Some(link) = self.link_of(code) {
+            link.hub.deliver(&format!("v1/devices/{code}/rpc/response/{id}"), value.to_string().as_bytes());
+        }
+    }
+
     pub fn reaches(&self, code: &str) -> bool {
         self.by_device.read().unwrap_or_else(|e| e.into_inner()).contains_key(code)
     }
@@ -744,7 +961,7 @@ impl Defined {
             .values()
             .find(|l| locked(&l.shared).inflight.contains_key(&c.id))
             .cloned()
-            .or_else(|| links.values().find(|l| l.compiled.command(&c.operation).is_some() || l.native()).cloned())
+            .or_else(|| links.values().find(|l| l.compiled.command(&c.operation).is_some() || l.native() || l.device_api()).cloned())
     }
 
     pub fn links(&self) -> Vec<LinkHealth> {

@@ -64,7 +64,14 @@ fn start(limits: Limits, definition: &str, devices: &[(&str, Value)]) -> Defined
     let definitions = BTreeMap::from([("it".to_string(), definition.to_string())]);
     let links: Vec<DeviceLink> = devices
         .iter()
-        .map(|(code, settings)| DeviceLink { code: code.to_string(), definition: "it".into(), connect: None, settings: settings.clone(), concurrency: 1 })
+        .map(|(code, settings)| DeviceLink {
+            code: code.to_string(),
+            definition: "it".into(),
+            connect: None,
+            settings: settings.clone(),
+            concurrency: 1,
+            ..Default::default()
+        })
         .collect();
     assert_eq!(d.apply(&definitions, &links), Vec::<String>::new());
     d
@@ -162,7 +169,7 @@ async fn a_new_version_takes_over_the_port_from_the_old_one() {
         )
     };
     let d = Defined::new(Limits { listen: vec![address.clone()], ..Default::default() }, json!({}));
-    let links = [DeviceLink { code: "T-1".into(), definition: "it".into(), connect: None, settings: Value::Null, concurrency: 1 }];
+    let links = [DeviceLink { code: "T-1".into(), definition: "it".into(), connect: None, settings: Value::Null, concurrency: 1, ..Default::default() }];
     let first = BTreeMap::from([("it".to_string(), version("old"))]);
     assert_eq!(d.apply(&first, &links), Vec::<String>::new());
     until("the port", async || d.links()[0].up).await;
@@ -523,8 +530,10 @@ subscribe: ["ns={ns};s=Temp", "ns={ns};s=Job"]
 read:
   - {{topic: "ns={ns};s=Temp", metric: temp, json: $.value, time: $.time}}
   - {{topic: "ns={ns};s=Job", attribute: job, json: $.value}}
+  - {{topic: "browse:i=85", attribute: objects, json: $.value}}
 poll:
   - {{every: 200ms, node: "ns={ns};s=Temp"}}
+  - {{every: 200ms, node: "browse:i=85"}}
 commands:
   press.set_job:
     node: "ns={ns};s=Job"
@@ -547,6 +556,11 @@ commands:
     plc.set("Temp", 21.5f64);
     let got = seen.reading(&d, |r| metric(r, "temp", 21.5)).await;
     assert!(matches!(got, Reading::Value { source_time: Some(_), .. }), "the server's own time is kept: {got:?}");
+
+    // What a server has can be found by asking it.
+    let got = seen.reading(&d, |r| matches!(r, Reading::Attribute { key, .. } if key == "objects")).await;
+    let Reading::Attribute { value, .. } = got else { unreachable!() };
+    assert!(value.as_array().unwrap().iter().any(|c| c["name"] == "Server" && c["class"] == "Object"), "{value}");
 
     // A value that does not fit is refused here, not rounded and sent.
     let wide = d.dispatch(&command("press.set_job", json!({"job": 70000})), &device("PRESS-1")).await;

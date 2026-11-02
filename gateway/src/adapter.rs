@@ -66,6 +66,12 @@ pub enum Reading {
         name: String,
         value: Value,
     },
+    /// A device added itself, and the platform has yet to meet it.
+    Joined {
+        device: String,
+        definition: String,
+        token_hash: String,
+    },
 }
 
 #[async_trait]

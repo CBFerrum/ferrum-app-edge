@@ -82,6 +82,9 @@ pub struct Config {
     /// Where external drivers live. Only these can be run, whoever asks.
     #[serde(default)]
     pub drivers_dir: Option<PathBuf>,
+    /// Where a definition may read files and SQLite databases. Without it, nowhere.
+    #[serde(default)]
+    pub files_dir: Option<PathBuf>,
     /// Addresses a definition may open, by how they start. Empty means any.
     #[serde(default)]
     pub allow: Vec<String>,

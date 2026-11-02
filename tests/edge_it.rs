@@ -1,135 +1,16 @@
-//! IoT Edge against a real PostgreSQL (`FERRUM_EDGE_TEST_DATABASE_URL`, default
-//! `postgres://ferrum:ferrum@localhost:5432/ferrum_edge_test`; reset first): what a gateway is told
-//! to be, what comes back from it, and what a person does with that.
+//! IoT Edge against a real PostgreSQL: what a gateway is told to be, what comes back from it, and what
+//! a person does with that.
+
+mod support;
 
 use chrono::{Duration, Utc};
-use ed25519_dalek::{Signer, SigningKey};
-use ferrum_edge_contract::edge::{AlarmChange, ConfigRequest, ConfigResponse, EdgeConfig};
-use ferrum_kernel::tenant::NewTenant;
-use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, SiteRequest, SiteResponse};
-use ferrum_meta::Catalog;
-use ferrum_ops::contract::sign::{Enroll, Enrolled, HEADER_KEY, HEADER_SIGNATURE, HEADER_TIME, message};
-use ferrum_ops::contract::{Fact, Lifecycle};
+use ferrum_edge_contract::edge::{AlarmChange, ConfigRequest};
+use ferrum_kernel::Error;
+use ferrum_ops::contract::Lifecycle;
 use ferrum_ops::devices;
 use serde_json::{Map, Value, json};
 use sha2::Digest;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
-use uuid::Uuid;
-
-fn obj(v: Value) -> Doc {
-    v.as_object().cloned().unwrap()
-}
-
-fn id_of(doc: &Doc) -> Uuid {
-    doc["id"].as_str().unwrap().parse().unwrap()
-}
-
-struct T {
-    k: Arc<Kernel>,
-    tenant: Uuid,
-    admin: Ctx,
-}
-
-async fn boot() -> Arc<Kernel> {
-    let url = std::env::var("FERRUM_EDGE_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_edge_test".into());
-    let db = Db::connect(DbConfig { url, max_connections: 10, ..Default::default() }).await.expect("connect");
-    sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
-    let mut packages = ferrum_domain::packages().expect("packages");
-    packages.extend(ferrum_ops::packages().expect("ops"));
-    packages.extend(ferrum_app_edge::packages().expect("edge"));
-    let catalog = Catalog::from_packages(packages).expect("catalog");
-    assert_eq!(catalog.links_out_of_reach("edge"), Vec::<String>::new(), "whoever fills in a link can look up what it points at");
-    let mut hooks = HookRegistry::default();
-    ferrum_domain::register(&mut hooks);
-    ferrum_ops::register(&mut hooks);
-    ferrum_app_edge::register(&mut hooks);
-    Kernel::boot(db, catalog, hooks, KernelSettings::default(), None).await.expect("boot")
-}
-
-fn request(t: &T, user: Option<&Ctx>, method: &str, path: &str, headers: Map<String, Value>, body: Vec<u8>) -> SiteRequest {
-    SiteRequest {
-        tenant: t.tenant,
-        user: user.cloned(),
-        method: method.into(),
-        path: path.into(),
-        query: Map::new(),
-        headers,
-        body,
-        client_ip: "127.0.0.1".into(),
-    }
-}
-
-impl T {
-    async fn api(&self, ctx: &Ctx, method: &str, path: &str, body: Value) -> Result<Value, Error> {
-        let site = self.k.hooks.site("edge").unwrap().clone();
-        site.handle(&self.k, request(self, Some(ctx), method, path, Map::new(), body.to_string().into_bytes()))
-            .await
-            .map(|r| serde_json::from_slice(&r.body).unwrap_or(Value::Null))
-    }
-
-    async fn insert(&self, entity: &str, v: Value) -> Doc {
-        self.k.insert(&self.admin, entity, obj(v)).await.unwrap_or_else(|e| panic!("insert {entity}: {e:?}"))
-    }
-
-    async fn outbox(&self) {
-        while self.k.dispatch_outbox_once().await.unwrap() > 0 {}
-    }
-
-    async fn tx(&self) -> ferrum_kernel::Tx {
-        self.k.db.tenant_tx(self.tenant).await.unwrap()
-    }
-
-    async fn fact(&self, site: Uuid, kind: &str, at: chrono::DateTime<Utc>, body: Value) {
-        let mut tx = self.k.db.tenant_tx(self.tenant).await.unwrap();
-        ferrum_ops::sync::apply_fact(&mut tx, self.tenant, site, &Fact { fact_id: Uuid::now_v7(), kind: kind.into(), at_source: at, actor: None, body })
-            .await
-            .unwrap();
-        tx.commit().await.unwrap();
-        self.outbox().await;
-    }
-}
-
-struct Gateway {
-    key: SigningKey,
-    enrolled: Enrolled,
-    clock: AtomicI64,
-}
-
-impl Gateway {
-    async fn config(&self, t: &T, req: &ConfigRequest) -> SiteResponse {
-        let body = serde_json::to_vec(req).unwrap();
-        let time = Utc::now().timestamp_millis().max(self.clock.load(Ordering::SeqCst) + 1);
-        self.clock.store(time, Ordering::SeqCst);
-        let uri = format!("/api/site/{}/edge/config", t.tenant);
-        let signature = self.key.sign(&message("POST", &uri, time, &body));
-        let mut headers = Map::new();
-        headers.insert(HEADER_KEY.into(), json!(self.enrolled.key_id));
-        headers.insert(HEADER_TIME.into(), json!(time.to_string()));
-        headers.insert(HEADER_SIGNATURE.into(), json!(hex::encode(signature.to_bytes())));
-        headers.insert("x-ferrum-uri".into(), json!(uri));
-        let site = t.k.hooks.site("edge").unwrap().clone();
-        site.handle(&t.k, request(t, None, "POST", "/config", headers, body)).await.expect("config")
-    }
-
-    async fn fetch(&self, t: &T, have: &str) -> Option<EdgeConfig> {
-        let r = self.config(t, &ConfigRequest { have: have.into(), runtime: "0.1.0".into(), ..Default::default() }).await;
-        assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
-        serde_json::from_slice::<ConfigResponse>(&r.body).unwrap().config
-    }
-}
-
-async fn gateway(t: &T, code: &str, site: Uuid, seed: u8) -> (Uuid, Gateway) {
-    let doc = t.insert("Device", json!({"device_name": code, "device_code": code, "kind": "Gateway", "site": site})).await;
-    let id = id_of(&doc);
-    devices::set_lifecycle(&t.k, &t.admin, id, Lifecycle::Claimed, "ours").await.unwrap();
-    let (code, _) = ferrum_ops::identity::new_enrollment(&t.k, &t.admin, id).await.unwrap();
-    let key = SigningKey::from_bytes(&[seed; 32]);
-    let enrolled = ferrum_ops::identity::enroll(&t.k, t.tenant, &Enroll { code, public_key: hex::encode(key.verifying_key().to_bytes()) }).await.unwrap();
-    devices::set_lifecycle(&t.k, &t.admin, id, Lifecycle::Commissioned, "checked").await.unwrap();
-    devices::set_lifecycle(&t.k, &t.admin, id, Lifecycle::Active, "in service").await.unwrap();
-    (id, Gateway { key, enrolled, clock: AtomicI64::new(0) })
-}
+use support::*;
 
 const SCALE: &str = r#"
 name: acme-scale
@@ -145,39 +26,14 @@ commands:
 
 #[test]
 fn iot_edge() {
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(32 << 20).build().unwrap();
-    rt.block_on(async { tokio::spawn(scenario()).await.unwrap() });
+    run(scenario());
 }
 
 async fn scenario() {
-    let k = boot().await;
-    let tenant = k
-        .create_tenant(NewTenant {
-            slug: "edge".into(),
-            name: "Edge".into(),
-            admin_email: "a@edge.test".into(),
-            admin_password: "Correct-Horse-9".into(),
-            admin_name: None,
-            packages: vec!["edge".into()],
-            settings: None,
-        })
-        .await
-        .expect("tenant");
-    let session = k.login("edge", "a@edge.test", "Correct-Horse-9").await.unwrap();
-    let admin = k.load_ctx(tenant, session.user, Some(session.token_version), "it".into()).await.unwrap();
-    let t = T { k: k.clone(), tenant, admin };
-    let person = |email: &'static str, roles: &'static [&'static str]| {
-        let t = &t;
-        async move {
-            let id =
-                t.k.create_user(&t.admin, email, "Someone", Some("Correct-Horse-9"), &roles.iter().map(|r| r.to_string()).collect::<Vec<_>>(), false)
-                    .await
-                    .unwrap();
-            t.k.load_ctx(t.tenant, id, None, "it".into()).await.unwrap()
-        }
-    };
-    let viewer = person("view@edge.test", &["Edge Viewer"]).await;
-    let engineer = person("eng@edge.test", &["Edge Engineer", "Ops Dispatcher", "Device Administrator"]).await;
+    let t = workspace("edge").await;
+    let k = t.k.clone();
+    let viewer = t.person("view@edge.test", &["Edge Viewer"]).await;
+    let engineer = t.person("eng@edge.test", &["Edge Engineer", "Ops Dispatcher", "Device Administrator"]).await;
 
     // ───── a definition is checked when it is saved, and tried with no device attached ─────
     let bad = k.insert(&engineer, "DeviceDefinition", obj(json!({"definition_name": "bad", "body": "name: x\nconnect: foo://y\n"}))).await;
@@ -296,6 +152,7 @@ async fn scenario() {
                 problems: vec!["bad: broken".into()],
                 links: json!([{"address": "tcp://a", "up": true}]),
                 runtime: "0.1.0".into(),
+                ..Default::default()
             },
         )
         .await;
@@ -342,8 +199,8 @@ async fn scenario() {
     let _ = sha2::Sha256::digest(b"");
 
     // ───── a flow is drawn, simulated, reviewed by someone else, and only then runs ─────
-    let reviewer = person("rev@edge.test", &["Edge Reviewer"]).await;
-    let both = person("both@edge.test", &["Edge Engineer", "Edge Reviewer"]).await;
+    let reviewer = t.person("rev@edge.test", &["Edge Reviewer"]).await;
+    let both = t.person("both@edge.test", &["Edge Engineer", "Edge Reviewer"]).await;
     let hot = json!({
         "nodes": [
             {"id": "t", "kind": "metric", "device": "SCALE-*", "metric": "weight.kg", "x": 10, "y": 10},
@@ -393,7 +250,7 @@ async fn scenario() {
     let locked = k.update(&engineer, "EdgeFlow", draft, obj(json!({"body": "{}"})), None).await;
     assert!(locked.is_err(), "what a reviewer is reading cannot change under them");
     assert!(k.run_action(&engineer, "EdgeFlow", draft, "approve", json!({})).await.is_err(), "nor does its author");
-    let second = person("eng2@edge.test", &["Edge Engineer"]).await;
+    let second = t.person("eng2@edge.test", &["Edge Engineer"]).await;
     assert!(k.run_action(&second, "EdgeFlow", draft, "approve", json!({})).await.is_err(), "and another engineer is not a reviewer");
     assert!(k.run_action(&reviewer, "EdgeFlow", draft, "activate", json!({})).await.is_err(), "nothing runs before it is approved");
     assert!(gateway1.fetch(&t, "").await.unwrap().flows.is_empty(), "and no gateway hears of it");
@@ -419,7 +276,7 @@ async fn scenario() {
     t.fact(site, "edge.alarm", base, flow_alarm(true, 150.0)).await;
     t.fact(site, "edge.alarm", base + Duration::seconds(1), flow_alarm(true, 151.0)).await;
     let alarms: Vec<(String, Option<String>)> = sqlx::query_as("select summary, severity from e_edge_alarm where tenant_id = $1 and flow = $2")
-        .bind(tenant)
+        .bind(t.tenant)
         .bind(draft)
         .fetch_all(&mut *t.tx().await)
         .await
@@ -427,7 +284,7 @@ async fn scenario() {
     assert_eq!(alarms, [("Overloaded on SCALE-1".to_string(), Some("Critical".to_string()))], "raised once, under its own name");
     t.fact(site, "edge.alarm", base + Duration::seconds(2), flow_alarm(false, 20.0)).await;
     let open: i64 = sqlx::query_scalar("select count(*) from e_edge_alarm where tenant_id = $1 and flow = $2 and status <> 'Cleared'")
-        .bind(tenant)
+        .bind(t.tenant)
         .bind(draft)
         .fetch_one(&mut *t.tx().await)
         .await
@@ -436,7 +293,7 @@ async fn scenario() {
 
     t.fact(site, "edge.notify", Utc::now(), json!({"flow": draft, "device": scale, "title": "Look at the scale"})).await;
     let told: i64 = sqlx::query_scalar("select count(*) from notification where tenant_id = $1 and title = 'Look at the scale'")
-        .bind(tenant)
+        .bind(t.tenant)
         .fetch_one(&mut *t.tx().await)
         .await
         .unwrap();
@@ -446,7 +303,7 @@ async fn scenario() {
     let ask = json!({"flow": draft, "node": "ask", "device": scale, "operation": "set.tare", "payload": {"key": "tare", "value": 0}, "expires_secs": 120});
     t.fact(site, "edge.request", Utc::now(), ask.clone()).await;
     let asked: Vec<(String, String)> = sqlx::query_as("select state, issued_kind from op_command where tenant_id = $1 and workflow_id = $2")
-        .bind(tenant)
+        .bind(t.tenant)
         .bind(format!("flow:{draft}"))
         .fetch_all(&mut *t.tx().await)
         .await
@@ -459,14 +316,14 @@ async fn scenario() {
     assert!(gateway1.fetch(&t, "").await.unwrap().flows.is_empty(), "a stopped flow leaves its gateways");
     t.fact(site, "edge.request", Utc::now(), ask).await;
     let count: i64 = sqlx::query_scalar("select count(*) from op_command where tenant_id = $1 and workflow_id = $2")
-        .bind(tenant)
+        .bind(t.tenant)
         .bind(format!("flow:{draft}"))
         .fetch_one(&mut *t.tx().await)
         .await
         .unwrap();
     assert_eq!(count, 1, "those two became nothing");
     let refused: Vec<String> = sqlx::query_scalar("select value->>'why' from edge_event where tenant_id = $1 and name = 'flow.request.refused' order by at")
-        .bind(tenant)
+        .bind(t.tenant)
         .fetch_all(&mut *t.tx().await)
         .await
         .unwrap();

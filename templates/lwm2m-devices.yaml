@@ -1,0 +1,17 @@
+# about: Constrained devices registering over LwM2M, watched by object, instance and resource.
+# group: Devices
+# A device's endpoint name is its code, and it needs a record to register. There is no DTLS here, so
+# this belongs on a private network.
+name: lwm2m-devices
+connect: listen+lwm2m://0.0.0.0:5683
+subscribe:
+  - /3/0/9
+  - /3303/0/5700
+read:
+  - {topic: +/3/0/9, device: "{topic.0}", metric: battery.pct, json: $.value, unit: "%"}
+  - {topic: +/3303/0/5700, device: "{topic.0}", metric: temp.c, json: $.value, unit: C}
+commands:
+  device.reboot:
+    node: "{device}/3/0/4"
+    send: null
+    once: true

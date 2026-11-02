@@ -8,14 +8,44 @@
 //! | `GET /templates` | Edge Viewer | definitions to start from |
 //! | `POST /definitions/try` | Edge Engineer | `{body, topic?, sample?, sample_hex?}`: checks a definition and reads a sample |
 //! | `POST /flows/try` | Edge Engineer or Reviewer | `{body, script?, until?}`: checks a flow and walks a script through it |
+//! | `GET /devices` | Edge Viewer | `?q=&site=&definition=&tag=&asset=`: what the gateways reach |
+//! | `POST /devices/claim` | Edge Engineer | `{code, secret}`: shows a person holds a device |
+//! | `GET /solutions` | Edge Viewer | what comes with this app |
+//! | `POST /solutions/install` | Edge Engineer | `{name}` or `{bundle}`, as drafts |
+//! | `GET /solutions/export` | Edge Engineer | what is here, as a bundle, with nothing secret in it |
+//! | `GET /rollouts/{id}` | Edge Viewer | how a rollout of firmware stands, device by device |
+//! | `GET /fleet` | Edge Viewer | how each definition and site stands, and the versions running |
+//! | `GET /devices/{id}/twin` | Edge Viewer | what was asked of it and what it reports |
+//! | `GET /devices/{id}/td` | Edge Viewer | a W3C Thing Description |
+//! | `GET /devices/{id}/aas` | Edge Viewer | an Asset Administration Shell |
+//! | `GET /devices/{id}/availability` | Edge Viewer | `?days=`: how much of each day it was heard |
+//! | `POST /devices/import` | Edge Engineer | `{csv, tokens?}`: many devices, each row on its own |
+//! | `POST /fleet/command` | who may ask one | `{select, operation, payload, expires_in_secs?}`: one command each, through the ledger |
+//! | `POST /fleet/desired` | who may ask one | `{select, key, value}`: the same for a setting |
+//! | `GET /flows/{id}/versions` | Edge Viewer | every version that ran, newest first |
+//! | `GET /flows/{id}/traces` | Edge Viewer | `?since=`: what passed through a flow being watched |
 //! | `POST /flows/{id}/simulate` | Edge Engineer | `{script, until?}`: the same for what is saved, which is what lets it go for review |
 //! | `GET /devices` | Edge Viewer | `?q=`: what is reached, by what and from where |
 //! | `GET /devices/{id}` | Edge Viewer | attributes, newest values, open alarms, recent events |
+//! | `GET /devices/{id}/history` | Edge Viewer | `?metrics=a,b&from=&to=&points=`: samples for a short period, rollups for a long one |
+//! | `POST /boards/data` | Edge Viewer | `{body, vars?, last_secs?}`: what each widget of a dashboard shows |
+//! | `POST /boards/{id}/share` | Edge Engineer | a link for anyone, shown once, replacing the one before |
+//! | `DELETE /boards/{id}/share` | Edge Engineer | no link any more |
 //! | `GET /alarms` | Edge Viewer | `?all=1` for those cleared too: newest first |
 //! | `PUT /devices/{id}/desired` | Edge Engineer | `{key, value}`: asks for an attribute through the ledger |
 //! | `POST /devices/{id}/token` | Edge Engineer | a token for a device that talks to us directly, shown once |
+//! | `GET /devices/{id}/connection` | Edge Viewer | how it connects: addresses and which proofs it has, and no secrets |
+//! | `POST /devices/{id}/credentials` | Edge Engineer | `{kind: token}`, `{kind: password, client_id?, username?}` or `{kind: certificate, certificate}`: a secret is shown once |
+//! | `DELETE /devices/{id}/credentials` | Edge Engineer | `?kind=`: one way of proving who it is, or all of them |
+//! | `POST /definitions/{id}/provisioning` | Edge Engineer | a key and secret with which devices of this definition add themselves; the secret is shown once |
+//! | `DELETE /definitions/{id}/provisioning` | Edge Engineer | no more of that |
 //! | `POST /strangers/claim` | Edge Engineer | `{gateway, code, name?, definition?}`: a device heard on a shared connection becomes a record |
 //! | `POST /alarms/{id}/acknowledge` | Edge Engineer | `{note?}` |
+//! | `GET /alarms/{id}` | Edge Viewer | an alarm, its timeline and who was told |
+//! | `POST /alarms/{id}/clear` | Edge Engineer | `{note}`: closes it by hand, saying why |
+//! | `POST /alarms/{id}/assign` | Edge Engineer | `{user}`, or null |
+//! | `POST /alarms/{id}/shelve` | Edge Engineer | `{minutes}`: tells nobody for a while, and zero ends that |
+//! | `POST /alarms/{id}/note` | Edge Engineer | `{text}` |
 //! | `GET /robots` | Edge Viewer | robots, where each is and what it is doing |
 //!
 //! Under `/api/site/{tenant}/edge/`:
@@ -24,9 +54,11 @@
 //! |---|---|---|
 //! | `POST /config` | a gateway, signed | [`ConfigRequest`]: what it should be, if that changed |
 //! | `POST /ingest` | a device, by token | `{values, state?, attributes?, at?}` |
+//! | `GET /shared/{token}` | anyone with the link | what a shared dashboard shows, and nothing it does not |
 
-use crate::config;
+use crate::{config, fleet};
 use async_trait::async_trait;
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use ferrum_domain::util::sys;
 use ferrum_edge_contract::driver;
@@ -39,7 +71,7 @@ use ferrum_ops::contract::{Fact, Measurement};
 use ferrum_ops::identity::{self, Refused};
 use ferrum_ops::telemetry;
 use rand::RngCore;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -48,6 +80,8 @@ pub struct EdgeSite;
 const READ: &[&str] = &["Edge Viewer", "Edge Engineer", "Edge Reviewer"];
 const ENGINEER: &[&str] = &["Edge Engineer"];
 const FLOWS: &[&str] = &["Edge Engineer", "Edge Reviewer"];
+/// Asking many devices at once takes a person who may ask one: the ledger checks each.
+const OPERATE: &[&str] = &["Edge Engineer", "Ops Manager", "Ops Operator"];
 
 /// What a device sends in one call, at most.
 const MAX_INGEST: usize = 256 << 10;
@@ -178,7 +212,7 @@ async fn device(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
 /// Asks for an attribute. This is a command like any other: the device's definition says what
 /// `set.{key}` means, it goes through the ledger, and the attribute stays out of step until the
 /// device itself reports the new value.
-async fn desire(k: &Kernel, ctx: &Ctx, id: Uuid, key: &str, value: &Value) -> Result<Value> {
+pub async fn desire(k: &Kernel, ctx: &Ctx, id: Uuid, key: &str, value: &Value) -> Result<Value> {
     ferrum_ops::site::device_site(k, ctx, id).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     sqlx::query(
@@ -214,18 +248,153 @@ fn token_hash(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
 
-async fn new_token(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
-    ferrum_ops::site::device_site(k, ctx, id).await?;
+/// A secret for a device, shown once. It is long enough that a plain hash is all it needs.
+fn new_secret() -> String {
     let mut bytes = [0u8; 24];
     rand::rng().fill_bytes(&mut bytes);
-    let token = hex::encode(bytes);
-    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    hex::encode(bytes)
+}
+
+/// A certificate's fingerprint: given as one, or worked out from the PEM of the certificate. A
+/// private key pasted here by mistake is refused and not looked at.
+fn fingerprint_of(text: &str) -> Result<String> {
+    let text = text.trim();
+    if text.len() == 64 && text.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(text.to_lowercase());
+    }
+    let begin = "-----BEGIN CERTIFICATE-----";
+    let inner = text
+        .strip_prefix(begin)
+        .and_then(|t| t.split("-----END CERTIFICATE-----").next())
+        .ok_or_else(|| Error::field("certificate", "a certificate in PEM, or its SHA-256 fingerprint"))?;
+    let clean: String = inner.chars().filter(|c| !c.is_whitespace()).collect();
+    let der = base64::engine::general_purpose::STANDARD.decode(clean).map_err(|_| Error::field("certificate", "that certificate cannot be read"))?;
+    Ok(hex::encode(Sha256::digest(der)))
+}
+
+async fn new_token(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
+    credentials(k, ctx, id, &json!({"kind": "token"})).await
+}
+
+/// How a device proves who it is. A secret is shown once, and only its hash is kept here or goes to
+/// a gateway. Each kind replaces the one before it, and a gateway hears of it at its next exchange,
+/// which ends any connection made with the old one.
+async fn credentials(k: &Kernel, ctx: &Ctx, id: Uuid, b: &Value) -> Result<Value> {
+    ferrum_ops::site::device_site(k, ctx, id).await?;
+    let text = |key: &str| b[key].as_str().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
     let mut v = Doc::new();
-    v.insert("edge_token_hash".into(), json!(token_hash(&token)));
+    let answer = match b["kind"].as_str() {
+        Some("token") => {
+            let token = new_secret();
+            v.insert("edge_token_hash".into(), json!(token_hash(&token)));
+            json!({"token": token})
+        }
+        Some("password") => {
+            let (client_id, username) = (text("client_id"), text("username"));
+            if client_id.is_none() && username.is_none() {
+                return Err(Error::field("username", "a password goes with a client id, a user name or both"));
+            }
+            let password = new_secret();
+            v.insert("edge_client_id".into(), json!(client_id));
+            v.insert("edge_username".into(), json!(username));
+            v.insert("edge_password_hash".into(), json!(token_hash(&password)));
+            json!({"client_id": client_id, "username": username, "password": password})
+        }
+        Some("certificate") => {
+            let fingerprint = fingerprint_of(&text("certificate").ok_or_else(|| Error::field("certificate", "which certificate?"))?)?;
+            v.insert("edge_certificate".into(), json!(fingerprint));
+            json!({"fingerprint": fingerprint})
+        }
+        _ => return Err(Error::field("kind", "token, password or certificate")),
+    };
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    if let Some(fingerprint) = answer["fingerprint"].as_str() {
+        let taken: Option<i32> = sqlx::query_scalar("select 1 from e_device where tenant_id = $1 and edge_certificate = $2 and id <> $3")
+            .bind(ctx.tenant)
+            .bind(fingerprint)
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if taken.is_some() {
+            return Err(Error::field("certificate", "another device has that certificate"));
+        }
+    }
     k.set_values_tx(&sys(ctx), &mut tx, "Device", id, v).await?;
-    audit::record(&mut tx, ctx, "Device", id, "edge.token_issued", None, json!({})).await?;
+    audit::record(&mut tx, ctx, "Device", id, "edge.credentials_issued", None, json!({"kind": b["kind"]})).await?;
     tx.commit().await?;
-    Ok(json!({"token": token}))
+    Ok(answer)
+}
+
+/// Takes away one way of proving who it is, or all of them.
+async fn revoke(k: &Kernel, ctx: &Ctx, id: Uuid, kind: Option<&str>) -> Result<Value> {
+    ferrum_ops::site::device_site(k, ctx, id).await?;
+    let mut v = Doc::new();
+    for (name, fields) in
+        [("token", &["edge_token_hash"][..]), ("password", &["edge_client_id", "edge_username", "edge_password_hash"]), ("certificate", &["edge_certificate"])]
+    {
+        if kind.is_none_or(|k| k == name) {
+            for f in fields {
+                v.insert((*f).into(), Value::Null);
+            }
+        }
+    }
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    k.set_values_tx(&sys(ctx), &mut tx, "Device", id, v).await?;
+    audit::record(&mut tx, ctx, "Device", id, "edge.credentials_revoked", None, json!({"kind": kind})).await?;
+    tx.commit().await?;
+    Ok(json!({"revoked": true}))
+}
+
+/// Lets devices of a definition add themselves, with a key and secret every one of them holds, or
+/// stops that. The secret is shown once.
+async fn allow_joining(k: &Kernel, ctx: &Ctx, id: Uuid, allow: bool) -> Result<Value> {
+    let (key, secret) = (allow.then(new_secret), allow.then(new_secret));
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let done = sqlx::query("update e_device_definition set provision_key = $3, provision_hash = $4 where tenant_id = $1 and id = $2")
+        .bind(ctx.tenant)
+        .bind(id)
+        .bind(&key)
+        .bind(secret.as_deref().map(token_hash))
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if done == 0 {
+        return Err(Error::NotFound("definition".into()));
+    }
+    audit::record(&mut tx, ctx, "DeviceDefinition", id, if allow { "edge.joining_allowed" } else { "edge.joining_stopped" }, None, json!({})).await?;
+    tx.commit().await?;
+    Ok(json!({"key": key, "secret": secret}))
+}
+
+/// How a device connects, for a person setting one up. No secret is in here.
+async fn connection(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let row: Option<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "select f.published_body, d.edge_token_hash, d.edge_client_id, d.edge_username, d.edge_password_hash, d.edge_certificate, d.edge_connect \
+         from e_device d left join e_device_definition f on f.tenant_id = d.tenant_id and f.id = d.edge_definition where d.tenant_id = $1 and d.id = $2",
+    )
+    .bind(ctx.tenant)
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    let Some((body, token, client_id, username, password, certificate, connect)) = row else { return Err(Error::NotFound("device".into())) };
+    let compiled = body.as_deref().and_then(|b| driver::parse(b).ok());
+    let definition = compiled.as_ref().map(|c| &c.definition);
+    let calls_in = definition.is_some_and(|d| d.api.is_some());
+    let mut addresses: Vec<String> = definition.map(|d| d.connect.iter().chain(&d.also).cloned().collect()).unwrap_or_default();
+    if let Some(own) = connect.filter(|c| !c.is_empty()) {
+        addresses = vec![own];
+    }
+    Ok(json!({
+        "calls_in": calls_in,
+        "addresses": addresses,
+        "token": token.is_some(),
+        "password": password.is_some(),
+        "client_id": client_id,
+        "username": username,
+        "certificate": certificate,
+    }))
 }
 
 async fn claim(k: &Kernel, ctx: &Ctx, b: &Value) -> Result<Value> {
@@ -250,55 +419,12 @@ async fn claim(k: &Kernel, ctx: &Ctx, b: &Value) -> Result<Value> {
     Ok(json!({"id": made.get("id")}))
 }
 
-async fn acknowledge(k: &Kernel, ctx: &Ctx, id: Uuid, note: Option<&str>) -> Result<Value> {
-    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    let status: Option<Option<String>> = sqlx::query_scalar("select status from e_edge_alarm where tenant_id = $1 and id = $2 for update")
-        .bind(ctx.tenant)
-        .bind(id)
-        .fetch_optional(&mut *tx)
-        .await?;
-    let status = status.ok_or_else(|| Error::NotFound("alarm".into()))?.unwrap_or_default();
-    if status != "Active" {
-        return Err(Error::invalid(format!("this alarm is {status}")));
-    }
-    let mut v = Doc::new();
-    v.insert("status".into(), json!("Acknowledged"));
-    v.insert("acknowledged_by".into(), json!(ctx.email));
-    v.insert("acknowledged_at".into(), json!(Utc::now().to_rfc3339()));
-    v.insert("note".into(), json!(note));
-    k.set_values_tx(&sys(ctx), &mut tx, "EdgeAlarm", id, v).await?;
-    tx.commit().await?;
-    Ok(json!({"status": "Acknowledged"}))
-}
-
-/// What this tenant reaches. Sites a person may not see are left out, as everywhere.
-async fn device_list(k: &Kernel, ctx: &Ctx, q: Option<&str>) -> Result<Value> {
-    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    let rows: Value = sqlx::query_scalar(
-        "select coalesce(jsonb_agg(r order by r.code), '[]') from ( \
-           select d.id, d.device_code as code, d.device_name as name, d.kind, d.lifecycle, s.site_name as site, g.device_name as gateway, f.definition_name as definition, \
-             (select count(*) from e_edge_alarm a where a.tenant_id = d.tenant_id and a.device = d.id and a.status <> 'Cleared') as alarms \
-           from e_device d left join e_site s on s.tenant_id = d.tenant_id and s.id = d.site \
-           left join e_device g on g.tenant_id = d.tenant_id and g.id = d.gateway \
-           left join e_device_definition f on f.tenant_id = d.tenant_id and f.id = d.edge_definition \
-           where d.tenant_id = $1 and d.lifecycle <> 'Retired' and d.kind <> 'Gateway' \
-             and ($2::text is null or d.device_code ilike '%' || $2 || '%' or d.device_name ilike '%' || $2 || '%') \
-           order by d.device_code limit 500) r",
-    )
-    .bind(ctx.tenant)
-    .bind(q)
-    .fetch_one(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    Ok(json!({"devices": rows}))
-}
-
 async fn alarm_list(k: &Kernel, ctx: &Ctx, all: bool) -> Result<Value> {
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let rows: Value = sqlx::query_scalar(
         "select coalesce(jsonb_agg(r order by r.raised_at desc), '[]') from ( \
            select a.id, a.summary, a.severity, a.status, a.raised_at, a.cleared_at, a.acknowledged_by, a.acknowledged_at, a.note, a.value, a.device, d.device_code as code, \
-             f.flow_name as flow, r.rule_name as rule \
+             a.assignee_email, a.shelved_until, f.flow_name as flow, r.rule_name as rule \
            from e_edge_alarm a left join e_device d on d.tenant_id = a.tenant_id and d.id = a.device \
            left join e_edge_flow f on f.tenant_id = a.tenant_id and f.id = a.flow \
            left join e_edge_rule r on r.tenant_id = a.tenant_id and r.id = a.rule \
@@ -314,23 +440,64 @@ async fn alarm_list(k: &Kernel, ctx: &Ctx, all: bool) -> Result<Value> {
 
 /// Robots and what they last said. A position may be a metric or an attribute, whichever suited the
 /// definition, so anything a definition can read can be drawn.
-async fn robots(k: &Kernel, ctx: &Ctx) -> Result<Value> {
+/// A link to a dashboard for people with no account. Only its hash is kept, so the link is shown once,
+/// and a new one ends the old one.
+async fn share(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
+    let mut raw = [0u8; 24];
+    rand::rng().fill_bytes(&mut raw);
+    let token = hex::encode(raw);
+    set_share(k, ctx, id, Some(&token_hash(&token))).await?;
+    Ok(json!({"token": token}))
+}
+
+async fn set_share(k: &Kernel, ctx: &Ctx, id: Uuid, hash: Option<&str>) -> Result<()> {
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    let rows: Value = sqlx::query_scalar(
-        "select coalesce(jsonb_agg(jsonb_build_object('id', d.id, 'code', d.device_code, 'name', d.device_name, 'lifecycle', d.lifecycle, 'site', s.site_name, \
-           'metrics', (select coalesce(jsonb_object_agg(l.metric, jsonb_build_object('value', l.last_value, 'at', l.last_time)), '{}') from ( \
-              select distinct on (r.metric) r.metric, r.last_value, r.last_time from op_rollup_minute r where r.tenant_id = d.tenant_id and r.device_id = d.id and r.last_time is not null order by r.metric, r.minute desc) l), \
-           'attributes', (select coalesce(jsonb_object_agg(a.key, a.value), '{}') from edge_attribute a where a.tenant_id = d.tenant_id and a.device_id = d.id), \
-           'state', (select e.state from op_equipment_event e where e.tenant_id = d.tenant_id and e.device_id = d.id order by e.at desc limit 1), \
-           'running', (select count(*) from op_command c where c.tenant_id = d.tenant_id and c.target_id = d.id and c.state in ('Accepted', 'Executing'))) order by d.device_code), '[]') \
-         from e_device d left join e_site s on s.tenant_id = d.tenant_id and s.id = d.site \
-         where d.tenant_id = $1 and d.kind = 'Robot' and d.lifecycle <> 'Retired'",
+    let done = sqlx::query(
+        "update e_edge_dashboard set shared_hash = $3, shared_at = case when $3::text is null then null else now() end where tenant_id = $1 and id = $2",
     )
     .bind(ctx.tenant)
-    .fetch_one(&mut *tx)
-    .await?;
+    .bind(id)
+    .bind(hash)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if done == 0 {
+        return Err(Error::NotFound("dashboard".into()));
+    }
+    audit::record(&mut tx, ctx, "EdgeDashboard", id, if hash.is_some() { "edge.board_shared" } else { "edge.board_unshared" }, None, json!({})).await?;
     tx.commit().await?;
-    Ok(json!({"robots": rows}))
+    Ok(())
+}
+
+/// What a shared dashboard shows. The link is the whole of the visitor's right: it reads what the
+/// saved layout reads, the controls are left out, and nothing in the request changes either.
+async fn shared(k: &Kernel, req: &SiteRequest, token: &str) -> Result<SiteResponse> {
+    let mut tx = k.db.tenant_tx(req.tenant).await?;
+    let row: Option<(String, Option<String>)> = sqlx::query_as("select dashboard_name, body from e_edge_dashboard where tenant_id = $1 and shared_hash = $2")
+        .bind(req.tenant)
+        .bind(token_hash(token))
+        .fetch_optional(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    let Some((name, Some(body))) = row else { return Ok(SiteResponse::json(404, &json!({"error": "this link does not lead anywhere"}))) };
+    let mut board = crate::data::check(&body).map_err(Error::invalid)?;
+    if let Some(widgets) = board["widgets"].as_array_mut() {
+        widgets.retain(|w| !crate::data::CONTROLS.contains(&w["type"].as_str().unwrap_or_default()));
+    }
+    let ctx = Ctx::system(req.tenant, k.registry.schema(req.tenant).await?);
+    let plan = crate::data::plan(&board, &Map::new(), board["last_secs"].as_i64().unwrap_or(3600));
+    let data = crate::data::board(k, &ctx, &plan).await?;
+    Ok(ok(json!({"name": name, "board": board, "data": data})))
+}
+
+async fn history(k: &Kernel, ctx: &Ctx, id: Uuid, req: &SiteRequest) -> Result<Value> {
+    let text = |key: &str| req.query.get(key).and_then(Value::as_str);
+    let when = |key: &str, default: DateTime<Utc>| text(key).map_or(Ok(default), |t| t.parse().map_err(|_| Error::field(key, "that is not a time")));
+    let to = when("to", Utc::now())?;
+    let from = when("from", to - chrono::Duration::hours(1))?;
+    let metrics: Vec<String> = text("metrics").unwrap_or_default().split(',').map(str::trim).filter(|m| !m.is_empty()).map(str::to_string).collect();
+    let points = text("points").and_then(|p| p.parse().ok()).unwrap_or(300);
+    crate::data::history(k, ctx, id, &metrics, from, to, points).await
 }
 
 async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteResponse> {
@@ -352,7 +519,19 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
         ("POST", ["flows", "try"]) => {
             may(ctx, FLOWS)?;
             let b = body(req)?;
-            return Ok(ok(try_flow(b["body"].as_str().unwrap_or_default(), &b)));
+            let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+            let used = crate::usable_flows(&mut tx, ctx.tenant, Uuid::nil()).await?;
+            tx.commit().await?;
+            return Ok(ok(try_flow(b["body"].as_str().unwrap_or_default(), &used, &b)));
+        }
+        ("GET", ["flows", id, "versions"]) => {
+            may(ctx, READ)?;
+            crate::platform_flows::versions(k, ctx, uuid(id)?).await?
+        }
+        ("GET", ["flows", id, "traces"]) => {
+            may(ctx, READ)?;
+            let since = req.query.get("since").and_then(Value::as_str).and_then(|t| t.parse::<DateTime<Utc>>().ok());
+            crate::platform_flows::traces(k, ctx, uuid(id)?, since).await?
         }
         ("POST", ["flows", id, "simulate"]) => {
             may(ctx, ENGINEER)?;
@@ -360,7 +539,66 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
         }
         ("GET", ["devices"]) => {
             may(ctx, READ)?;
-            device_list(k, ctx, req.query.get("q").and_then(Value::as_str).filter(|q| !q.is_empty())).await?
+            fleet::list(k, ctx, &fleet::Selection::from_query(&req.query)).await?
+        }
+        ("POST", ["devices", "claim"]) => {
+            may(ctx, ENGINEER)?;
+            let b = body(req)?;
+            fleet::claim(k, ctx, b["code"].as_str().unwrap_or_default(), b["secret"].as_str().unwrap_or_default()).await?
+        }
+        ("GET", ["solutions"]) => {
+            may(ctx, READ)?;
+            json!({"solutions": crate::bundles::shipped()})
+        }
+        ("POST", ["solutions", "install"]) => {
+            may(ctx, ENGINEER)?;
+            let b = body(req)?;
+            let bundle = match b["name"].as_str() {
+                Some(name) => crate::bundles::shipped().into_iter().find(|s| s.name == name).ok_or_else(|| Error::NotFound(format!("solution {name}")))?,
+                None => serde_json::from_value(b["bundle"].clone()).map_err(|e| Error::invalid(format!("that bundle: {e}")))?,
+            };
+            crate::bundles::install(k, ctx, &bundle).await?
+        }
+        ("GET", ["solutions", "export"]) => {
+            may(ctx, ENGINEER)?;
+            let name = req.query.get("name").and_then(Value::as_str).unwrap_or("Exported");
+            serde_json::to_value(crate::bundles::export(k, ctx, name).await?).map_err(|e| Error::internal(e.to_string()))?
+        }
+        ("GET", ["rollouts", id]) => {
+            may(ctx, READ)?;
+            crate::firmware::progress(k, ctx, uuid(id)?).await?
+        }
+        ("GET", ["fleet"]) => {
+            may(ctx, READ)?;
+            fleet::health(k, ctx).await?
+        }
+        ("GET", ["devices", id, "twin"]) => {
+            may(ctx, READ)?;
+            crate::twins::twin(k, ctx, uuid(id)?).await?
+        }
+        ("GET", ["devices", id, "td"]) => {
+            may(ctx, READ)?;
+            crate::twins::thing_description(k, ctx, uuid(id)?).await?
+        }
+        ("GET", ["devices", id, "aas"]) => {
+            may(ctx, READ)?;
+            crate::twins::administration_shell(k, ctx, uuid(id)?).await?
+        }
+        ("GET", ["devices", id, "availability"]) => {
+            may(ctx, READ)?;
+            fleet::availability(k, ctx, uuid(id)?, req.query.get("days").and_then(Value::as_str).and_then(|d| d.parse().ok()).unwrap_or(7)).await?
+        }
+        ("POST", ["devices", "import"]) => {
+            may(ctx, ENGINEER)?;
+            fleet::import(k, ctx, &body(req)?).await?
+        }
+        ("POST", ["fleet", "command"]) => {
+            may(ctx, OPERATE)?;
+            fleet::command(k, ctx, &body(req)?).await?
+        }
+        ("POST", ["fleet", "desired"]) => {
+            may(ctx, OPERATE)?;
+            fleet::desire(k, ctx, &body(req)?).await?
         }
         ("GET", ["alarms"]) => {
             may(ctx, READ)?;
@@ -369,6 +607,26 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
         ("GET", ["devices", id]) => {
             may(ctx, READ)?;
             device(k, ctx, uuid(id)?).await?
+        }
+        ("GET", ["devices", id, "history"]) => {
+            may(ctx, READ)?;
+            history(k, ctx, uuid(id)?, req).await?
+        }
+        ("POST", ["boards", "data"]) => {
+            may(ctx, READ)?;
+            let b = body(req)?;
+            let board = crate::data::check(b["body"].as_str().unwrap_or_default()).map_err(|why| Error::field("body", why))?;
+            let plan = crate::data::plan(&board, b["vars"].as_object().unwrap_or(&Map::new()), b["last_secs"].as_i64().unwrap_or(3600));
+            crate::data::board(k, ctx, &plan).await?
+        }
+        ("POST", ["boards", id, "share"]) => {
+            may(ctx, ENGINEER)?;
+            share(k, ctx, uuid(id)?).await?
+        }
+        ("DELETE", ["boards", id, "share"]) => {
+            may(ctx, ENGINEER)?;
+            set_share(k, ctx, uuid(id)?, None).await?;
+            json!({"shared": false})
         }
         ("PUT", ["devices", id, "desired"]) => {
             may(ctx, ENGINEER)?;
@@ -380,6 +638,26 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
             may(ctx, ENGINEER)?;
             new_token(k, ctx, uuid(id)?).await?
         }
+        ("POST", ["definitions", id, "provisioning"]) => {
+            may(ctx, ENGINEER)?;
+            allow_joining(k, ctx, uuid(id)?, true).await?
+        }
+        ("DELETE", ["definitions", id, "provisioning"]) => {
+            may(ctx, ENGINEER)?;
+            allow_joining(k, ctx, uuid(id)?, false).await?
+        }
+        ("GET", ["devices", id, "connection"]) => {
+            may(ctx, READ)?;
+            connection(k, ctx, uuid(id)?).await?
+        }
+        ("POST", ["devices", id, "credentials"]) => {
+            may(ctx, ENGINEER)?;
+            credentials(k, ctx, uuid(id)?, &body(req)?).await?
+        }
+        ("DELETE", ["devices", id, "credentials"]) => {
+            may(ctx, ENGINEER)?;
+            revoke(k, ctx, uuid(id)?, req.query.get("kind").and_then(Value::as_str)).await?
+        }
         ("POST", ["strangers", "claim"]) => {
             may(ctx, ENGINEER)?;
             claim(k, ctx, &body(req)?).await?
@@ -387,11 +665,35 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
         ("POST", ["alarms", id, "acknowledge"]) => {
             may(ctx, ENGINEER)?;
             let b = body(req)?;
-            acknowledge(k, ctx, uuid(id)?, b["note"].as_str()).await?
+            crate::alarms::acknowledge(k, ctx, uuid(id)?, b["note"].as_str()).await?
+        }
+        ("POST", ["alarms", id, "clear"]) => {
+            may(ctx, ENGINEER)?;
+            crate::alarms::clear(k, ctx, uuid(id)?, body(req)?["note"].as_str()).await?
+        }
+        ("POST", ["alarms", id, "assign"]) => {
+            may(ctx, ENGINEER)?;
+            let user = match body(req)?["user"].as_str() {
+                Some(u) => Some(uuid(u)?),
+                None => None,
+            };
+            crate::alarms::assign(k, ctx, uuid(id)?, user).await?
+        }
+        ("POST", ["alarms", id, "shelve"]) => {
+            may(ctx, ENGINEER)?;
+            crate::alarms::shelve(k, ctx, uuid(id)?, body(req)?["minutes"].as_i64().unwrap_or(0)).await?
+        }
+        ("POST", ["alarms", id, "note"]) => {
+            may(ctx, ENGINEER)?;
+            crate::alarms::comment(k, ctx, uuid(id)?, body(req)?["text"].as_str()).await?
+        }
+        ("GET", ["alarms", id]) => {
+            may(ctx, READ)?;
+            crate::alarms::detail(k, ctx, uuid(id)?).await?
         }
         ("GET", ["robots"]) => {
             may(ctx, READ)?;
-            robots(k, ctx).await?
+            json!({"robots": crate::data::robots(k, ctx).await?})
         }
         _ => return Err(Error::NotFound("route".into())),
     };
@@ -399,8 +701,8 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
 }
 
 /// Checks a flow and, given a script, shows what it would do, by the code a gateway runs.
-fn try_flow(text: &str, b: &Value) -> Value {
-    let compiled = match flow::parse(text) {
+fn try_flow(text: &str, used: &[(String, String)], b: &Value) -> Value {
+    let compiled = match crate::whole_flow(text, used).and_then(|whole| flow::parse(&whole)) {
         Ok(f) => f,
         Err(why) => return json!({"ok": false, "error": why}),
     };
@@ -420,7 +722,8 @@ async fn simulate_flow(k: &Kernel, ctx: &Ctx, id: Uuid, b: &Value) -> Result<Val
     let text: Option<Option<String>> =
         sqlx::query_scalar("select body from e_edge_flow where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(id).fetch_optional(&mut *tx).await?;
     let text = text.ok_or_else(|| Error::NotFound("flow".into()))?.unwrap_or_default();
-    let result = try_flow(&text, b);
+    let used = crate::usable_flows(&mut tx, ctx.tenant, id).await?;
+    let result = try_flow(&text, &used, b);
     let moments = result["moments"].as_array().map_or(0, Vec::len);
     if result["ok"] == json!(true) {
         if moments == 0 {
@@ -461,6 +764,7 @@ async fn gateway_config(k: &Kernel, req: &SiteRequest) -> Result<SiteResponse> {
     .bind(json!(request.problems))
     .execute(&mut *tx)
     .await?;
+    crate::platform_flows::keep_traces(&mut tx, req.tenant, Some(gateway), &request.traces).await?;
     for code in request.strangers.iter().take(200) {
         sqlx::query("insert into edge_stranger (tenant_id, gateway_id, code) values ($1, $2, $3) on conflict (tenant_id, gateway_id, code) do update set last_seen_at = now()")
             .bind(req.tenant)
@@ -554,9 +858,14 @@ impl Site for EdgeSite {
         if let Some(ctx) = req.user.clone() {
             return signed_in(k, &ctx, &req).await;
         }
-        match (req.method.as_str(), req.path.trim_matches('/')) {
+        let path = req.path.trim_matches('/').to_string();
+        match (req.method.as_str(), path.as_str()) {
             ("POST", "config") => gateway_config(k, &req).await,
             ("POST", "ingest") => ingest(k, &req).await,
+            ("GET", other) => match other.strip_prefix("shared/") {
+                Some(token) => shared(k, &req, token).await,
+                None => Err(Error::NotFound("route".into())),
+            },
             _ => Err(Error::NotFound("route".into())),
         }
     }

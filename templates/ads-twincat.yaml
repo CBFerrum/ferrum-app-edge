@@ -1,0 +1,13 @@
+# about: A Beckhoff TwinCAT controller by its variable names, over ADS.
+# group: Machines
+# A controller only answers routes it knows: add one for this gateway's source net id first.
+name: ads-twincat
+connect: ads://plc:48898?target=5.1.204.160.1.1&port=851&source=10.0.0.2.1.1
+tags:
+  - {node: "MAIN.temperature:real", every: 1s, metric: temp.c, unit: C}
+  - {node: "MAIN.running:bool", every: 1s, state: true, map: {"true": Running, "false": Idle}}
+commands:
+  machine.setpoint:
+    node: "MAIN.setpoint:real"
+    send: "{payload.value}"
+    once: true

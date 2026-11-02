@@ -1,0 +1,15 @@
+# about: A Siemens S7 PLC by its memory: data blocks, markers, inputs and outputs.
+# group: Machines
+# Addresses are examples. A 1200 or 1500 needs PUT/GET allowed and optimized block access off. S7 has
+# no security of its own, so keep it on a plant's network.
+name: s7-plc
+connect: s7://plc:102?rack=0&slot=1
+tags:
+  - {node: "DB1.DBD0:real", every: 1s, metric: temp.c, unit: C, deadband: 0.2}
+  - {node: DB1.DBW4, every: 1s, metric: speed.rpm}
+  - {node: DB1.DBX6.0, every: 1s, state: true, map: {"true": Running, "false": Idle}}
+commands:
+  machine.setpoint:
+    node: "DB1.DBD8:real"
+    send: "{payload.value}"
+    once: true

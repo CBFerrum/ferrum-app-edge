@@ -1,0 +1,8 @@
+# about: Readings arriving on NATS subjects, from anything that publishes there.
+# group: Messaging
+name: nats-source
+connect: nats://bus:4222
+subscribe:
+  - plant.>
+read:
+  - {topic: plant.press.temp, metric: temp.c, json: $, unit: C}

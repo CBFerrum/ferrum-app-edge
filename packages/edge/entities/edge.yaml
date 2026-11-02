@@ -13,6 +13,8 @@
     - {name: body, type: code, required: true, label: Definition}
     - {name: published_body, type: code, read_only: true, no_copy: true, label: What Gateways Run}
     - {name: notes, type: text}
+    - {name: provision_key, type: data, read_only: true, no_copy: true, label: Key for Adding Devices}
+    - {name: provision_hash, type: data, read_only: true, no_copy: true, hidden: true}
   actions:
     - {name: publish, label: Publish, permission: write}
   list: {columns: [definition_name, status, revision], sort: definition_name asc}
@@ -31,7 +33,7 @@
     - {name: limit_value, type: decimal, label: Limit, in_list: true}
     - {name: clear_value, type: decimal, label: Clears At, description: "Where it stops, when that is not the limit: a gap stops a reading on the limit from raising and clearing for ever"}
     - {name: hold_secs, type: int, default: 0, min: "0", label: Must Hold (seconds), description: "How long before anyone is told, so that one spike is not an alarm. For Silent, how long nothing is heard"}
-    - {name: severity, type: select, options: [Info, Warning, Critical], default: Warning, in_list: true, in_filter: true}
+    - {name: severity, type: select, options: [Info, Warning, Minor, Major, Critical], default: Warning, in_list: true, in_filter: true}
     - {name: site, type: link, to: Site, description: "Every site, if empty"}
     - {name: device, type: link, to: Device, description: "One device. Empty means all with this metric"}
     - {name: definition, type: link, to: DeviceDefinition, description: "Every device of one definition"}
@@ -51,6 +53,7 @@
     - {name: status, type: select, options: [Draft, In Review, Approved], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
     - {name: live, type: check, default: false, read_only: true, no_copy: true, in_list: true, in_filter: true, label: Running}
     - {name: revision, type: int, default: 0, read_only: true, no_copy: true, in_list: true}
+    - {name: runs_at, type: select, options: [Gateway, Platform], default: Gateway, in_list: true, in_filter: true, label: Runs On, description: "A gateway hears each reading and keeps working with the link down. The platform sees across sites, a minute at a time."}
     - {name: site, type: link, to: Site, in_list: true, in_filter: true, description: "Every site, if empty. One site first is how a change is tried."}
     - {name: body, type: code, label: Flow, description: "What was drawn, as JSON"}
     - {name: published_body, type: code, read_only: true, no_copy: true, label: What Gateways Run}
@@ -61,8 +64,10 @@
     - {name: activated_by, type: data, read_only: true, no_copy: true}
     - {name: activated_at, type: datetime, read_only: true, no_copy: true}
     - {name: review_note, type: text, read_only: true, no_copy: true}
+    - {name: debug_until, type: datetime, read_only: true, no_copy: true, label: Watched Until}
     - {name: notes, type: text}
   actions:
+    - {name: watch, label: Watch It, permission: write}
     - {name: submit_for_review, label: Send for Review, permission: write}
     - {name: send_back, label: Send Back, permission: write}
     - {name: approve, label: Approve, permission: write}
@@ -85,11 +90,16 @@
     - {name: flow_node, type: data, read_only: true, hidden: true}
     - {name: device, type: link, to: Device, read_only: true, in_list: true, in_filter: true}
     - {name: site, type: link, to: Site, read_only: true, in_filter: true}
-    - {name: severity, type: select, options: [Info, Warning, Critical], read_only: true, in_list: true, in_filter: true}
+    - {name: source, type: data, read_only: true, hidden: true, description: "What raised it, when no rule or flow did"}
+    - {name: severity, type: select, options: [Info, Warning, Minor, Major, Critical], read_only: true, in_list: true, in_filter: true}
     - {name: status, type: select, options: [Active, Acknowledged, Cleared], default: Active, read_only: true, in_list: true, in_filter: true}
+    - {name: assignee, type: data, read_only: true, hidden: true}
+    - {name: assignee_email, type: data, read_only: true, in_list: true, in_filter: true, label: Assigned To}
+    - {name: shelved_until, type: datetime, read_only: true, label: Shelved Until}
     - {name: value, type: decimal, read_only: true}
     - {name: raised_at, type: datetime, read_only: true, in_list: true}
     - {name: cleared_at, type: datetime, read_only: true}
+    - {name: cleared_by, type: data, read_only: true}
     - {name: acknowledged_by, type: data, read_only: true}
     - {name: acknowledged_at, type: datetime, read_only: true}
     - {name: note, type: text, read_only: true}
@@ -105,10 +115,10 @@
   fields:
     - {name: export_name, type: data, required: true, in_list: true}
     - {name: site, type: link, to: Site, in_list: true, description: "Every site, if empty"}
-    - {name: send_to, type: data, required: true, label: Send To, in_list: true, description: "https://historian/in takes batches, mqtt://broker takes a message per measurement"}
-    - {name: topic, type: data, description: "MQTT: {device} and {metric} work here"}
+    - {name: send_to, type: data, required: true, label: Send To, in_list: true, description: "https://historian/in, mqtts://broker, nats://bus:4222, kafka://bus:9092, amqp://user@broker/vhost?exchange=readings, influx://host:8086/?org=o&bucket=b, clickhouse://host:8123/table, s3://bucket/prefix?region=r, sqs://sqs.region.amazonaws.com/account/queue, sns://sns.region.amazonaws.com/?topic=arn, pubsub://project/topic, azure://hub.azure-devices.net/device, eventhub://ns.servicebus.windows.net/hub"}
+    - {name: topic, type: data, label: Topic or Key, description: "A topic, subject or routing key: {device} and {metric} work here"}
     - {name: metrics, type: data, description: "Only these, comma separated, with * for the rest of a name. All, if empty"}
-    - {name: sign_with, type: data, label: Sign With, description: "The name of a secret kept at the site. Signs each batch with HMAC-SHA256"}
+    - {name: sign_with, type: data, label: Secret, description: "The name of a secret kept at the site. It signs each batch to a web address, and logs in anywhere else. Passwords never go in the address."}
     - {name: enabled, type: check, default: true, in_list: true}
   list: {columns: [export_name, site, send_to, enabled], sort: export_name asc}
 
@@ -130,3 +140,131 @@
     - {name: site, type: link, to: Site, in_list: true, description: "Every site, if empty"}
     - {name: notes, type: text}
   list: {columns: [release_version, status, percent, site, expires_at], sort: release_version desc}
+
+- name: EdgeDashboard
+  label: Edge Dashboard
+  label_plural: Edge Dashboards
+  kind: master
+  module: edge
+  title_field: dashboard_name
+  search_fields: [dashboard_name]
+  description: Widgets over live values, laid out on a grid. It can be shared by a link that shows what it shows and changes nothing.
+  fields:
+    - {name: dashboard_name, type: data, required: true, unique: true, in_list: true, max_length: 120}
+    - {name: description, type: text, in_list: true}
+    - {name: body, type: code, label: Layout, description: "What was laid out, as JSON"}
+    - {name: shared_hash, type: data, read_only: true, no_copy: true, hidden: true}
+    - {name: shared_at, type: datetime, read_only: true, no_copy: true, in_list: true, label: Shared Since}
+  list: {columns: [dashboard_name, description, shared_at], sort: dashboard_name asc}
+
+- name: EdgeNotifyStep
+  label: Notify Step
+  kind: child
+  module: edge
+  fields:
+    - {name: after_minutes, type: int, default: 0, min: "0", in_list: true, label: After (Minutes), description: "If nobody has dealt with it by then. Zero is at once"}
+    - {name: channel, type: select, options: [Bell, Email, Webhook, Slack, Teams], default: Bell, required: true, in_list: true}
+    - {name: target, type: data, required: true, in_list: true, description: "A role or an email address, or for a webhook, Slack or Teams, the URL of its incoming webhook"}
+
+- name: EdgeNotifyRule
+  label: Edge Notify Rule
+  label_plural: Edge Notify Rules
+  kind: master
+  module: edge
+  title_field: rule_name
+  search_fields: [rule_name]
+  description: Who is told about what, and how, in steps that wait. Dealing with an alarm stops the steps still to come.
+  fields:
+    - {name: rule_name, type: data, required: true, unique: true, in_list: true}
+    - {name: enabled, type: check, default: true, in_list: true, in_filter: true}
+    - {name: trigger, type: select, options: [Alarm raised, Alarm cleared, Alarm acknowledged], default: Alarm raised, required: true, in_list: true, in_filter: true}
+    - {name: min_severity, type: select, options: [Info, Warning, Minor, Major, Critical], default: Warning, label: This Serious or Worse, in_list: true}
+    - {name: site, type: link, to: Site, description: "Every site, if empty"}
+    - {name: device, type: link, to: Device, description: "Every device, if empty"}
+    - {name: definition, type: link, to: DeviceDefinition, description: "Every device of one definition"}
+    - {name: subject, type: data, description: "{summary}, {severity}, {device}, {site} and {raised_at} are filled in"}
+    - {name: body, type: text}
+    - {name: steps, type: table, of: EdgeNotifyStep, label: Steps}
+  list: {columns: [rule_name, trigger, min_severity, enabled], sort: rule_name asc}
+
+- name: EdgeAsset
+  label: Edge Asset
+  label_plural: Edge Assets
+  kind: master
+  module: edge
+  title_field: asset_name
+  search_fields: [asset_name]
+  description: A thing that matters here and is not a device, a building or a cold room, holding the devices that report on it and the other assets inside it.
+  fields:
+    - {name: asset_name, type: data, required: true, unique: true, in_list: true, max_length: 140}
+    - {name: asset_type, type: data, in_list: true, in_filter: true, label: Kind, description: "Building, floor, room, line: whatever a place calls them"}
+    - {name: parent, type: link, to: EdgeAsset, in_list: true, in_filter: true, label: Inside}
+    - {name: site, type: link, to: Site, in_list: true, in_filter: true}
+    - {name: notes, type: text}
+  list: {columns: [asset_name, asset_type, parent, site], sort: asset_name asc}
+
+- name: EdgeFirmware
+  label: Edge Firmware
+  label_plural: Edge Firmware
+  kind: master
+  module: edge
+  title_field: firmware_name
+  search_fields: [firmware_name, firmware_version]
+  description: New firmware for a kind of device. Only what its definition allows, and never for a robot, a controller or anything a safety function runs on.
+  fields:
+    - {name: firmware_name, type: data, required: true, in_list: true, label: Title, max_length: 140}
+    - {name: firmware_version, type: data, required: true, in_list: true, label: Version, max_length: 60}
+    - {name: definition, type: link, to: DeviceDefinition, required: true, in_list: true, in_filter: true, description: "Which devices it is for. Its definition has to say firmware: true"}
+    - {name: url, type: data, required: true, label: Where It Is, description: "Where a gateway can fetch it"}
+    - {name: sha256, type: data, required: true, label: SHA-256, description: "A gateway offers it to a device only if this matches"}
+    - {name: size, type: int, required: true, min: "1", description: "In bytes"}
+    - {name: notes, type: text}
+  list: {columns: [firmware_name, firmware_version, definition], sort: firmware_name asc}
+
+- name: EdgeRollout
+  label: Edge Rollout
+  label_plural: Edge Rollouts
+  kind: master
+  module: edge
+  title_field: rollout_name
+  search_fields: [rollout_name]
+  description: Taking new firmware to devices a few at a time, through the ledger, stopping by itself if they start to fail.
+  fields:
+    - {name: rollout_name, type: data, required: true, unique: true, in_list: true, max_length: 140}
+    - {name: firmware, type: link, to: EdgeFirmware, required: true, in_list: true}
+    - {name: site, type: link, to: Site, in_list: true, in_filter: true, description: "Every site, if empty"}
+    - {name: tag, type: data, in_list: true, description: "Only devices with this tag, if given"}
+    - {name: percent, type: int, default: 100, min: "1", max: "100", label: Share of Devices, description: "The share of those devices this ever reaches, which is how a change is tried"}
+    - {name: batch, type: int, default: 10, min: "1", label: At Once, description: "How many can be updating at the same time"}
+    - {name: stop_after, type: int, default: 3, min: "1", label: Stop After Failures}
+    - {name: status, type: select, options: [Draft, Running, Paused, Done], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: started_by, type: data, read_only: true, no_copy: true}
+    - {name: note, type: text, read_only: true, no_copy: true, label: Why It Stopped}
+  actions:
+    - {name: start, label: Start It, permission: write}
+    - {name: pause, label: Pause It, permission: write}
+  list: {columns: [rollout_name, firmware, status, site], sort: rollout_name asc}
+
+- name: EdgeSchedule
+  label: Edge Schedule
+  label_plural: Edge Schedules
+  kind: master
+  module: edge
+  title_field: schedule_name
+  search_fields: [schedule_name]
+  description: Asking devices for something by the clock. It goes through the ledger as automation, so it runs under an envelope someone approved, or waits for a person.
+  fields:
+    - {name: schedule_name, type: data, required: true, unique: true, in_list: true, max_length: 140}
+    - {name: enabled, type: check, default: true, in_list: true, in_filter: true}
+    - {name: every_minutes, type: int, min: "1", label: Every (Minutes), in_list: true, description: "This often, or at a time of day below"}
+    - {name: at_time, type: data, label: At, in_list: true, description: "A time of day, written 08:30"}
+    - {name: days, type: data, description: "1 is Monday: 1,2,3,4,5. Every day, if empty"}
+    - {name: offset_minutes, type: int, default: 0, label: Minutes From UTC, description: "The site's time zone: 330 for India"}
+    - {name: site, type: link, to: Site, in_filter: true}
+    - {name: definition, type: link, to: DeviceDefinition, in_filter: true}
+    - {name: tag, type: data}
+    - {name: operation, type: data, required: true, in_list: true}
+    - {name: payload, type: json}
+    - {name: last_run, type: datetime, read_only: true, no_copy: true, in_list: true}
+    - {name: last_result, type: text, read_only: true, no_copy: true}
+  list: {columns: [schedule_name, enabled, every_minutes, at_time, operation, last_run], sort: schedule_name asc}

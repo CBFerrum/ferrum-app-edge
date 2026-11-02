@@ -9,7 +9,7 @@ import { Link, useParams } from "react-router";
 import { refusal, relativeTime } from "@ferrum/client";
 import { Alert, Button, confirmDialog, Dialog, ErrorState, Field, PageLoading, toast, useDebounced, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
 import { can, LinkInput, useEntityMeta, useMe } from "@ferrum/records";
-import { flowAction, type FlowDoc, flowDoc, type Moment, saveFlow, type Simulated, simulateFlow, tryFlow } from "./data";
+import { flowAction, type FlowDoc, flowDoc, flowTraces, flowVersions, type Moment, saveFlow, type Simulated, simulateFlow, type Traced, tryFlow } from "./data";
 import {
   add,
   arrange,
@@ -554,8 +554,9 @@ export function FlowEditor() {
   const locked = doc?.status !== "Draft" || !writable;
   const { dialog } = useUnsavedGuard(dirty);
   const settled = useDebounced(text, 500);
-  const check = useQuery({ queryKey: ["edge", "flow-check", settled], queryFn: () => tryFlow(settled), enabled: flow.nodes.length > 0, staleTime: Infinity });
-  const passed = useMemo(() => new Set(chosen?.trace.map((t) => t.node) ?? []), [chosen]);
+  const check = useQuery({ queryKey: ["edge", "flow-check", settled], queryFn: () => tryFlow(settled), enabled: flow.nodes.length > 0 && settled === text, staleTime: Infinity });
+  const [watched, setWatched] = useState<string | null>(null);
+  const passed = useMemo(() => new Set(watched ? [watched] : (chosen?.trace.map((t) => t.node) ?? [])), [chosen, watched]);
 
   const put = useCallback(async () => {
     const next = await saveFlow(id, doc!.version, { body: text });
@@ -615,6 +616,7 @@ export function FlowEditor() {
         <Link to="/flows">Flows</Link>
         <strong className="edge-title">{d.flow_name}</strong>
         <span className="edge-grow" />
+        <Button onClick={() => download(d.flow_name, text)}>Download</Button>
         {locked ? null : (
           <Button disabled={!dirty} loading={save.isPending} onClick={() => save.mutate()}>
             Save
@@ -704,6 +706,8 @@ export function FlowEditor() {
       <section className="card card-pad stack" aria-label="Where it runs">
         <SiteChoice doc={d} locked={locked} />
       </section>
+      {d.live ? <Watching doc={d} writable={writable} chosen={watched} choose={setWatched} /> : null}
+      <Versions doc={d} locked={locked} draft={(body) => setFlow(parseFlow(body))} />
       {flow.nodes.length ? <Simulation flow={flow} run={(l, u) => void run(l, u)} result={result} running={simulating} chosen={chosen} choose={choose} canRecord={!locked} /> : null}
       {sendingBack ? (
         <SendBack
@@ -723,13 +727,151 @@ function SiteChoice({ doc, locked }: { doc: FlowDoc; locked: boolean }) {
   const id = useId();
   const qc = useQueryClient();
   const set = useMutation({
-    mutationFn: (site: string | null) => saveFlow(doc.id, doc.version, { site }),
+    mutationFn: (patch: Partial<FlowDoc>) => saveFlow(doc.id, doc.version, patch),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["edge", "flow", doc.id] }),
     onError: (e) => toast(refusal(e), "error"),
   });
   return (
-    <Field label="Where it runs" htmlFor={id} hint="Every site if left empty. One site first is how a change is tried.">
-      <LinkInput to="Site" id={id} value={doc.site} disabled={locked} onChange={(s) => set.mutate(s)} />
-    </Field>
+    <div className="edge-fields">
+      <Field label="Runs on" htmlFor={`${id}-on`} hint={doc.runs_at === "Platform" ? "The platform sees across sites, a minute at a time, and stops when the link does." : "A gateway hears every reading and keeps working with the link down."}>
+        <select id={`${id}-on`} className="input" value={doc.runs_at ?? "Gateway"} disabled={locked} onChange={(e) => set.mutate({ runs_at: e.target.value as FlowDoc["runs_at"] })}>
+          <option value="Gateway">Each gateway</option>
+          <option value="Platform">The platform</option>
+        </select>
+      </Field>
+      <Field label="Which site" htmlFor={id} hint="Every site if left empty. One site first is how a change is tried.">
+        <LinkInput to="Site" id={id} value={doc.site} disabled={locked} onChange={(s) => set.mutate({ site: s })} />
+      </Field>
+    </div>
+  );
+}
+
+function download(name: string, body: string) {
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([body], { type: "application/json" }));
+  link.download = `${name.replace(/[^\w.-]+/g, "-")}.flow.json`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+/// Every version that ran. Going back is drafting it again, so it passes review like any other.
+function Versions({ doc, locked, draft }: { doc: FlowDoc; locked: boolean; draft: (body: string) => void }) {
+  const q = useQuery({ queryKey: ["edge", "flow-versions", doc.id], queryFn: () => flowVersions(doc.id) });
+  const versions = q.data?.versions ?? [];
+  if (versions.length === 0) return null;
+  return (
+    <section className="card card-pad stack" aria-label="Versions that ran">
+      <h2 className="edge-section">Versions that ran</h2>
+      <ul className="edge-versions">
+        {versions.map((v) => (
+          <li key={v.revision}>
+            <strong>Version {v.revision}</strong>
+            <span className="faint">
+              Run by {v.by}, {relativeTime(v.at)}
+            </span>
+            <span className="edge-grow" />
+            <Button size="sm" onClick={() => download(`${doc.flow_name} ${v.revision}`, v.body)}>
+              Download
+            </Button>
+            {locked ? null : (
+              <Button size="sm" onClick={() => draft(v.body)}>
+                Draw from this
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+const WATCH_MINUTES = 10;
+const KEPT = 200;
+
+function say(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value) ?? "";
+}
+
+/// What is passing through the running flow. Nothing is reported until someone asks, and it stops by itself.
+function Watching({ doc, writable, chosen, choose }: { doc: FlowDoc; writable: boolean; chosen: string | null; choose: (node: string | null) => void }) {
+  const qc = useQueryClient();
+  const [seen, setSeen] = useState<Traced[]>([]);
+  const until = doc.debug_until ? Date.parse(doc.debug_until) : 0;
+  const [now, setNow] = useState(() => Date.now());
+  const watching = until > now;
+  useEffect(() => {
+    if (!watching) return;
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [watching]);
+  const last = useRef<string | null>(null);
+  const q = useQuery({
+    queryKey: ["edge", "flow-traces", doc.id],
+    queryFn: () => flowTraces(doc.id, last.current),
+    enabled: watching,
+    refetchInterval: 3000,
+  });
+  useEffect(() => {
+    const traces = q.data?.traces ?? [];
+    if (traces.length === 0) return;
+    last.current = traces[traces.length - 1].at;
+    setSeen((s) => {
+      const have = new Set(s.map((t) => t.id));
+      return [...s, ...traces.filter((t) => !have.has(t.id))].slice(-KEPT);
+    });
+  }, [q.data]);
+  const turn = useMutation({
+    mutationFn: (minutes: number) => flowAction(doc.id, "watch", { minutes }),
+    onSuccess: () => {
+      setNow(Date.now());
+      return qc.invalidateQueries({ queryKey: ["edge", "flow", doc.id] });
+    },
+    onError: (e) => toast(refusal(e), "error"),
+  });
+  return (
+    <section className="card card-pad stack" aria-label="Watch it run">
+      <div className="edge-bar">
+        <h2 className="edge-section">Watch it run</h2>
+        <span className="edge-grow" />
+        {writable ? (
+          <Button size="sm" loading={turn.isPending} onClick={() => turn.mutate(watching ? 0 : WATCH_MINUTES)}>
+            {watching ? "Stop watching" : `Watch for ${WATCH_MINUTES} minutes`}
+          </Button>
+        ) : null}
+      </div>
+      <p className="muted" role="status">
+        {watching ? `What passes through arrives here as it is reported, until ${new Date(until).toLocaleTimeString()}.` : "See what real messages do at each step. Nothing is reported until someone asks, and it stops by itself."}
+      </p>
+      {seen.length ? (
+        <div className="edge-scroll">
+          <table className="edge-table edge-rows-left">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Step</th>
+                <th>Device</th>
+                <th>Value</th>
+                <th>Left by</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...seen].reverse().map((t) => (
+                <tr key={t.id} className={chosen === t.node ? "edge-on" : undefined}>
+                  <td>{new Date(t.at).toLocaleTimeString()}</td>
+                  <td>
+                    <button type="button" className="edge-step-link" onClick={() => choose(chosen === t.node ? null : t.node)}>
+                      {t.node}
+                    </button>
+                  </td>
+                  <td>{t.device ?? ""}</td>
+                  <td className="edge-said">{say(t.value)}</td>
+                  <td>{t.ports.join(", ") || <span className="faint">It stopped here</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </section>
   );
 }

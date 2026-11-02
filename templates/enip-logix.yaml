@@ -1,0 +1,15 @@
+# about: A ControlLogix or CompactLogix by its tags, over EtherNet/IP.
+# group: Machines
+# Tags are examples. slot is where the controller sits on its backplane: leave it out for a CompactLogix
+# that answers directly.
+name: enip-logix
+connect: enip://plc:44818?slot=0
+tags:
+  - {node: Temperature, every: 1s, metric: temp.c, unit: C, deadband: 0.2}
+  - {node: Line.Speed, every: 1s, metric: speed.mps}
+  - {node: Running, every: 1s, state: true, map: {"true": Running, "false": Idle}}
+commands:
+  machine.setpoint:
+    node: Setpoint
+    send: "{payload.value}"
+    once: true

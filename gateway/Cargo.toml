@@ -15,17 +15,19 @@ name = "ferrum-site"
 path = "src/main.rs"
 
 [features]
-default = ["mqtt", "modbus", "ws", "opcua"]
+default = ["mqtt", "modbus", "ws", "opcua", "kafka"]
 mqtt = ["dep:rumqttc"]
 modbus = ["dep:tokio-modbus"]
 ws = ["dep:tokio-tungstenite", "dep:futures-util"]
 opcua = ["dep:async-opcua"]
+kafka = ["dep:rskafka"]
 # Deliberate crashes at named points, for the recovery tests. Never in a release.
 failpoints = []
 
 [dependencies]
 ferrum-ops-contract = { workspace = true }
 ferrum-edge-contract = { workspace = true }
+aes = "0.8"
 async-opcua = { version = "0.19", optional = true, default-features = false, features = ["client"] }
 async-trait = { workspace = true }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
@@ -36,22 +38,31 @@ hex = { workspace = true }
 hmac = "0.12"
 libc = "0.2"
 rand = "0.9"
+ring = "0.17"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 rumqttc = { version = "0.25", optional = true, default-features = false, features = ["use-rustls"] }
+rskafka = { version = "0.6", optional = true, default-features = false, features = ["transport-tls"] }
 rusqlite = { version = "0.39", features = ["bundled"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
+sha1 = "0.10"
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["net", "process", "io-util"] }
+tokio-postgres = { version = "0.7", default-features = false, features = ["runtime"] }
 tokio-modbus = { version = "0.17", optional = true, default-features = false, features = ["tcp", "rtu"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 tokio-tungstenite = { version = "0.29", optional = true, default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
 uuid = { workspace = true }
+webpki-roots = "1"
 
 [dev-dependencies]
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+rumqttc = { version = "0.25", default-features = false, features = ["use-rustls"] }
 rumqttd = { version = "0.20", default-features = false }
 async-opcua = { version = "0.19", default-features = false, features = ["client", "server"] }
 ferrum-app-edge = { path = ".." }

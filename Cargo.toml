@@ -6,7 +6,7 @@ resolver = "3"
 members = [".", "contract", "gateway"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/CBFerrum/ferrum-app-edge"
@@ -57,19 +57,22 @@ ferrum-domain = { workspace = true }
 ferrum-ops = { workspace = true }
 ferrum-edge-contract = { workspace = true }
 async-trait = { workspace = true }
+base64 = "0.22"
 chrono = { workspace = true }
 hex = { workspace = true }
 rand = "0.9"
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 sha2 = { workspace = true }
 sqlx = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "fast"] }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["net"] }
 
 [lints]
 workspace = true

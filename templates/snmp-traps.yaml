@@ -1,0 +1,7 @@
+# about: Traps and informs from equipment, each an event on the device that sent it.
+# group: Infrastructure
+# Each device's code is its address, so a device record named 10.0.0.7 hears its own traps.
+name: snmp-traps
+connect: listen+snmp://0.0.0.0:162
+read:
+  - {topic: "+/+", device: "{topic.0}", event: trap, json: $}

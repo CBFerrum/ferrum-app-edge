@@ -86,6 +86,16 @@ export const KINDS: Kind[] = [
     defaults: { key: "" },
   },
   {
+    kind: "input",
+    label: "Way into this flow",
+    group: "Listen",
+    says: "For a flow other flows use: where they come in. On its own, a number of this name comes in here",
+    params: [{ name: "name", label: "Name", type: "text", required: true }],
+    ports: out,
+    inputs: [],
+    defaults: { name: "in" },
+  },
+  {
     kind: "timer",
     label: "A timer",
     group: "Listen",
@@ -243,7 +253,10 @@ export const KINDS: Kind[] = [
     label: "Choose by value",
     group: "Decide",
     says: "One way out for each value",
-    params: [{ name: "cases", label: "Values", type: "list", required: true, hint: "One to a line" }],
+    params: [
+      { name: "cases", label: "Values", type: "list", required: true, hint: "One to a line" },
+      { name: "on", label: "By the part at", type: "text", placeholder: "The whole value", hint: "$.method keeps the rest for what follows" },
+    ],
     ports: ["other"],
     inputs: ["in"],
     defaults: { cases: ["Running", "Stopped"] },
@@ -269,13 +282,146 @@ export const KINDS: Kind[] = [
     defaults: { path: "" },
   },
   {
+    kind: "has",
+    label: "Has these parts",
+    group: "Decide",
+    says: "Whether a value has what is needed",
+    params: [{ name: "paths", label: "Parts", type: "list", required: true, hint: "One to a line: $.a.b" }],
+    ports: yesNo,
+    inputs: ["in"],
+    defaults: { paths: [] },
+  },
+  {
+    kind: "delta",
+    label: "How far it went",
+    group: "Decide",
+    says: "A counter's rise since last time. One that went backwards was reset, and says nothing.",
+    params: [{ name: "per", label: "As a rate per", type: "duration", placeholder: "Plain difference" }],
+    ports: out,
+    inputs: ["in"],
+  },
+  {
+    kind: "geofence",
+    label: "In a place",
+    group: "Decide",
+    says: "Inside or outside a circle or a polygon, and when that changes",
+    params: [
+      { name: "lat", label: "Latitude at", type: "text", placeholder: "$.lat" },
+      { name: "lon", label: "Longitude at", type: "text", placeholder: "$.lon" },
+      { name: "circle", label: "Circle", type: "json", hint: '{"lat": 51.5, "lon": -0.12, "radius_m": 500}' },
+      { name: "polygon", label: "Or a polygon", type: "json", hint: "[[lat, lon], [lat, lon], [lat, lon]]" },
+    ],
+    ports: ["inside", "outside", "entered", "left"],
+    inputs: ["in"],
+    defaults: { circle: { lat: 0, lon: 0, radius_m: 100 } },
+  },
+  {
+    kind: "dedupe",
+    label: "Only the first",
+    group: "Decide",
+    says: "Lets the first through and not the same again for a while",
+    params: [
+      { name: "within", label: "For", type: "duration", required: true },
+      { name: "key", label: "The same by", type: "text", placeholder: "The whole value", hint: "A part, like $.id" },
+    ],
+    ports: out,
+    inputs: ["in"],
+    defaults: { within: "1m" },
+  },
+  {
+    kind: "split",
+    label: "One for each",
+    group: "Decide",
+    says: "A message for each thing in a list",
+    params: [{ name: "path", label: "The list at", type: "text", placeholder: "The value itself" }],
+    ports: out,
+    inputs: ["in"],
+  },
+  {
+    kind: "keys",
+    label: "Rename parts",
+    group: "Decide",
+    says: "Renames the parts of a value and leaves some out",
+    params: [
+      { name: "rename", label: "Rename", type: "json", hint: '{"old": "new"}' },
+      { name: "drop", label: "Leave out", type: "list", hint: "One to a line" },
+      { name: "keep", label: "Keep only", type: "list", hint: "One to a line" },
+    ],
+    ports: out,
+    inputs: ["in"],
+  },
+  {
+    kind: "enrich",
+    label: "Add what is known",
+    group: "Decide",
+    says: "Adds a device's newest numbers and what it said about itself",
+    params: [
+      { name: "metrics", label: "Numbers", type: "list", hint: "One to a line" },
+      { name: "attributes", label: "Attributes", type: "list", hint: "One to a line" },
+      { name: "device", label: "Of device", type: "text", placeholder: "The one it came from" },
+    ],
+    ports: out,
+    inputs: ["in"],
+  },
+  {
+    kind: "schedule",
+    label: "At these times",
+    group: "Decide",
+    says: "Yes between two times of day, on these days",
+    params: [
+      { name: "from", label: "From", type: "text", required: true, placeholder: "08:00" },
+      { name: "to", label: "Until", type: "text", required: true, placeholder: "18:00" },
+      { name: "days", label: "Days", type: "json", hint: "1 is Monday: [1, 2, 3, 4, 5]. Every day, if empty" },
+      { name: "offset_minutes", label: "Minutes from UTC", type: "number", hint: "The site's time zone: 330 for India" },
+    ],
+    ports: yesNo,
+    inputs: ["in"],
+    defaults: { from: "08:00", to: "18:00" },
+  },
+  {
+    kind: "anomaly",
+    label: "Unlike the rest",
+    group: "Decide",
+    says: "A number unlike the last ones. It learns each device's normal, and an odd one does not teach it.",
+    params: [
+      { name: "window", label: "Readings to compare with", type: "number", placeholder: "100" },
+      { name: "sigma", label: "Standard deviations", type: "number", placeholder: "3" },
+    ],
+    ports: ["normal", "odd"],
+    inputs: ["in"],
+  },
+  {
+    kind: "use",
+    label: "Use a flow",
+    group: "Decide",
+    says: "An approved flow's steps, copied in when this is checked. What it uses is part of what is reviewed",
+    params: [
+      { name: "flow", label: "Flow", type: "text", required: true },
+      { name: "inputs", label: "Its ways in", type: "list", hint: "One to a line, as it names them" },
+      { name: "outputs", label: "Its ways out", type: "list", hint: "One to a line, as it names them" },
+    ],
+    ports: out,
+    inputs: ["in"],
+    defaults: { flow: "", inputs: ["in"], outputs: ["out"] },
+  },
+  {
+    kind: "reassign",
+    label: "Make it another's",
+    group: "Decide",
+    says: "What follows treats the message as another device's",
+    params: [{ name: "to", label: "Device", type: "text", required: true, hint: "{value} and {device} work here" }],
+    ports: out,
+    inputs: ["in"],
+    defaults: { to: "" },
+  },
+  {
     kind: "alarm",
     label: "Raise an alarm",
     group: "Do",
     says: "Raises at the top input and clears at the other",
     params: [
       { name: "name", label: "Name", type: "text", required: true },
-      { name: "severity", label: "Severity", type: "select", options: ["Info", "Warning", "Critical"], required: true },
+      { name: "severity", label: "Severity", type: "select", options: ["Info", "Warning", "Minor", "Major", "Critical"], required: true },
       { name: "device", label: "On device", type: "text", placeholder: "The one it came from" },
     ],
     ports: [],
@@ -294,6 +440,37 @@ export const KINDS: Kind[] = [
     ports: [],
     inputs: ["in"],
     defaults: { title: "" },
+  },
+  {
+    kind: "output",
+    label: "Way out of this flow",
+    group: "Do",
+    says: "For a flow other flows use: where they carry on from",
+    params: [{ name: "name", label: "Name", type: "text", required: true }],
+    ports: [],
+    inputs: ["in"],
+    defaults: { name: "out" },
+  },
+  {
+    kind: "reply",
+    label: "Answer the device",
+    group: "Do",
+    says: "Answers a device that asked something, from an event called rpc.request",
+    params: [
+      { name: "with", label: "With", type: "json", hint: "{value} and {device} work here" },
+      { name: "id", label: "Its question's id at", type: "text", placeholder: "$.id" },
+    ],
+    ports: [],
+    inputs: ["in"],
+  },
+  {
+    kind: "log",
+    label: "Write to the log",
+    group: "Do",
+    says: "For whoever is watching this flow",
+    params: [{ name: "text", label: "Text", type: "text", placeholder: "The value", hint: "{value} and {device} work here" }],
+    ports: [],
+    inputs: ["in"],
   },
   {
     kind: "command",
@@ -333,10 +510,11 @@ const byKind = new Map(KINDS.map((k) => [k.kind, k]));
 
 export const kindOf = (kind: string): Kind => byKind.get(kind) ?? { kind, label: kind, group: "Decide", says: "", params: [], ports: out, inputs: ["in"] };
 
-export const portsOf = (n: FlowNode): string[] => (n.kind === "switch" ? [...((n.cases as string[]) ?? []), "other"] : kindOf(n.kind).ports);
+export const portsOf = (n: FlowNode): string[] => (n.kind === "switch" ? [...((n.cases as string[]) ?? []), "other"] : n.kind === "use" ? ((n.outputs as string[]) ?? ["out"]) : kindOf(n.kind).ports)
 
 /** Ways in that exist on the canvas: a combine's are whatever has been wired to it, and one more. */
 export function inputsOf(flow: Flow, n: FlowNode): string[] {
+  if (n.kind === "use") return (n.inputs as string[]) ?? ["in"];
   const fixed = kindOf(n.kind).inputs;
   if (fixed) return fixed;
   return [...new Set(flow.edges.filter((e) => e.to === n.id).map((e) => e.input ?? "in"))];

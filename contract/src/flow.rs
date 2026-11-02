@@ -20,7 +20,7 @@ use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::time::Duration;
 
 pub const MAX_NODES: usize = 500;
@@ -31,6 +31,12 @@ const MAX_STEPS: usize = 5_000;
 const MAX_KEYS: usize = 5_000;
 /// What a window or a delay holds per device.
 const MAX_HELD: usize = 10_000;
+/// What one list can become.
+const MAX_SPLIT: usize = 1_000;
+/// What a flow can be told about devices, by metric and attribute.
+const MAX_KNOWN: usize = 100_000;
+/// Readings before an anomaly can mean anything.
+const ANOMALY_MIN: usize = 10;
 /// The longest stretch of time a simulation will walk through, second by second.
 pub const MAX_SIMULATED_SECS: i64 = 6 * 3600;
 
@@ -97,6 +103,11 @@ pub enum Kind {
         device: String,
         key: String,
     },
+    /// A way into a flow other flows use. On its own, a number of this name comes in here, so that it
+    /// can be simulated and reviewed by itself.
+    Input {
+        name: String,
+    },
     /// Fires on its own, with the time as its value.
     Timer {
         #[serde(deserialize_with = "period")]
@@ -142,11 +153,14 @@ pub enum Kind {
         #[serde(deserialize_with = "period")]
         within: Duration,
     },
-    /// Replaces a number with a statistic of the last stretch of them.
+    /// Replaces a number with a statistic of the last stretch of them. `across: true` takes every
+    /// device's numbers together, for a total or an average over a line.
     Window {
         #[serde(deserialize_with = "period")]
         over: Duration,
         stat: Stat,
+        #[serde(default)]
+        across: bool,
     },
     /// `[value] * 1.8 + 32`. The fields of a value that has them are there by name too.
     Math {
@@ -181,9 +195,12 @@ pub enum Kind {
         #[serde(default)]
         other: Option<Value>,
     },
-    /// Sends the message out of the port named by its value, or `other`.
+    /// Sends the message out of the port named by its value, or by the part of it at `on`, or
+    /// `other`.
     Switch {
         cases: Vec<String>,
+        #[serde(default)]
+        on: Option<String>,
     },
     /// Replaces the value. `{value}` and `{device}` work inside.
     Set {
@@ -193,7 +210,89 @@ pub enum Kind {
     Field {
         path: String,
     },
+    /// `yes` when a value has every one of these parts.
+    Has {
+        paths: Vec<String>,
+    },
+    /// How far a counter has gone since last time, or that as a rate `per` so long. One that went
+    /// backwards was reset, and that says nothing about how much was counted.
+    Delta {
+        #[serde(default, deserialize_with = "some_period")]
+        per: Option<Duration>,
+    },
+    /// Whether a position is inside a place: `inside` or `outside` each time, and `entered` or
+    /// `left` when that changes. Corners of a polygon are `[lat, lon]`.
+    Geofence {
+        #[serde(default = "lat_path")]
+        lat: String,
+        #[serde(default = "lon_path")]
+        lon: String,
+        #[serde(default)]
+        polygon: Vec<[f64; 2]>,
+        #[serde(default)]
+        circle: Option<Circle>,
+    },
+    /// The first of what is the same within this time, and none of the rest. `key` says which part
+    /// makes two the same.
+    Dedupe {
+        #[serde(default)]
+        key: Option<String>,
+        #[serde(deserialize_with = "period")]
+        within: Duration,
+    },
+    /// One message for each thing in a list.
+    Split {
+        #[serde(default)]
+        path: Option<String>,
+    },
+    /// Renames the parts of a value, and leaves some out. With `keep`, only those stay.
+    Keys {
+        #[serde(default)]
+        rename: BTreeMap<String, String>,
+        #[serde(default)]
+        drop: Vec<String>,
+        #[serde(default)]
+        keep: Vec<String>,
+    },
+    /// Adds what is known about a device to a value: its newest numbers and what it said about
+    /// itself. A value that is not an object is kept as `value`.
+    Enrich {
+        #[serde(default)]
+        metrics: Vec<String>,
+        #[serde(default)]
+        attributes: Vec<String>,
+        /// Another device, instead of the one this came from.
+        #[serde(default)]
+        device: Option<String>,
+    },
+    /// `yes` between two times of day, on these days. `from` after `to` runs over midnight. Days are
+    /// 1, Monday, to 7, and none means every day. `offset_minutes` is the site's distance from UTC.
+    Schedule {
+        from: String,
+        to: String,
+        #[serde(default)]
+        days: Vec<u8>,
+        #[serde(default)]
+        offset_minutes: i32,
+    },
+    /// A number unlike the last `window` of them, by more than `sigma` standard deviations. It says
+    /// `normal` until it has seen enough to know.
+    Anomaly {
+        #[serde(default = "a_hundred")]
+        window: usize,
+        #[serde(default = "three")]
+        sigma: f64,
+    },
+    /// Makes the message another device's: what follows treats it as having come from there.
+    /// `{value}` and `{device}` work inside.
+    Reassign {
+        to: String,
+    },
 
+    /// A way out of a flow other flows use. On its own, it only says what reached it.
+    Output {
+        name: String,
+    },
     /// Raises at `in`, clears at `clear`, once each, for each device.
     Alarm {
         name: String,
@@ -223,6 +322,18 @@ pub enum Kind {
     Export {
         to: String,
     },
+    /// Answers a device that asked something, by the id its question came with.
+    Reply {
+        #[serde(default = "id_path")]
+        id: String,
+        #[serde(default)]
+        with: Value,
+    },
+    /// Writes to the gateway's log, and to whoever is watching this flow.
+    Log {
+        #[serde(default)]
+        text: Option<String>,
+    },
     /// Asks for a command. It goes through the ledger, and goes nowhere until someone or something
     /// entitled has allowed it. At most once per `every`, however often this is reached.
     Command {
@@ -236,6 +347,33 @@ pub enum Kind {
         #[serde(default = "five_minutes", deserialize_with = "period")]
         expires: Duration,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct Circle {
+    pub lat: f64,
+    pub lon: f64,
+    pub radius_m: f64,
+}
+
+fn lat_path() -> String {
+    "$.lat".into()
+}
+
+fn lon_path() -> String {
+    "$.lon".into()
+}
+
+fn id_path() -> String {
+    "$.id".into()
+}
+
+fn a_hundred() -> usize {
+    100
+}
+
+fn three() -> f64 {
+    3.0
 }
 
 fn warning() -> String {
@@ -252,7 +390,7 @@ fn five_minutes() -> Duration {
 
 impl Kind {
     fn is_source(&self) -> bool {
-        matches!(self, Kind::Metric { .. } | Kind::State { .. } | Kind::Event { .. } | Kind::Attribute { .. } | Kind::Timer { .. })
+        matches!(self, Kind::Input { .. } | Kind::Metric { .. } | Kind::State { .. } | Kind::Event { .. } | Kind::Attribute { .. } | Kind::Timer { .. })
     }
 
     fn is_action(&self) -> bool {
@@ -265,14 +403,21 @@ impl Kind {
                 | Kind::Notify { .. }
                 | Kind::Export { .. }
                 | Kind::Command { .. }
+                | Kind::Reply { .. }
+                | Kind::Log { .. }
+                | Kind::Output { .. }
         )
     }
 
     /// What it can send out of.
     fn ports(&self) -> Vec<String> {
         match self {
-            Kind::Compare { .. } | Kind::Range { .. } | Kind::All { .. } | Kind::Latch => vec!["yes".into(), "no".into()],
-            Kind::Switch { cases } => cases.iter().cloned().chain(["other".to_string()]).collect(),
+            Kind::Compare { .. } | Kind::Range { .. } | Kind::All { .. } | Kind::Latch | Kind::Has { .. } | Kind::Schedule { .. } => {
+                vec!["yes".into(), "no".into()]
+            }
+            Kind::Switch { cases, .. } => cases.iter().cloned().chain(["other".to_string()]).collect(),
+            Kind::Geofence { .. } => ["inside", "outside", "entered", "left"].map(String::from).to_vec(),
+            Kind::Anomaly { .. } => vec!["normal".into(), "odd".into()],
             k if k.is_action() => vec![],
             _ => vec!["out".into()],
         }
@@ -343,10 +488,44 @@ pub enum Effect {
     Notify { device: Option<String>, title: String },
     Export { to: String, body: Value },
     Command { node: String, device: Option<String>, operation: String, payload: Value, expires_secs: i64 },
+    Reply { device: Option<String>, id: String, value: Value },
+    Log { node: String, device: Option<String>, text: String },
 }
 
-/// A message passing through one node, for a simulation to show.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// What a flow can look up about devices: their newest numbers and what they said about themselves.
+/// It is kept up by whatever feeds the flow, the same at a desk, at a gateway and on the platform.
+#[derive(Debug, Clone, Default)]
+pub struct Known {
+    metrics: HashMap<(String, String), Value>,
+    attributes: HashMap<(String, String), Value>,
+}
+
+impl Known {
+    /// Takes note of something a device did. Past the limit, what is new is not kept and what is
+    /// already known stays up to date.
+    pub fn note(&mut self, input: &Input) {
+        let (key, map) = match (&input.metric, &input.attribute) {
+            (Some(metric), _) => (metric, &mut self.metrics),
+            (_, Some(key)) => (key, &mut self.attributes),
+            _ => return,
+        };
+        let entry = (input.device.clone(), key.clone());
+        if map.len() < MAX_KNOWN || map.contains_key(&entry) {
+            map.insert(entry, input.value.clone());
+        }
+    }
+
+    pub fn metric(&self, device: &str, name: &str) -> Option<&Value> {
+        self.metrics.get(&(device.to_string(), name.to_string()))
+    }
+
+    pub fn attribute(&self, device: &str, key: &str) -> Option<&Value> {
+        self.attributes.get(&(device.to_string(), key.to_string()))
+    }
+}
+
+/// A message passing through one node, for a simulation or someone watching a flow to see.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Trace {
     pub node: String,
     pub device: Option<String>,
@@ -361,6 +540,17 @@ pub struct Output {
     pub trace: Vec<Trace>,
     /// Why something did not happen, for the person who drew it.
     pub problems: Vec<String>,
+}
+
+/// What a flow needs to hear and to look up, for whatever feeds it.
+#[derive(Debug, Default, PartialEq)]
+pub struct Wants {
+    pub metrics: BTreeSet<String>,
+    pub states: bool,
+    pub events: BTreeSet<String>,
+    pub attributes: BTreeSet<String>,
+    pub looked_up_metrics: BTreeSet<String>,
+    pub looked_up_attributes: BTreeSet<String>,
 }
 
 /// What a node remembers for one device.
@@ -553,13 +743,35 @@ pub fn parse(text: &str) -> Result<Compiled, String> {
             Kind::Hold { .. } if missing("reset") => return Err(format!("{}: say what resets it, or it holds for ever", n.id)),
             Kind::Latch if missing("reset") || missing("set") => return Err(format!("{}: wire both set and reset", n.id)),
             Kind::Alarm { .. } if missing("clear") => return Err(format!("{}: say what clears it, or it stays raised for ever", n.id)),
-            Kind::Alarm { severity, .. } if !["Info", "Warning", "Critical"].contains(&severity.as_str()) => {
-                return Err(format!("{}: severity is Info, Warning or Critical", n.id));
+            Kind::Alarm { severity, .. } if !["Info", "Warning", "Minor", "Major", "Critical"].contains(&severity.as_str()) => {
+                return Err(format!("{}: severity is Info, Warning, Minor, Major or Critical", n.id));
             }
             Kind::Range { min, max } if min > max => return Err(format!("{}: {min} is above {max}", n.id)),
             Kind::Count { of: 0, .. } => return Err(format!("{}: count at least one", n.id)),
             Kind::Command { operation, .. } if operation.is_empty() => return Err(format!("{}: say which operation", n.id)),
-            Kind::Switch { cases } if cases.is_empty() => return Err(format!("{}: give it some cases", n.id)),
+            Kind::Switch { cases, .. } if cases.is_empty() => return Err(format!("{}: give it some cases", n.id)),
+            Kind::Has { paths } if paths.is_empty() => return Err(format!("{}: say which parts", n.id)),
+            Kind::Geofence { polygon, circle, .. } => {
+                let (corners, round) = (polygon.len(), circle.is_some());
+                if (corners < 3 && !round) || (corners > 0 && round) {
+                    return Err(format!("{}: draw a polygon of three corners or more, or give a circle", n.id));
+                }
+                if circle.is_some_and(|c| c.radius_m <= 0.0) {
+                    return Err(format!("{}: a circle has a radius", n.id));
+                }
+            }
+            Kind::Schedule { from, to, days, .. } => {
+                if minutes_of(from).is_none() || minutes_of(to).is_none() {
+                    return Err(format!("{}: times of day are written 08:30", n.id));
+                }
+                if days.iter().any(|d| !(1..=7).contains(d)) {
+                    return Err(format!("{}: days go from 1, Monday, to 7", n.id));
+                }
+            }
+            Kind::Anomaly { window, sigma } if !(ANOMALY_MIN..=MAX_HELD).contains(window) || *sigma <= 0.0 => {
+                return Err(format!("{}: look back over {ANOMALY_MIN} to {MAX_HELD} readings, by more than zero deviations", n.id));
+            }
+            Kind::Reassign { to } if to.is_empty() => return Err(format!("{}: say whose it becomes", n.id)),
             _ => {}
         }
         let text = match &n.kind {
@@ -579,6 +791,49 @@ struct Run<'a> {
     state: &'a mut State,
     at: DateTime<Utc>,
     out: Output,
+    known: &'a Known,
+}
+
+pub fn minutes_of(text: &str) -> Option<i32> {
+    let (h, m) = text.split_once(':')?;
+    let (h, m): (i32, i32) = (h.parse().ok()?, m.parse().ok()?);
+    ((0..24).contains(&h) && (0..60).contains(&m)).then_some(h * 60 + m)
+}
+
+/// Whether a moment falls in a schedule. A schedule that runs over midnight belongs to the day it
+/// started on.
+fn scheduled(at: DateTime<Utc>, from: &str, to: &str, days: &[u8], offset_minutes: i32) -> bool {
+    use chrono::{Datelike, Timelike};
+    let local = at + TimeDelta::minutes(i64::from(offset_minutes));
+    let (Some(from), Some(to)) = (minutes_of(from), minutes_of(to)) else { return false };
+    let now = (local.hour() * 60 + local.minute()) as i32;
+    let today = local.weekday().number_from_monday() as u8;
+    let yesterday = local.weekday().pred().number_from_monday() as u8;
+    let on = |day: u8| days.is_empty() || days.contains(&day);
+    if from <= to { now >= from && now < to && on(today) } else { (now >= from && on(today)) || (now < to && on(yesterday)) }
+}
+
+/// Metres between two points on the earth, near enough for a yard or a city.
+fn metres(a: (f64, f64), b: (f64, f64)) -> f64 {
+    let (lat1, lat2) = (a.0.to_radians(), b.0.to_radians());
+    let (dlat, dlon) = ((b.0 - a.0).to_radians(), (b.1 - a.1).to_radians());
+    let h = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
+    2.0 * 6_371_000.0 * h.sqrt().asin()
+}
+
+/// Ray casting: a line from the point crosses the edge of what it is inside an odd number of times.
+fn in_polygon(point: (f64, f64), corners: &[[f64; 2]]) -> bool {
+    let (lat, lon) = point;
+    let mut inside = false;
+    let mut j = corners.len() - 1;
+    for i in 0..corners.len() {
+        let ([ai, oi], [aj, oj]) = (corners[i], corners[j]);
+        if (oi > lon) != (oj > lon) && lat < (aj - ai) * (lon - oi) / (oj - oi) + ai {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
 }
 
 impl Run<'_> {
@@ -633,7 +888,9 @@ impl Compiled {
         let at = run.at;
         let key = device.unwrap_or_default();
         match &node.kind {
-            Kind::Metric { .. } | Kind::State { .. } | Kind::Event { .. } | Kind::Attribute { .. } | Kind::Timer { .. } => out_of("out", value),
+            Kind::Input { .. } | Kind::Metric { .. } | Kind::State { .. } | Kind::Event { .. } | Kind::Attribute { .. } | Kind::Timer { .. } => {
+                out_of("out", value)
+            }
             Kind::Compare { op, value: right } => match compares(*op, &value, right) {
                 Some(true) => out_of("yes", value),
                 Some(false) => out_of("no", value),
@@ -708,9 +965,9 @@ impl Compiled {
                 m.held.clear();
                 out_of("out", json!(of))
             }
-            Kind::Window { over, stat } => {
+            Kind::Window { over, stat, across } => {
                 let Some(n) = number(&value) else { return vec![] };
-                let Some(m) = run.memory(id, key) else { return vec![] };
+                let Some(m) = run.memory(id, if *across { "" } else { key }) else { return vec![] };
                 let from = at - span(*over);
                 while m.held.front().is_some_and(|(t, _)| *t < from) || m.held.len() >= MAX_HELD {
                     m.held.pop_front();
@@ -760,8 +1017,11 @@ impl Compiled {
                 Some(v) => out_of("out", v.clone()),
                 None => vec![],
             },
-            Kind::Switch { cases } => {
-                let said = word(&value);
+            Kind::Switch { cases, on } => {
+                let said = match on {
+                    Some(path) => at_path(&value, path).map_or_else(String::new, word),
+                    None => word(&value),
+                };
                 out_of(if cases.contains(&said) { &said } else { "other" }, value)
             }
             Kind::Set { value: template } => match fill(template, &value, device) {
@@ -772,6 +1032,127 @@ impl Compiled {
                 }
             },
             Kind::Field { path } => at_path(&value, path).cloned().map_or(vec![], |v| out_of("out", v)),
+            Kind::Has { paths } => {
+                let all = paths.iter().all(|p| at_path(&value, p).is_some_and(|v| !v.is_null()));
+                out_of(if all { "yes" } else { "no" }, value)
+            }
+            Kind::Delta { per } => {
+                let Some(n) = number(&value) else { return vec![] };
+                let Some(m) = run.memory(id, key) else { return vec![] };
+                let before = m.last.as_ref().and_then(number);
+                let (then, now) = (m.since, at);
+                (m.last, m.since) = (Some(json!(n)), Some(at));
+                let Some(before) = before.filter(|b| n >= *b) else { return vec![] };
+                let moved = n - before;
+                let told = match (per, then) {
+                    (Some(per), Some(then)) => {
+                        let secs = (now - then).num_milliseconds() as f64 / 1000.0;
+                        if secs <= 0.0 {
+                            return vec![];
+                        }
+                        moved / secs * per.as_secs_f64()
+                    }
+                    _ => moved,
+                };
+                out_of("out", json!(told))
+            }
+            Kind::Geofence { lat, lon, polygon, circle } => {
+                let (Some(a), Some(o)) = (at_path(&value, lat).and_then(number), at_path(&value, lon).and_then(number)) else {
+                    run.out.problems.push(format!("{id}: there is no position in this"));
+                    return vec![];
+                };
+                let inside = match circle {
+                    Some(c) => metres((a, o), (c.lat, c.lon)) <= c.radius_m,
+                    None => in_polygon((a, o), polygon),
+                };
+                let Some(m) = run.memory(id, key) else { return vec![] };
+                let first = m.since.is_none();
+                let moved = !first && m.on != inside;
+                (m.on, m.since) = (inside, Some(at));
+                let mut leaving = out_of(if inside { "inside" } else { "outside" }, value.clone());
+                if moved {
+                    leaving.push((if inside { "entered" } else { "left" }.to_string(), value));
+                }
+                leaving
+            }
+            Kind::Dedupe { key: part, within } => {
+                let said = match part {
+                    Some(path) => at_path(&value, path).map_or_else(String::new, word),
+                    None => word(&value),
+                };
+                let Some(m) = run.memory(id, key) else { return vec![] };
+                while m.held.front().is_some_and(|(when, _)| at - *when >= span(*within)) {
+                    m.held.pop_front();
+                }
+                if m.held.iter().any(|(_, seen)| seen.as_str() == Some(said.as_str())) {
+                    return vec![];
+                }
+                if m.held.len() >= MAX_HELD {
+                    m.held.pop_front();
+                }
+                m.held.push_back((at, json!(said)));
+                out_of("out", value)
+            }
+            Kind::Split { path } => {
+                let list = match path {
+                    Some(p) => at_path(&value, p),
+                    None => Some(&value),
+                };
+                let Some(Value::Array(items)) = list else { return vec![] };
+                if items.len() > MAX_SPLIT {
+                    run.out.problems.push(format!("{id}: a list of {} is more than one message should become", items.len()));
+                }
+                items.iter().take(MAX_SPLIT).map(|v| ("out".to_string(), v.clone())).collect()
+            }
+            Kind::Keys { rename, drop, keep } => {
+                let Value::Object(from) = value else { return vec![] };
+                let mut to = Map::new();
+                for (k, v) in from {
+                    if drop.contains(&k) || (!keep.is_empty() && !keep.contains(&k)) {
+                        continue;
+                    }
+                    to.insert(rename.get(&k).cloned().unwrap_or(k), v);
+                }
+                out_of("out", Value::Object(to))
+            }
+            Kind::Enrich { metrics, attributes, device: fixed } => {
+                let who = fixed.as_deref().or(device).unwrap_or_default();
+                let mut row = match value {
+                    Value::Object(m) => m,
+                    other => Map::from_iter([("value".to_string(), other)]),
+                };
+                for name in metrics {
+                    if let Some(v) = run.known.metric(who, name) {
+                        row.insert(name.clone(), v.clone());
+                    }
+                }
+                for name in attributes {
+                    if let Some(v) = run.known.attribute(who, name) {
+                        row.insert(name.clone(), v.clone());
+                    }
+                }
+                out_of("out", Value::Object(row))
+            }
+            Kind::Schedule { from, to, days, offset_minutes } => out_of(if scheduled(at, from, to, days, *offset_minutes) { "yes" } else { "no" }, value),
+            Kind::Anomaly { window, sigma } => {
+                let Some(n) = number(&value) else { return vec![] };
+                let Some(m) = run.memory(id, key) else { return vec![] };
+                let seen: Vec<f64> = m.held.iter().filter_map(|(_, v)| number(v)).collect();
+                let odd = seen.len() >= ANOMALY_MIN && {
+                    let mean = seen.iter().sum::<f64>() / seen.len() as f64;
+                    let deviation = (seen.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / seen.len() as f64).sqrt();
+                    if deviation == 0.0 { n != mean } else { (n - mean).abs() > sigma * deviation }
+                };
+                // An odd reading is not added: one fault must not teach it that faults are normal.
+                if !odd {
+                    if m.held.len() >= *window {
+                        m.held.pop_front();
+                    }
+                    m.held.push_back((at, json!(n)));
+                }
+                out_of(if odd { "odd" } else { "normal" }, value)
+            }
+            Kind::Reassign { .. } => out_of("out", value),
             Kind::Alarm { name, severity, device: fixed } => {
                 let device = fixed.as_deref().or(device);
                 let Some(m) = run.memory(id, device.unwrap_or_default()) else { return vec![] };
@@ -821,6 +1202,29 @@ impl Compiled {
                 run.out.effects.push(Effect::Export { to: to.clone(), body: json!({"device": device, "value": value, "at": at}) });
                 vec![]
             }
+            Kind::Reply { id: path, with } => {
+                let Some(asked) = at_path(&value, path).map(word) else {
+                    run.out.problems.push(format!("{id}: there is no question here to answer"));
+                    return vec![];
+                };
+                match fill(with, &value, device) {
+                    Ok(answer) => run.out.effects.push(Effect::Reply { device: device.map(str::to_string), id: asked, value: answer }),
+                    Err(why) => run.out.problems.push(format!("{id}: {why}")),
+                }
+                vec![]
+            }
+            Kind::Output { name } => {
+                run.out.effects.push(Effect::Log { node: id.to_string(), device: device.map(str::to_string), text: format!("{name}: {}", word(&value)) });
+                vec![]
+            }
+            Kind::Log { text } => {
+                let said = match text {
+                    Some(t) => fill(&json!(t), &value, device).map_or_else(|why| why, |v| word(&v)),
+                    None => word(&value),
+                };
+                run.out.effects.push(Effect::Log { node: id.to_string(), device: device.map(str::to_string), text: said });
+                vec![]
+            }
             Kind::Command { operation, device: fixed, payload, every, expires } => {
                 let device = fixed.as_deref().or(device);
                 let Some(m) = run.memory(id, device.unwrap_or_default()) else { return vec![] };
@@ -867,6 +1271,16 @@ impl Compiled {
                 return;
             }
             let leaving = self.step(i, &input, device.as_deref(), value.clone(), run);
+            let device = match &self.nodes[i].kind {
+                Kind::Reassign { to } => match fill(&json!(to), &value, device.as_deref()) {
+                    Ok(v) => Some(word(&v)),
+                    Err(why) => {
+                        run.out.problems.push(format!("{}: {why}", self.nodes[i].id));
+                        continue;
+                    }
+                },
+                _ => device,
+            };
             self.send_on(i, device, value, leaving, &mut queue, run);
         }
     }
@@ -890,9 +1304,15 @@ impl Compiled {
 
     /// Takes in one thing a device did.
     pub fn input(&self, state: &mut State, input: &Input, at: DateTime<Utc>) -> Output {
-        let mut run = Run { state, at, out: Output::default() };
+        self.input_knowing(state, input, at, &Known::default())
+    }
+
+    /// The same, for a flow that looks things up.
+    pub fn input_knowing(&self, state: &mut State, input: &Input, at: DateTime<Utc>, known: &Known) -> Output {
+        let mut run = Run { state, at, out: Output::default(), known };
         let matched = |n: &Node| match &n.kind {
             Kind::Metric { device, metric } => input.metric.as_ref() == Some(metric) && device_matches(device, &input.device),
+            Kind::Input { name } => input.metric.as_ref() == Some(name),
             Kind::State { device } => input.state.is_some() && device_matches(device, &input.device),
             Kind::Event { device, name } => input.event.as_ref() == Some(name) && device_matches(device, &input.device),
             Kind::Attribute { device, key } => input.attribute.as_ref() == Some(key) && device_matches(device, &input.device),
@@ -907,7 +1327,11 @@ impl Compiled {
 
     /// Whatever the clock alone can cause: timers, holds that have lasted, silences and delays.
     pub fn tick(&self, state: &mut State, at: DateTime<Utc>) -> Output {
-        let mut run = Run { state, at, out: Output::default() };
+        self.tick_knowing(state, at, &Known::default())
+    }
+
+    pub fn tick_knowing(&self, state: &mut State, at: DateTime<Utc>, known: &Known) -> Output {
+        let mut run = Run { state, at, out: Output::default(), known };
         let mut queue = VecDeque::new();
         for (i, n) in self.nodes.iter().enumerate() {
             let id = n.id.as_str();
@@ -959,6 +1383,30 @@ impl Compiled {
         run.out
     }
 
+    pub fn wants(&self) -> Wants {
+        let mut w = Wants::default();
+        for n in &self.nodes {
+            match &n.kind {
+                Kind::Metric { metric, .. } => drop(w.metrics.insert(metric.clone())),
+                Kind::State { .. } => w.states = true,
+                Kind::Event { name, .. } => drop(w.events.insert(name.clone())),
+                Kind::Attribute { key, .. } => drop(w.attributes.insert(key.clone())),
+                Kind::Enrich { metrics, attributes, .. } => {
+                    w.looked_up_metrics.extend(metrics.iter().cloned());
+                    w.looked_up_attributes.extend(attributes.iter().cloned());
+                }
+                _ => {}
+            }
+        }
+        w
+    }
+
+    /// The first step that needs a gateway around it: there is no device to answer, and no queue to
+    /// export through, anywhere else.
+    pub fn needs_a_gateway(&self) -> Option<&str> {
+        self.nodes.iter().find(|n| matches!(n.kind, Kind::Reply { .. } | Kind::Export { .. })).map(|n| n.id.as_str())
+    }
+
     fn each_key(state: &mut State, node: &str, mut f: impl FnMut(&mut Memory) -> Leaving) -> Vec<(Option<String>, Leaving)> {
         let Some(keys) = state.nodes.get_mut(node) else { return vec![] };
         keys.values_mut()
@@ -998,12 +1446,14 @@ pub fn simulate(flow: &Compiled, script: &[Scripted], until: i64) -> Result<Vec<
     }
     let start = Utc::now();
     let mut state = State::default();
+    let mut known = Known::default();
     let mut moments = Vec::new();
     for second in 0..=last {
         let at = start + TimeDelta::seconds(second);
-        let mut merged = flow.tick(&mut state, at);
+        let mut merged = flow.tick_knowing(&mut state, at, &known);
         for line in script.iter().filter(|s| s.at == second) {
-            let more = flow.input(&mut state, &line.input, at);
+            known.note(&line.input);
+            let more = flow.input_knowing(&mut state, &line.input, at, &known);
             merged.effects.extend(more.effects);
             merged.trace.extend(more.trace);
             merged.problems.extend(more.problems);
@@ -1315,6 +1765,266 @@ mod tests {
         }
         assert_eq!(refused, 10, "a device that makes up names costs this much");
         assert_eq!(s.nodes["w"].len(), MAX_KEYS);
+    }
+
+    /// A flow of one step between a source and something to see what comes out, by port.
+    fn through(node: Value, ports: &[&str]) -> Compiled {
+        let mut n = node.as_object().cloned().unwrap();
+        n.insert("id".into(), json!("step"));
+        let mut nodes = vec![json!({"id": "in", "kind": "metric", "metric": "m"}), Value::Object(n)];
+        let mut edges = vec![json!({"from": "in", "to": "step"})];
+        for port in ports {
+            nodes.push(json!({"id": format!("to-{port}"), "kind": "record_event", "name": port}));
+            edges.push(json!({"from": "step", "port": port, "to": format!("to-{port}")}));
+        }
+        flow(json!({"nodes": nodes, "edges": edges}))
+    }
+
+    /// What a value becomes: which ports it left by, and with what.
+    fn run_through(f: &Compiled, state: &mut State, device: &str, value: Value, at_secs: i64) -> Vec<(String, Value)> {
+        let o = f.input(state, &Input { device: device.into(), metric: Some("m".into()), value, ..Default::default() }, at(at_secs));
+        events_of(&o)
+    }
+
+    fn events_of(o: &Output) -> Vec<(String, Value)> {
+        o.effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Event { name, value, .. } => Some((name.clone(), value.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_value_can_be_asked_what_it_has() {
+        let f = through(json!({"kind": "has", "paths": ["$.a", "$.b.c"]}), &["yes", "no"]);
+        let mut s = State::default();
+        assert_eq!(run_through(&f, &mut s, "A", json!({"a": 1, "b": {"c": 2}}), 0)[0].0, "yes");
+        assert_eq!(run_through(&f, &mut s, "A", json!({"a": 1}), 1)[0].0, "no");
+        assert_eq!(run_through(&f, &mut s, "A", json!({"a": 1, "b": {"c": null}}), 2)[0].0, "no", "nothing is not something");
+    }
+
+    #[test]
+    fn a_counter_says_how_far_it_went() {
+        let f = through(json!({"kind": "delta"}), &["out"]);
+        let mut s = State::default();
+        assert!(run_through(&f, &mut s, "A", json!(100), 0).is_empty(), "the first says nothing");
+        assert_eq!(run_through(&f, &mut s, "A", json!(130), 10)[0].1, json!(30.0));
+        assert!(run_through(&f, &mut s, "A", json!(5), 20).is_empty(), "it was reset, which is not minus 125");
+        assert_eq!(run_through(&f, &mut s, "A", json!(15), 30)[0].1, json!(10.0), "and it carries on from there");
+        assert_eq!(run_through(&f, &mut s, "B", json!(1), 30), vec![], "each device its own");
+    }
+
+    #[test]
+    fn a_counter_can_be_a_rate() {
+        let f = through(json!({"kind": "delta", "per": "1m"}), &["out"]);
+        let mut s = State::default();
+        run_through(&f, &mut s, "A", json!(0), 0);
+        assert_eq!(run_through(&f, &mut s, "A", json!(5), 30)[0].1, json!(10.0), "five in half a minute is ten a minute");
+    }
+
+    #[test]
+    fn a_place_can_be_a_polygon_or_a_circle() {
+        let square = through(json!({"kind": "geofence", "polygon": [[0, 0], [0, 10], [10, 10], [10, 0]]}), &["inside", "outside", "entered", "left"]);
+        let mut s = State::default();
+        let here = |lat: f64, lon: f64| json!({"lat": lat, "lon": lon});
+        let ports = |out: Vec<(String, Value)>| out.into_iter().map(|(p, _)| p).collect::<Vec<_>>();
+        assert_eq!(ports(run_through(&square, &mut s, "A", here(5.0, 5.0), 0)), ["inside"], "the first position is not an arrival");
+        assert_eq!(ports(run_through(&square, &mut s, "A", here(6.0, 6.0), 1)), ["inside"]);
+        assert_eq!(ports(run_through(&square, &mut s, "A", here(20.0, 5.0), 2)), ["outside", "left"]);
+        assert_eq!(ports(run_through(&square, &mut s, "A", here(5.0, 20.0), 3)), ["outside"]);
+        assert_eq!(ports(run_through(&square, &mut s, "A", here(1.0, 1.0), 4)), ["inside", "entered"]);
+        let circle = through(json!({"kind": "geofence", "circle": {"lat": 51.5, "lon": -0.12, "radius_m": 1000}}), &["inside", "outside"]);
+        let mut s = State::default();
+        assert_eq!(ports(run_through(&circle, &mut s, "A", here(51.505, -0.12), 0)), ["inside"], "about 550 metres");
+        assert_eq!(ports(run_through(&circle, &mut s, "A", here(51.52, -0.12), 1)), ["outside"], "about 2.2 km");
+    }
+
+    #[test]
+    fn a_position_that_is_not_one_is_said_to_be_wrong() {
+        let f = through(json!({"kind": "geofence", "circle": {"lat": 0, "lon": 0, "radius_m": 10}}), &["inside"]);
+        let mut s = State::default();
+        let o = f.input(&mut s, &Input { device: "A".into(), metric: Some("m".into()), value: json!(7), ..Default::default() }, at(0));
+        assert_eq!(o.problems.len(), 1);
+    }
+
+    #[test]
+    fn the_same_thing_twice_counts_once_for_a_while() {
+        let f = through(json!({"kind": "dedupe", "key": "$.id", "within": "1m"}), &["out"]);
+        let mut s = State::default();
+        assert_eq!(run_through(&f, &mut s, "A", json!({"id": 1, "n": "first"}), 0).len(), 1);
+        assert!(run_through(&f, &mut s, "A", json!({"id": 1, "n": "again"}), 30).is_empty());
+        assert_eq!(run_through(&f, &mut s, "A", json!({"id": 2}), 31).len(), 1, "another is another");
+        assert_eq!(run_through(&f, &mut s, "A", json!({"id": 1}), 61).len(), 1, "and after a minute it is news again");
+    }
+
+    #[test]
+    fn a_list_becomes_a_message_each() {
+        let f = through(json!({"kind": "split", "path": "$.items"}), &["out"]);
+        let mut s = State::default();
+        let out = run_through(&f, &mut s, "A", json!({"items": [1, 2, 3]}), 0);
+        assert_eq!(out.iter().map(|o| o.1.clone()).collect::<Vec<_>>(), [json!(1), json!(2), json!(3)]);
+        assert!(run_through(&f, &mut s, "A", json!({"items": 5}), 1).is_empty());
+    }
+
+    #[test]
+    fn parts_can_be_renamed_and_left_out() {
+        let f = through(json!({"kind": "keys", "rename": {"t": "temperature"}, "drop": ["secret"]}), &["out"]);
+        let mut s = State::default();
+        assert_eq!(run_through(&f, &mut s, "A", json!({"t": 1, "h": 2, "secret": 3}), 0)[0].1, json!({"temperature": 1, "h": 2}));
+        let f = through(json!({"kind": "keys", "keep": ["a"]}), &["out"]);
+        assert_eq!(run_through(&f, &mut s, "A", json!({"a": 1, "b": 2}), 0)[0].1, json!({"a": 1}));
+    }
+
+    #[test]
+    fn a_flow_can_look_up_what_is_known() {
+        let f = through(json!({"kind": "enrich", "metrics": ["humidity"], "attributes": ["firmware", "never"]}), &["out"]);
+        let mut known = Known::default();
+        known.note(&Input { device: "A".into(), metric: Some("humidity".into()), value: json!(40), ..Default::default() });
+        known.note(&Input { device: "A".into(), attribute: Some("firmware".into()), value: json!("1.2"), ..Default::default() });
+        known.note(&Input { device: "B".into(), metric: Some("humidity".into()), value: json!(99), ..Default::default() });
+        let mut s = State::default();
+        let o = f.input_knowing(&mut s, &Input { device: "A".into(), metric: Some("m".into()), value: json!(21), ..Default::default() }, at(0), &known);
+        assert_eq!(events_of(&o)[0].1, json!({"value": 21, "humidity": 40, "firmware": "1.2"}), "and its own, not another's");
+    }
+
+    #[test]
+    fn a_schedule_knows_what_day_it_is() {
+        // 2026-11-02 is a Monday, and these are UTC.
+        let monday = |h: u32, m: u32| chrono::NaiveDate::from_ymd_opt(2026, 11, 2).unwrap().and_hms_opt(h, m, 0).unwrap().and_utc();
+        assert!(scheduled(monday(9, 0), "08:00", "18:00", &[1, 2, 3, 4, 5], 0));
+        assert!(!scheduled(monday(9, 0), "08:00", "18:00", &[6, 7], 0), "not at the weekend");
+        assert!(!scheduled(monday(18, 0), "08:00", "18:00", &[], 0), "until means until");
+        assert!(scheduled(monday(23, 0), "22:00", "06:00", &[], 0), "over midnight");
+        assert!(scheduled(monday(5, 0), "22:00", "06:00", &[7], 0), "and that belongs to Sunday");
+        assert!(!scheduled(monday(5, 0), "22:00", "06:00", &[1], 0), "not Monday");
+        assert!(scheduled(monday(4, 0), "09:00", "18:00", &[], 330), "at 09:30 in India");
+    }
+
+    #[test]
+    fn something_unlike_the_rest_stands_out() {
+        let f = through(json!({"kind": "anomaly", "window": 50, "sigma": 3}), &["normal", "odd"]);
+        let mut s = State::default();
+        for i in 0..30 {
+            let v = 20.0 + f64::from(i % 3);
+            assert_eq!(run_through(&f, &mut s, "A", json!(v), i64::from(i))[0].0, "normal", "reading {i}");
+        }
+        assert_eq!(run_through(&f, &mut s, "A", json!(21.5), 30)[0].0, "normal");
+        assert_eq!(run_through(&f, &mut s, "A", json!(90), 31)[0].0, "odd");
+        assert_eq!(run_through(&f, &mut s, "A", json!(91), 32)[0].0, "odd", "and one fault does not teach it that faults are normal");
+        assert_eq!(run_through(&f, &mut s, "B", json!(90), 33)[0].0, "normal", "another device has its own idea of normal");
+    }
+
+    #[test]
+    fn a_steady_reading_has_no_room_for_doubt() {
+        let f = through(json!({"kind": "anomaly"}), &["normal", "odd"]);
+        let mut s = State::default();
+        for i in 0..12 {
+            run_through(&f, &mut s, "A", json!(5), i);
+        }
+        assert_eq!(run_through(&f, &mut s, "A", json!(5.01), 20)[0].0, "odd");
+    }
+
+    #[test]
+    fn a_message_can_become_another_devices() {
+        let f = flow(json!({
+            "nodes": [
+                {"id": "in", "kind": "metric", "metric": "m"},
+                {"id": "line", "kind": "reassign", "to": "LINE-{device}"},
+                {"id": "total", "kind": "record_metric", "name": "seen"},
+            ],
+            "edges": [{"from": "in", "to": "line"}, {"from": "line", "to": "total"}],
+        }));
+        let o = f.input(&mut State::default(), &Input { device: "4".into(), metric: Some("m".into()), value: json!(7), ..Default::default() }, at(0));
+        assert_eq!(o.effects, vec![Effect::Metric { device: Some("LINE-4".into()), name: "seen".into(), value: 7.0, unit: None }]);
+    }
+
+    #[test]
+    fn a_flow_says_what_it_needs() {
+        let f = flow(json!({
+            "nodes": [
+                {"id": "a", "kind": "metric", "device": "PRESS-*", "metric": "temp"},
+                {"id": "b", "kind": "event", "name": "door"},
+                {"id": "c", "kind": "state"},
+                {"id": "d", "kind": "attribute", "key": "firmware"},
+                {"id": "e", "kind": "enrich", "metrics": ["humidity"], "attributes": ["site"]},
+                {"id": "f", "kind": "log"},
+            ],
+            "edges": [{"from": "a", "to": "e"}, {"from": "b", "to": "e"}, {"from": "c", "to": "e"}, {"from": "d", "to": "e"}, {"from": "e", "to": "f"}],
+        }));
+        let w = f.wants();
+        assert!(w.states && w.metrics.contains("temp") && w.events.contains("door") && w.attributes.contains("firmware"));
+        assert!(w.looked_up_metrics.contains("humidity") && w.looked_up_attributes.contains("site"));
+        assert_eq!(f.needs_a_gateway(), None);
+        let f = through(json!({"kind": "reply"}), &[]);
+        assert_eq!(f.needs_a_gateway(), Some("step"));
+    }
+
+    #[test]
+    fn a_device_asking_something_can_be_answered() {
+        let f = flow(json!({
+            "nodes": [
+                {"id": "asked", "kind": "event", "name": "rpc.request"},
+                {"id": "which", "kind": "switch", "on": "$.method", "cases": ["time"]},
+                {"id": "answer", "kind": "reply", "with": {"said": "{value.params.a}"}},
+            ],
+            "edges": [{"from": "asked", "to": "which"}, {"from": "which", "port": "time", "to": "answer"}],
+        }));
+        let mut s = State::default();
+        let asked = |method: &str| Input {
+            device: "A".into(),
+            event: Some("rpc.request".into()),
+            value: json!({"id": "7", "method": method, "params": {"a": 1}}),
+            ..Default::default()
+        };
+        let o = f.input(&mut s, &asked("time"), at(0));
+        assert_eq!(o.effects, vec![Effect::Reply { device: Some("A".into()), id: "7".into(), value: json!({"said": 1}) }]);
+        assert!(f.input(&mut s, &asked("other"), at(1)).effects.is_empty(), "only what it was told to answer");
+    }
+
+    #[test]
+    fn across_devices_a_window_takes_them_all() {
+        let f = through(json!({"kind": "window", "over": "1m", "stat": "sum", "across": true}), &["out"]);
+        let mut s = State::default();
+        run_through(&f, &mut s, "A", json!(1), 0);
+        assert_eq!(run_through(&f, &mut s, "B", json!(2), 1)[0].1, json!(3.0));
+    }
+
+    #[test]
+    fn what_cannot_work_is_refused_before_it_runs() {
+        let bad = [
+            (json!({"kind": "geofence"}), "polygon"),
+            (json!({"kind": "geofence", "polygon": [[0, 0], [1, 1]]}), "polygon"),
+            (json!({"kind": "geofence", "circle": {"lat": 0, "lon": 0, "radius_m": 0}}), "radius"),
+            (json!({"kind": "schedule", "from": "8am", "to": "18:00"}), "08:30"),
+            (json!({"kind": "schedule", "from": "08:00", "to": "25:00"}), "08:30"),
+            (json!({"kind": "schedule", "from": "08:00", "to": "18:00", "days": [8]}), "Monday"),
+            (json!({"kind": "anomaly", "window": 2}), "readings"),
+            (json!({"kind": "anomaly", "sigma": 0}), "deviations"),
+            (json!({"kind": "has", "paths": []}), "which parts"),
+            (json!({"kind": "reassign", "to": ""}), "whose"),
+        ];
+        for (mut node, why) in bad {
+            node["id"] = json!("step");
+            let body = json!({"nodes": [{"id": "in", "kind": "metric", "metric": "m"}, node, {"id": "out", "kind": "log"}], "edges": [{"from": "in", "to": "step"}, {"from": "step", "port": "yes", "to": "out"}]});
+            let said = parse(&body.to_string()).err().unwrap_or_default();
+            let port = body["nodes"][1]["kind"].as_str().unwrap();
+            let again = if said.is_empty() || said.contains("no way out") {
+                let port = match port {
+                    "geofence" => "inside",
+                    "anomaly" => "odd",
+                    "reassign" | "schedule" | "has" => "out",
+                    _ => "out",
+                };
+                let mut b = body.clone();
+                b["edges"][1]["port"] = json!(port);
+                parse(&b.to_string()).err().unwrap_or_default()
+            } else {
+                said
+            };
+            assert!(again.contains(why), "{node}: {again}");
+        }
     }
 
     #[test]

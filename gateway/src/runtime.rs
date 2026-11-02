@@ -14,7 +14,7 @@ use crate::link::{Link, LinkError};
 use crate::peer::Peer;
 use crate::update::{self, Pending};
 use chrono::{DateTime, Utc};
-use ferrum_edge_contract::edge::{AlarmChange, Comparison, ConfigRequest, ConfigResponse, EdgeConfig, Export, FlowSpec, Release, Rule, Watch};
+use ferrum_edge_contract::edge::{AlarmChange, Comparison, ConfigRequest, ConfigResponse, EdgeConfig, Export, FlowSpec, FlowTrace, Release, Rule, Watch};
 use ferrum_edge_contract::flow::{self, Effect};
 use ferrum_ops_contract::command::Report;
 use ferrum_ops_contract::schedule::{self, Held, Resource, Task};
@@ -22,7 +22,7 @@ use ferrum_ops_contract::sync::{Fact, Health, SiteDevice};
 use ferrum_ops_contract::telemetry::{Class, Limits, Measurement};
 use ferrum_ops_contract::{Lifecycle, State, Step, SyncRequest, SyncResponse, VERSION};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -94,7 +94,13 @@ struct RunningFlow {
     revision: i64,
     compiled: flow::Compiled,
     state: flow::State,
+    /// Someone is watching it.
+    debug: bool,
 }
+
+/// What is held for the platform of what passed through watched flows. Past this the oldest goes: a
+/// trace is for a person watching, and is not worth slowing anything for.
+const MAX_TRACES: usize = 1_000;
 
 /// How often what flows remember is written down. A crash loses this much of a window or a hold.
 const FLOW_SAVE_MS: i64 = 15_000;
@@ -119,9 +125,14 @@ pub struct Runtime {
     last_state: Mutex<HashMap<String, String>>,
     last_attribute: Mutex<HashMap<(Uuid, String), Value>>,
     defined: Arc<Defined>,
+    /// What flows can look up, kept up as readings pass.
+    known: Mutex<flow::Known>,
+    /// This gateway's device record, once the platform has said.
+    gateway: Mutex<Option<Uuid>>,
     rules: Mutex<Rules>,
     flows: Mutex<Vec<RunningFlow>>,
     flows_saved: AtomicI64,
+    traces: Mutex<VecDeque<FlowTrace>>,
     /// Why what this gateway was given could not all start.
     problems: Mutex<Vec<String>>,
     /// Signed calls go one at a time: each must carry a later time than the last that arrived.
@@ -171,8 +182,14 @@ impl Runtime {
             }
             adapters.push((format!("peer {}", p.name), adapter));
         }
-        let limits =
-            OpenLimits { drivers_dir: cfg.drivers_dir.clone(), allow: cfg.allow.clone(), listen: cfg.listen.clone(), tls_dir: Some(cfg.state_dir.join("tls")) };
+        let limits = OpenLimits {
+            drivers_dir: cfg.drivers_dir.clone(),
+            allow: cfg.allow.clone(),
+            listen: cfg.listen.clone(),
+            tls_dir: Some(cfg.state_dir.join("tls")),
+            firmware_dir: Some(cfg.state_dir.join("firmware")),
+            files_dir: cfg.files_dir.clone(),
+        };
         let exporting = OpenLimits { allow: cfg.allow.clone(), tls_dir: Some(cfg.state_dir.join("tls")), ..OpenLimits::default() };
         let defined = Arc::new(Defined::new(limits, json!(cfg.secrets)));
         adapters.push(("definitions".to_string(), defined.clone()));
@@ -195,9 +212,12 @@ impl Runtime {
             last_state: Mutex::default(),
             last_attribute: Mutex::default(),
             defined,
+            known: Mutex::default(),
+            gateway: Mutex::new(None),
             rules: Mutex::default(),
             flows: Mutex::default(),
             flows_saved: AtomicI64::new(0),
+            traces: Mutex::default(),
             problems: Mutex::default(),
             signing: tokio::sync::Mutex::new(()),
             exports: Mutex::default(),
@@ -242,6 +262,8 @@ impl Runtime {
             }
         }
         let mut problems = self.defined.apply(&definitions, &devices);
+        self.defined.allow_joining(&managed.provisioning);
+        *self.gateway.lock().unwrap_or_else(|e| e.into_inner()) = managed.gateway;
         problems.extend(self.start_flows(managed.flows));
         for p in &problems {
             tracing::warn!("{p}");
@@ -260,13 +282,15 @@ impl Runtime {
         let mut problems = Vec::new();
         for spec in specs {
             if let Some(i) = was.iter().position(|f| f.id == spec.id && f.revision == spec.revision) {
-                running.push(was.swap_remove(i));
+                let mut same = was.swap_remove(i);
+                same.debug = spec.debug;
+                running.push(same);
                 continue;
             }
             match flow::parse(&spec.body) {
                 Ok(compiled) => {
                     let state = saved.get(&format!("{}:{}", spec.id, spec.revision)).cloned().unwrap_or_default();
-                    running.push(RunningFlow { id: spec.id, name: spec.name, revision: spec.revision, compiled, state });
+                    running.push(RunningFlow { id: spec.id, name: spec.name, revision: spec.revision, compiled, state, debug: spec.debug });
                 }
                 Err(why) => problems.push(format!("flow {}: {why}", spec.name)),
             }
@@ -277,9 +301,12 @@ impl Runtime {
     /// Passes something a device did to every flow, and does what they make of it.
     fn feed(&self, input: &flow::Input, devices: &HashMap<String, SiteDevice>, batch: &mut Vec<Measurement>) {
         let now = self.clock.now();
+        let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
+        known.note(input);
         let mut running = self.flows.lock().unwrap_or_else(|e| e.into_inner());
         for f in running.iter_mut() {
-            let output = f.compiled.input(&mut f.state, input, now);
+            let output = f.compiled.input_knowing(&mut f.state, input, now, &known);
+            self.watched(f, &output, now);
             self.act(f.id, &f.name, output, devices, batch);
         }
     }
@@ -287,9 +314,11 @@ impl Runtime {
     /// What the clock alone causes in flows, and now and then writing down where they stand.
     fn tick_flows(&self, devices: &HashMap<String, SiteDevice>, batch: &mut Vec<Measurement>) {
         let now = self.clock.now();
+        let known = self.known.lock().unwrap_or_else(|e| e.into_inner());
         let mut running = self.flows.lock().unwrap_or_else(|e| e.into_inner());
         for f in running.iter_mut() {
-            let output = f.compiled.tick(&mut f.state, now);
+            let output = f.compiled.tick_knowing(&mut f.state, now, &known);
+            self.watched(f, &output, now);
             self.act(f.id, &f.name, output, devices, batch);
         }
         let now_ms = self.clock.now_ms();
@@ -298,6 +327,16 @@ impl Runtime {
             let states: HashMap<String, &flow::State> = running.iter().map(|f| (format!("{}:{}", f.id, f.revision), &f.state)).collect();
             let _ = self.journal.set("flow_state", &json!(states).to_string());
         }
+    }
+
+    fn watched(&self, f: &RunningFlow, output: &flow::Output, at: DateTime<Utc>) {
+        if !f.debug || output.trace.is_empty() {
+            return;
+        }
+        let mut traces = self.traces.lock().unwrap_or_else(|e| e.into_inner());
+        traces.extend(output.trace.iter().cloned().map(|step| FlowTrace::new(f.id, at, step)));
+        let over = traces.len().saturating_sub(MAX_TRACES);
+        traces.drain(..over);
     }
 
     /// Does what a flow decided. Everything here is recorded before it counts, and nothing here
@@ -356,6 +395,12 @@ impl Runtime {
                         self.export_shed.fetch_add(shed, Ordering::Relaxed);
                     }
                 }
+                Effect::Reply { device, id: asked, value } => {
+                    if let Some(code) = device {
+                        self.defined.reply(&code, &asked, &value);
+                    }
+                }
+                Effect::Log { node, device, text } => tracing::info!(flow = %name, node = %node, device = device.as_deref().unwrap_or("-"), "{text}"),
                 Effect::Command { node, device, operation, payload, expires_secs } => {
                     let Some(d) = known(&device) else {
                         tracing::warn!(flow = %name, "{node} has no device to ask {operation} of");
@@ -523,6 +568,7 @@ impl Runtime {
             problems: self.problems.lock().unwrap_or_else(|e| e.into_inner()).clone(),
             links: json!(self.defined.links()),
             runtime: env!("CARGO_PKG_VERSION").to_string(),
+            traces: self.traces.lock().unwrap_or_else(|e| e.into_inner()).drain(..).collect(),
         };
         let answer = {
             let _turn = self.signing.lock().await;
@@ -1030,6 +1076,11 @@ impl Runtime {
                     let _ = self.journal.add_fact(&fact);
                     self.feed(&flow::Input { device, attribute: Some(key), value, ..Default::default() }, devices, batch);
                 }
+            }
+            Reading::Joined { device, definition, token_hash } => {
+                let gateway = *self.gateway.lock().unwrap_or_else(|e| e.into_inner());
+                let body = json!({"code": device, "definition": definition, "token_hash": token_hash, "gateway": gateway});
+                let _ = self.journal.add_fact(&Fact { fact_id: Uuid::now_v7(), kind: "edge.joined".into(), at_source: self.clock.now(), actor: None, body });
             }
             Reading::Event { device, name, value } => {
                 let Some(d) = devices.get(&device) else { return };
