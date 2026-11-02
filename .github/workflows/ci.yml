@@ -1,9 +1,17 @@
 name: ci
 
+# Forward compatibility: this keeps working with Ferrum's main and the frontend's. Called with
+# `frozen`, it is release qualification instead: the exact lockfile and frontend a release is built
+# from, with nothing moved. Each answers a different question, and neither stands in for the other.
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+    inputs:
+      frozen:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -89,12 +97,13 @@ jobs:
             timeout 120 bash -c "until (exec 3<>/dev/tcp/localhost/$port) 2>/dev/null; do sleep 1; done"
           done
       # The lock says what a gateway is built from. This has to keep working with Ferrum's main.
-      - run: cargo update -p ferrum-kernel
+      - if: ${{ !inputs.frozen }}
+        run: cargo update -p ferrum-kernel
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets ${{ inputs.frozen && '--locked' || '' }} -- -D warnings
+      - run: cargo test --workspace ${{ inputs.frozen && '--locked' || '' }}
       # The gateway killed at each named point. Failpoints never reach a release build.
-      - run: cargo test -p ferrum-site --features failpoints --test recovery_it
+      - run: cargo test -p ferrum-site --features failpoints --test recovery_it ${{ inputs.frozen && '--locked' || '' }}
 
   audit:
     runs-on: ubuntu-latest
@@ -111,10 +120,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - id: frontend
+        run: echo "rev=${{ inputs.frozen && '$(cat frontend.rev)' || '' }}" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
           repository: CBFerrum/Ferrum-Frontend
           path: frontend
+          ref: ${{ steps.frontend.outputs.rev }}
       - run: mkdir -p ../ferrum && mv frontend ../ferrum/web
       - uses: actions/setup-node@v4
         with:
