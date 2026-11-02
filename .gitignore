@@ -1,0 +1,8 @@
+/target
+.cargo/config.toml
+.DS_Store
+*.log
+ui/node_modules
+proptest-regressions
+# What the OPC UA tests and a gateway's first run make beside themselves.
+gateway/pki

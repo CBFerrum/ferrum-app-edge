@@ -1,4 +1,4 @@
 {
-  "extends": "../../../web/packages/build/tsconfig.app.json",
+  "extends": "../../ferrum/web/packages/build/tsconfig.app.json",
   "include": ["src"]
 }

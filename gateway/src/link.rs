@@ -3,7 +3,7 @@
 
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signer, SigningKey};
-use ferrum_ops_contract::edge::{ConfigRequest, ConfigResponse};
+use ferrum_edge_contract::edge::{ConfigRequest, ConfigResponse};
 use ferrum_ops_contract::sign::{Enroll, Enrolled, HEADER_KEY, HEADER_SIGNATURE, HEADER_TIME, message};
 use ferrum_ops_contract::{SyncRequest, SyncResponse};
 use serde::Serialize;

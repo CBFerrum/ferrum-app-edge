@@ -7,7 +7,7 @@
 
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use ferrum_ops_contract::edge::{Release, newer};
+use ferrum_edge_contract::edge::{Release, newer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};

@@ -4,8 +4,8 @@
 //! worth more than a stand-in (`docs/compatibility.md`). No vendor's device was involved.
 
 use chrono::{Duration, Utc};
+use ferrum_edge_contract::edge::DeviceLink;
 use ferrum_ops_contract::Command;
-use ferrum_ops_contract::edge::DeviceLink;
 use ferrum_ops_contract::sync::SiteDevice;
 use ferrum_site::adapter::{Adapter, Dispatched, Failure, Observation, Reading};
 use ferrum_site::adapters::defined::Defined;
@@ -392,7 +392,7 @@ commands:
         }
     });
     tokio::time::sleep(Wait::from_millis(300)).await;
-    let payload = ferrum_ops_contract::sparkplug::encode(&json!({"metrics": [{"name": "Motor/Speed rpm", "value": 1500.5}]})).unwrap();
+    let payload = ferrum_edge_contract::sparkplug::encode(&json!({"metrics": [{"name": "Motor/Speed rpm", "value": 1500.5}]})).unwrap();
     node.publish("spBv1.0/plant/DDATA/n1/M1", QoS::AtLeastOnce, false, payload).await.unwrap();
     node.publish("bot/BOT-1/state", QoS::AtLeastOnce, false, json!({"battery": 64}).to_string()).await.unwrap();
     seen.reading(&d, |r| of(r, "M1") && metric(r, "Motor/Speed_rpm", 1500.5)).await;
@@ -400,7 +400,7 @@ commands:
 
     d.dispatch(&command("machine.set", json!({"value": 12.5})), &device("M1")).await.expect("sent");
     let raw = tokio::time::timeout(Wait::from_secs(5), cmd.recv()).await.unwrap().unwrap();
-    let said = ferrum_ops_contract::sparkplug::decode(&raw).unwrap();
+    let said = ferrum_edge_contract::sparkplug::decode(&raw).unwrap();
     assert_eq!(said["metrics"][0]["name"], "Setpoint");
     assert_eq!(said["metrics"][0]["value"], 12.5);
     assert!(said["timestamp"].as_u64().is_some_and(|t| t > 1_700_000_000_000), "the specification wants one: {said}");

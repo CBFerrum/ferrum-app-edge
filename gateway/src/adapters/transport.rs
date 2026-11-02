@@ -8,7 +8,7 @@
 
 use crate::adapter::Failure;
 use async_trait::async_trait;
-use ferrum_ops_contract::driver::{Frame, MAX_FRAME, Tls};
+use ferrum_edge_contract::driver::{Frame, MAX_FRAME, Tls};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

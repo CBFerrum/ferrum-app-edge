@@ -62,10 +62,10 @@ pub fn all() -> Vec<Template> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ferrum_ops::contract::driver::{Decoded, Ending, parse};
+    use ferrum_edge_contract::driver::{Decoded, Ending, parse};
     use serde_json::json;
 
-    fn template(name: &str) -> ferrum_ops::contract::driver::Compiled {
+    fn template(name: &str) -> ferrum_edge_contract::driver::Compiled {
         let t = all().into_iter().find(|t| t.name == name).unwrap_or_else(|| panic!("no {name}"));
         parse(t.body).unwrap_or_else(|e| panic!("{name}: {e}"))
     }

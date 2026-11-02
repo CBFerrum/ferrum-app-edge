@@ -18,7 +18,7 @@ commands:
     status: {match: '^(?P<r>OK|ERR)', group: r, done: OK, failed: ERR}
 ```
 
-The interface offers twenty templates to start from, in `crates/edge/templates`. A template is a
+The interface offers twenty templates to start from, in `templates`. A template is a
 start and not a promise: none has been tried on the equipment it names ([compatibility](compatibility.md)).
 
 ## Connecting

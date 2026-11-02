@@ -4,10 +4,10 @@
 
 use chrono::{Duration, Utc};
 use ed25519_dalek::{Signer, SigningKey};
+use ferrum_edge_contract::edge::{AlarmChange, ConfigRequest, ConfigResponse, EdgeConfig};
 use ferrum_kernel::tenant::NewTenant;
 use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, SiteRequest, SiteResponse};
 use ferrum_meta::Catalog;
-use ferrum_ops::contract::edge::{AlarmChange, ConfigRequest, ConfigResponse, EdgeConfig};
 use ferrum_ops::contract::sign::{Enroll, Enrolled, HEADER_KEY, HEADER_SIGNATURE, HEADER_TIME, message};
 use ferrum_ops::contract::{Fact, Lifecycle};
 use ferrum_ops::devices;
@@ -37,13 +37,13 @@ async fn boot() -> Arc<Kernel> {
     sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
     let mut packages = ferrum_domain::packages().expect("packages");
     packages.extend(ferrum_ops::packages().expect("ops"));
-    packages.extend(ferrum_edge::packages().expect("edge"));
+    packages.extend(ferrum_app_edge::packages().expect("edge"));
     let catalog = Catalog::from_packages(packages).expect("catalog");
     assert_eq!(catalog.links_out_of_reach("edge"), Vec::<String>::new(), "whoever fills in a link can look up what it points at");
     let mut hooks = HookRegistry::default();
     ferrum_domain::register(&mut hooks);
     ferrum_ops::register(&mut hooks);
-    ferrum_edge::register(&mut hooks);
+    ferrum_app_edge::register(&mut hooks);
     Kernel::boot(db, catalog, hooks, KernelSettings::default(), None).await.expect("boot")
 }
 
@@ -406,7 +406,7 @@ async fn scenario() {
     k.run_action(&reviewer, "EdgeFlow", draft, "activate", json!({})).await.expect("running");
     let flows = gateway1.fetch(&t, "").await.unwrap().flows;
     assert_eq!((flows.len(), flows[0].revision), (1, 1), "{flows:?}");
-    assert!(ferrum_ops::contract::flow::parse(&flows[0].body).is_ok(), "a gateway gets what passed");
+    assert!(ferrum_edge_contract::flow::parse(&flows[0].body).is_ok(), "a gateway gets what passed");
 
     // Changing it leaves what runs alone until the new one has been through the same.
     k.run_action(&engineer, "EdgeFlow", draft, "revise", json!({})).await.expect("a new draft");

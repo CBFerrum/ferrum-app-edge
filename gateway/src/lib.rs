@@ -1,4 +1,4 @@
-//! The site runtime (docs/plan/industrial.md): one binary, next to the equipment, that keeps work
+//! The site runtime (Ferrum docs/plan/industrial.md): one binary, next to the equipment, that keeps work
 //! going when the link to the platform is down, inside what was authorized before it went.
 //!
 //! It coordinates. Motion, machine sequencing and safety functions stay with their controllers,

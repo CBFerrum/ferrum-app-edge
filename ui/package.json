@@ -1,13 +1,13 @@
 {
-  "name": "ferrum-edge-ui",
+  "name": "ferrum-app-edge-ui",
   "private": true,
   "type": "module",
-  "description": "IoT Edge's own interface at /edge/, built with Ferrum-Frontend's packages from the checkout at ../../../web.",
+  "description": "IoT Edge's own interface at /edge/, built with Ferrum-Frontend's packages from the sibling checkout (../../ferrum/web).",
   "scripts": {
-    "build": "node ../../../web/packages/build/cli.mjs build",
-    "check": "node ../../../web/packages/build/cli.mjs check",
-    "typecheck": "node ../../../web/packages/build/cli.mjs typecheck",
-    "test": "node ../../../web/packages/build/cli.mjs test",
-    "dev": "node ../../../web/packages/build/cli.mjs dev"
+    "build": "node ../../ferrum/web/packages/build/cli.mjs build",
+    "check": "node ../../ferrum/web/packages/build/cli.mjs check",
+    "typecheck": "node ../../ferrum/web/packages/build/cli.mjs typecheck",
+    "test": "node ../../ferrum/web/packages/build/cli.mjs test",
+    "dev": "node ../../ferrum/web/packages/build/cli.mjs dev"
   }
 }

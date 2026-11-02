@@ -4,9 +4,9 @@
 
 use chrono::{DateTime, Utc};
 use ferrum_domain::util::{elevated, sys};
+use ferrum_edge_contract::edge::AlarmChange;
 use ferrum_kernel::{Ctx, Doc, Error, Kernel, Result, Tx, notify};
 use ferrum_ops::commands::{self, Issuer, NewCommand};
-use ferrum_ops::contract::edge::AlarmChange;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
