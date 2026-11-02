@@ -40,8 +40,7 @@ async fn gather(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Device> {
         .bind(ctx.tenant)
         .bind(id)
         .fetch_all(&mut *tx)
-        .await
-        .unwrap_or_default();
+        .await?;
     tx.commit().await?;
     Ok(Device { code, name, kind, latest, attributes, operations })
 }
