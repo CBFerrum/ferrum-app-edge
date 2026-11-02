@@ -3,8 +3,8 @@
 //!
 //! UDP loses things, so a device repeats itself until it is answered, and a repeat must not count
 //! twice: what was answered lately is kept, and a repeat gets the same answer again and goes no
-//! further. There is no DTLS here, so the token crosses the network in the clear: this is for a site's
-//! own network, and a device on any other should use MQTT over TLS.
+//! further. On `listen+coap` the token crosses the network in the clear, so that is for a site's own
+//! network. `listen+coaps` is the same over DTLS, for anywhere else.
 
 use crate::adapter::Failure;
 use crate::adapters::dtls::Wire;
