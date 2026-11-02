@@ -441,7 +441,7 @@ pub async fn clickhouse(http: &reqwest::Client, url: &Url, bodies: &[String], se
 }
 
 async fn said(request: reqwest::RequestBuilder) -> Result<String, String> {
-    let response = request.send().await.map_err(|e| e.to_string())?;
+    let response = request.send().await.map_err(|e| e.without_url().to_string())?;
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
     if status.is_success() { Ok(text) } else { Err(format!("it answered {status}: {}", text.chars().take(300).collect::<String>())) }

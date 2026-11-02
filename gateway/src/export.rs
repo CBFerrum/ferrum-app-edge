@@ -145,11 +145,11 @@ impl Sender {
         if !self.limits.reaches(url) {
             return Err(format!("{url} is not in this site's allow list"));
         }
-        let response = self.http.get(url).timeout(Duration::from_secs(600)).send().await.map_err(|e| e.to_string())?;
+        let response = self.http.get(url).timeout(Duration::from_secs(600)).send().await.map_err(|e| e.without_url().to_string())?;
         if !response.status().is_success() {
             return Err(format!("{url} answered {}", response.status()));
         }
-        response.bytes().await.map(|b| b.to_vec()).map_err(|e| e.to_string())
+        response.bytes().await.map(|b| b.to_vec()).map_err(|e| e.without_url().to_string())
     }
 
     /// Delivers a batch of JSON measurements. Anything but a clear yes leaves it queued.
@@ -206,7 +206,7 @@ impl Sender {
         if let Some(secret) = secret {
             request = request.header("x-ferrum-signature", signature(secret, &body).ok_or("could not sign")?);
         }
-        let response = request.body(body).send().await.map_err(|e| e.to_string())?;
+        let response = request.body(body).send().await.map_err(|e| e.without_url().to_string())?;
         if response.status().is_success() { Ok(()) } else { Err(format!("it answered {}", response.status())) }
     }
 }

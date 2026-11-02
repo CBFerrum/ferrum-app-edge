@@ -831,13 +831,14 @@ impl Transport for Http {
         }
         let response = match request.send().await {
             Ok(r) => r,
-            // Refused means it went nowhere. After that, a request may have reached it.
-            Err(e) if e.is_connect() => return Err(Failure::NotSent(e.to_string())),
-            Err(e) if method == reqwest::Method::GET => return Err(Failure::NotSent(e.to_string())),
-            Err(e) => return Err(Failure::Unknown(e.to_string())),
+            // Refused means it went nowhere. After that, a request may have reached it. An address
+            // can hold a secret, and a failure's reason goes to the platform, so never the URL.
+            Err(e) if e.is_connect() => return Err(Failure::NotSent(e.without_url().to_string())),
+            Err(e) if method == reqwest::Method::GET => return Err(Failure::NotSent(e.without_url().to_string())),
+            Err(e) => return Err(Failure::Unknown(e.without_url().to_string())),
         };
         let status = response.status().as_u16();
-        let body = response.bytes().await.map_err(|e| Failure::Unknown(e.to_string()))?.to_vec();
+        let body = response.bytes().await.map_err(|e| Failure::Unknown(e.without_url().to_string()))?.to_vec();
         Ok(Some(Message { topic: path, body, status: Some(status), from: None }))
     }
 }
@@ -1235,6 +1236,16 @@ mod serial {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_failure_never_says_what_an_address_held() {
+        let http = Http::new("http://127.0.0.1:1", &[], None, &Limits::default()).unwrap();
+        for method in ["GET", "POST"] {
+            let out = Out::Http { method: method.into(), path: "/in?token=s3cret".into(), body: None, headers: vec![] };
+            let (Err(Failure::NotSent(said)) | Err(Failure::Unknown(said))) = http.send(out).await else { panic!("nothing listens there") };
+            assert!(!said.contains("s3cret"), "{said}");
+        }
+    }
 
     #[test]
     fn a_definition_opens_no_port_and_reads_no_file_a_site_did_not_offer() {
