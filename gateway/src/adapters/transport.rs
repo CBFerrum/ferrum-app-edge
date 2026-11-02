@@ -105,6 +105,15 @@ pub trait Transport: Send + Sync {
     }
 }
 
+/// Two of our libraries bring different cryptography, and with both present rustls will not choose
+/// one: the first TLS connection of a library that leaves it the choice would panic. So it is chosen here.
+pub fn crypto() {
+    static CRYPTO: std::sync::Once = std::sync::Once::new();
+    CRYPTO.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 /// What this site lets a definition open.
 #[derive(Debug, Clone, Default)]
 pub struct Limits {
@@ -204,12 +213,7 @@ pub struct Options<'a> {
 
 /// Opens what an address names, within what this site allows.
 pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<dyn Transport>, String> {
-    // Two of our libraries bring different cryptography, and with both present rustls will not choose
-    // one: the first TLS connection of a library that leaves it the choice would panic. So it is chosen here.
-    static CRYPTO: std::sync::Once = std::sync::Once::new();
-    CRYPTO.call_once(|| {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-    });
+    crypto();
     let Options { frame, subscribe, headers, tls, hub, api, also } = options;
     let (scheme, rest) = address.split_once("://").ok_or_else(|| format!("{address} has no scheme"))?;
     let bind = rest.split('?').next().unwrap_or(rest);

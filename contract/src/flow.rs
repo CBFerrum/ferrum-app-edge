@@ -758,10 +758,8 @@ pub fn parse(text: &str) -> Result<Compiled, String> {
                     return Err(format!("{}: days go from 1, Monday, to 7", n.id));
                 }
             }
-            Kind::Anomaly { window, sigma } => {
-                if !(ANOMALY_MIN..=MAX_HELD).contains(window) || *sigma <= 0.0 {
-                    return Err(format!("{}: look back over {ANOMALY_MIN} to {MAX_HELD} readings, by more than zero deviations", n.id));
-                }
+            Kind::Anomaly { window, sigma } if !(ANOMALY_MIN..=MAX_HELD).contains(window) || *sigma <= 0.0 => {
+                return Err(format!("{}: look back over {ANOMALY_MIN} to {MAX_HELD} readings, by more than zero deviations", n.id));
             }
             Kind::Reassign { to } if to.is_empty() => return Err(format!("{}: say whose it becomes", n.id)),
             _ => {}

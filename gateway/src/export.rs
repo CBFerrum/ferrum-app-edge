@@ -1,12 +1,15 @@
 //! Where else a site's measurements go: a historian on the same network, another broker, someone
-//! else's cloud. Each export keeps its own queue in the journal, so one that is down holds up nothing
-//! and catches up when it is back, within a budget. Delivery is at least once: a receiver that cares
-//! uses `device`, `metric` and `at` as the key.
+//! else's cloud ([`crate::sinks`]). Each export keeps its own queue in the journal, so one that is
+//! down holds up nothing and catches up when it is back, within a budget. Delivery is at least once:
+//! a receiver that cares uses `device`, `metric` and `at` as the key.
 
 use crate::adapter::Failure;
 use crate::adapters::transport::{self, Limits, Message, Out, Transport};
+use crate::sinks;
+use chrono::Utc;
 use ferrum_edge_contract::edge::Export;
 use hmac::{Hmac, Mac};
+use reqwest::Url;
 use serde_json::Value;
 use sha2::Sha256;
 use std::collections::HashMap;
@@ -38,6 +41,8 @@ fn signature(secret: &str, body: &[u8]) -> Option<String> {
 pub struct Sender {
     http: reqwest::Client,
     brokers: Mutex<HashMap<String, Arc<dyn Transport>>>,
+    #[cfg(feature = "kafka")]
+    kafka: sinks::Kafka,
     limits: Limits,
 }
 
@@ -46,7 +51,7 @@ impl Sender {
     /// a definition opens.
     pub fn new(limits: Limits) -> Sender {
         let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).connect_timeout(Duration::from_secs(5)).build().unwrap_or_default();
-        Sender { http, brokers: Mutex::default(), limits }
+        Sender { http, limits, ..Sender::default() }
     }
 
     /// A broker stays connected between batches. Its connection looks after itself.
@@ -84,16 +89,32 @@ impl Sender {
         if !self.limits.reaches(&export.to) {
             return Err(format!("{} is not in this site's allow list", export.to));
         }
+        let secret = match &export.sign_with {
+            Some(name) => Some(secrets[name].as_str().ok_or_else(|| format!("no secret called {name} at this site"))?),
+            None => None,
+        };
+        let url = Url::parse(&export.to).map_err(|e| format!("{}: {e}", export.to))?;
+        let topic = export.topic.as_deref();
+        let (http, now) = (&self.http, Utc::now());
+        match url.scheme() {
+            "nats" | "nats+tls" => return sinks::nats(&url, topic.unwrap_or("ferrum.{device}.{metric}"), bodies, secret).await,
+            "amqp" | "amqps" => return sinks::amqp(&url, topic.unwrap_or("ferrum.{device}.{metric}"), bodies, secret).await,
+            #[cfg(feature = "kafka")]
+            "kafka" | "kafkas" => return self.kafka.send(&url, topic.unwrap_or("ferrum"), bodies, secret).await,
+            "influx" | "influxs" => return sinks::influx(http, &url, bodies, secret).await,
+            "clickhouse" | "clickhouses" => return sinks::clickhouse(http, &url, bodies, secret).await,
+            "s3" => return sinks::s3(http, &url, bodies, secret, now).await,
+            "sqs" => return sinks::sqs(http, &url, bodies, secret, now).await,
+            "sns" => return sinks::sns(http, &url, bodies, secret, now).await,
+            "pubsub" => return sinks::pubsub(http, &url, bodies, secret, now).await,
+            "azure" | "eventhub" => return sinks::azure(http, &url, bodies, secret, now).await,
+            _ => {}
+        }
         if export.to.starts_with("mqtt") {
             let broker = self.broker(&export.to)?;
             for body in bodies {
                 let m: Value = serde_json::from_str(body).unwrap_or(Value::Null);
-                let topic = export
-                    .topic
-                    .as_deref()
-                    .unwrap_or("ferrum/{device}/{metric}")
-                    .replace("{device}", m["device"].as_str().unwrap_or("unknown"))
-                    .replace("{metric}", m["metric"].as_str().unwrap_or("unknown"));
+                let topic = sinks::named(topic.unwrap_or("ferrum/{device}/{metric}"), &m);
                 broker.send(Out::Publish { topic, body: body.clone().into_bytes(), expiry: None, retain: false }).await.map_err(|e| match e {
                     Failure::NotSent(w) | Failure::Unknown(w) => w,
                 })?;
@@ -103,8 +124,7 @@ impl Sender {
         let items: Vec<Value> = bodies.iter().filter_map(|b| serde_json::from_str(b).ok()).collect();
         let body = serde_json::to_vec(&serde_json::json!({"measurements": items})).map_err(|e| e.to_string())?;
         let mut request = self.http.post(&export.to).header("content-type", "application/json");
-        if let Some(name) = &export.sign_with {
-            let secret = secrets[name].as_str().ok_or_else(|| format!("no secret called {name} at this site"))?;
+        if let Some(secret) = secret {
             request = request.header("x-ferrum-signature", signature(secret, &body).ok_or("could not sign")?);
         }
         let response = request.body(body).send().await.map_err(|e| e.to_string())?;

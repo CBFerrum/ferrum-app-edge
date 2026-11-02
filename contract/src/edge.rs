@@ -109,17 +109,57 @@ fn warning() -> String {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Export {
     pub name: String,
-    /// `http(s)://…` takes batches by POST. `mqtt(s)://…` takes a message per measurement.
+    /// One of [`EXPORT_SCHEMES`]. `docs/definitions.md` says what each takes.
     pub to: String,
-    /// `{device}` and `{metric}` work here. MQTT only.
+    /// A topic, subject or routing key. `{device}` and `{metric}` work here.
     #[serde(default)]
     pub topic: Option<String>,
     /// Only these metrics, with `*` for the rest of a name. Empty means all.
     #[serde(default)]
     pub only: Vec<String>,
-    /// Signs each HTTP batch, by the name of a secret held at the site.
+    /// The name of a secret held at the site: what signs an HTTP batch, or logs in anywhere else.
     #[serde(default)]
     pub sign_with: Option<String>,
+}
+
+pub const EXPORT_SCHEMES: &[&str] = &[
+    "http",
+    "https",
+    "mqtt",
+    "mqtts",
+    "nats",
+    "nats+tls",
+    "kafka",
+    "kafkas",
+    "amqp",
+    "amqps",
+    "influx",
+    "influxs",
+    "clickhouse",
+    "clickhouses",
+    "s3",
+    "sqs",
+    "sns",
+    "pubsub",
+    "azure",
+    "eventhub",
+];
+
+/// Whether an export's address can work, for saying so when it is saved. A password has no place
+/// in one: it would reach every gateway and every backup. It belongs to the site, as a secret.
+pub fn check_export(to: &str) -> Result<(), String> {
+    let (scheme, rest) = to.split_once("://").ok_or("say where: https://historian/in, nats://bus:4222")?;
+    if !EXPORT_SCHEMES.contains(&scheme) {
+        return Err(format!("{scheme} is not a place to send to: try {}", EXPORT_SCHEMES.join(", ")));
+    }
+    let authority = rest.split(['/', '?']).next().unwrap_or_default();
+    if authority.is_empty() {
+        return Err("say which host".into());
+    }
+    if authority.rsplit_once('@').is_some_and(|(login, _)| login.contains(':')) {
+        return Err("a password goes in a secret at the site, not here".into());
+    }
+    Ok(())
 }
 
 /// A build of the site runtime, and how to know it is the real one.
@@ -336,6 +376,17 @@ impl Watch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_export_says_where_and_keeps_its_password_to_itself() {
+        assert!(check_export("https://historian/in").is_ok());
+        assert!(check_export("nats://bus:4222/x").is_ok());
+        assert!(check_export("amqp://user@broker:5672/plant?exchange=readings").is_ok());
+        assert!(check_export("amqp://user:hunter2@broker:5672/").unwrap_err().contains("secret"));
+        assert!(check_export("ftp://x").unwrap_err().contains("not a place"));
+        assert!(check_export("kafka://").unwrap_err().contains("host"));
+        assert!(check_export("historian").is_err());
+    }
 
     fn rule(when: Comparison, value: f64, hold: i64, clear: Option<f64>) -> Rule {
         Rule { id: Uuid::nil(), name: "r".into(), devices: vec![], metric: "m".into(), when, value, hold_secs: hold, clear, severity: "Warning".into() }
