@@ -28,7 +28,7 @@
   <text x="262" y="198" font-size="58" font-weight="750" fill="#e6edf3" letter-spacing="-1">Ferrum IoT Edge</text>
   <text x="264" y="244" font-size="23" fill="#9da7b3">Equipment connected by description, logic drawn and reviewed,</text>
   <text x="264" y="278" font-size="23" fill="#9da7b3">and a gateway that keeps working with the link down.</text>
-  <g><rect x="264" y="310" width="70" height="30" rx="15" fill="#0a2a3e"/><text x="298.8" y="330" font-size="14.5" font-weight="600" fill="#74adcb" text-anchor="middle">v0.2.0</text></g>
+  <g><rect x="264" y="310" width="70" height="30" rx="15" fill="#0a2a3e"/><text x="298.8" y="330" font-size="14.5" font-weight="600" fill="#74adcb" text-anchor="middle">v0.3.0</text></g>
   <g><rect x="343.6" y="310" width="130" height="30" rx="15" fill="#0a2a3e"/><text x="408.5" y="330" font-size="14.5" font-weight="600" fill="#74adcb" text-anchor="middle">Own interface</text></g>
   <g><rect x="483.40000000000003" y="310" width="87" height="30" rx="15" fill="#0a2a3e"/><text x="526.8" y="330" font-size="14.5" font-weight="600" fill="#74adcb" text-anchor="middle">AGPL-3.0</text></g>
 </svg>
