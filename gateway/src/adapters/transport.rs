@@ -135,9 +135,31 @@ pub struct Limits {
     pub state_dir: Option<PathBuf>,
 }
 
+/// Hops a redirect may take, each one checked.
+const MAX_REDIRECTS: usize = 5;
+
 impl Limits {
+    /// An entry is a whole host, or a range when it ends in a dot or a dash. `plant.example.com` is that
+    /// host, and not `plant.example.com.elsewhere.org`.
     fn host_allowed(&self, host: &str) -> bool {
-        self.allow.is_empty() || self.allow.iter().any(|a| host.starts_with(a.as_str()))
+        self.allow.is_empty() || self.allow.iter().any(|a| host == a || (a.ends_with(['.', '-']) && host.starts_with(a.as_str())))
+    }
+
+    /// Where HTTP may be sent on from where it was allowed to go: the same list, at every hop, and
+    /// never from encrypted to plain. Anything else stops before the request is made.
+    pub fn redirects(&self) -> reqwest::redirect::Policy {
+        let limits = self.clone();
+        reqwest::redirect::Policy::custom(move |attempt| {
+            let downgrade = attempt.previous().iter().any(|u| u.scheme() == "https") && attempt.url().scheme() != "https";
+            if attempt.previous().len() > MAX_REDIRECTS {
+                attempt.error("too many redirects")
+            } else if downgrade || !limits.reaches(attempt.url().as_str()) {
+                let to = attempt.url().to_string();
+                attempt.error(format!("sent on to {to}, which this site does not allow"))
+            } else {
+                attempt.follow()
+            }
+        })
     }
 
     /// Whether an address may be reached, for what opens connections of its own.
@@ -317,7 +339,7 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
             let (host, port) = super::tags::host_port(rest, 5683);
             Arc::new(CoapClient::new(format!("{host}:{port}"), subscribe))
         }
-        "mtconnect" | "mtconnects" => Arc::new(super::mtconnect::Mtconnect::new(scheme, rest)),
+        "mtconnect" | "mtconnects" => Arc::new(super::mtconnect::Mtconnect::new(scheme, rest, limits)),
         "nats" => Arc::new(super::nats::Nats::new(rest, subscribe)),
         "amqp" | "amqps" => Arc::new(super::sources::AmqpSource::new(scheme, rest, subscribe)?),
         #[cfg(feature = "kafka")]
@@ -773,7 +795,7 @@ struct Http {
 
 impl Http {
     fn new(base: &str, headers: &[(String, String)], tls: Option<&Tls>, limits: &Limits) -> Result<Http, String> {
-        let mut client = reqwest::Client::builder().timeout(Duration::from_secs(15)).connect_timeout(Duration::from_secs(5));
+        let mut client = reqwest::Client::builder().timeout(Duration::from_secs(15)).connect_timeout(Duration::from_secs(5)).redirect(limits.redirects());
         if let Some(tls) = tls {
             if let Some(ca) = &tls.ca {
                 let ca = reqwest::Certificate::from_pem(&limits.certificate(ca)?).map_err(|e| e.to_string())?;
@@ -809,13 +831,14 @@ impl Transport for Http {
         }
         let response = match request.send().await {
             Ok(r) => r,
-            // Refused means it went nowhere. After that, a request may have reached it.
-            Err(e) if e.is_connect() => return Err(Failure::NotSent(e.to_string())),
-            Err(e) if method == reqwest::Method::GET => return Err(Failure::NotSent(e.to_string())),
-            Err(e) => return Err(Failure::Unknown(e.to_string())),
+            // Refused means it went nowhere. After that, a request may have reached it. An address
+            // can hold a secret, and a failure's reason goes to the platform, so never the URL.
+            Err(e) if e.is_connect() => return Err(Failure::NotSent(e.without_url().to_string())),
+            Err(e) if method == reqwest::Method::GET => return Err(Failure::NotSent(e.without_url().to_string())),
+            Err(e) => return Err(Failure::Unknown(e.without_url().to_string())),
         };
         let status = response.status().as_u16();
-        let body = response.bytes().await.map_err(|e| Failure::Unknown(e.to_string()))?.to_vec();
+        let body = response.bytes().await.map_err(|e| Failure::Unknown(e.without_url().to_string()))?.to_vec();
         Ok(Some(Message { topic: path, body, status: Some(status), from: None }))
     }
 }
@@ -1213,6 +1236,16 @@ mod serial {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_failure_never_says_what_an_address_held() {
+        let http = Http::new("http://127.0.0.1:1", &[], None, &Limits::default()).unwrap();
+        for method in ["GET", "POST"] {
+            let out = Out::Http { method: method.into(), path: "/in?token=s3cret".into(), body: None, headers: vec![] };
+            let (Err(Failure::NotSent(said)) | Err(Failure::Unknown(said))) = http.send(out).await else { panic!("nothing listens there") };
+            assert!(!said.contains("s3cret"), "{said}");
+        }
+    }
 
     #[test]
     fn a_definition_opens_no_port_and_reads_no_file_a_site_did_not_offer() {

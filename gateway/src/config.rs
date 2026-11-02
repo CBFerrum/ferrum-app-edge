@@ -34,6 +34,10 @@ fn hold() -> i64 {
     2000
 }
 
+fn crystal() -> i64 {
+    100
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     /// The platform, `https://…`.
@@ -64,6 +68,10 @@ pub struct Config {
     /// Commands the journal may hold waiting.
     #[serde(default = "hold")]
     pub max_queued: i64,
+    /// How far this machine's clock may run slow, in parts per million. Time since the platform last
+    /// said counts for this much more, so that a lease cannot outlast its allowance by a slow crystal.
+    #[serde(default = "crystal")]
+    pub clock_drift_ppm: i64,
     /// The operator console. Listen on the site's own network only; it has no TLS of its own.
     #[serde(default)]
     pub console: Option<String>,

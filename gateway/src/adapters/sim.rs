@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct SimConfig {
@@ -30,6 +31,9 @@ pub struct SimConfig {
     /// It has no way to look up what it was sent, as many controllers do not.
     #[serde(default)]
     pub cannot_find: bool,
+    /// How long it takes to answer a dispatch: a slow fleet manager, holding up what comes after.
+    #[serde(default)]
+    pub dispatch_millis: u64,
 }
 
 pub struct Sim {
@@ -81,7 +85,8 @@ impl Sim {
 
 #[async_trait]
 impl Adapter for Sim {
-    async fn dispatch(&self, c: &Command, _device: &SiteDevice) -> Result<Dispatched, Failure> {
+    async fn dispatch(&self, c: &Command, _device: &SiteDevice, _left: Duration) -> Result<Dispatched, Failure> {
+        tokio::time::sleep(Duration::from_millis(self.cfg.dispatch_millis)).await;
         if self.silent() {
             return Err(Failure::Unknown("no answer from the fleet".into()));
         }
@@ -93,14 +98,14 @@ impl Adapter for Sim {
         Ok(Dispatched::Accepted { external: Some(id) })
     }
 
-    async fn observe(&self, c: &Command, _external: Option<&str>) -> Result<Observation, Failure> {
+    async fn observe(&self, c: &Command, _device: &str, _external: Option<&str>) -> Result<Observation, Failure> {
         if self.silent() {
             return Err(Failure::Unknown("no answer from the fleet".into()));
         }
         Ok(self.state_of(&c.id.to_string(), &c.operation))
     }
 
-    async fn find(&self, c: &Command) -> Result<Option<Observation>, Failure> {
+    async fn find(&self, c: &Command, _device: &str) -> Result<Option<Observation>, Failure> {
         if self.cfg.cannot_find {
             return Ok(None);
         }
@@ -110,7 +115,7 @@ impl Adapter for Sim {
         Ok(Some(self.state_of(&c.id.to_string(), &c.operation)))
     }
 
-    async fn cancel(&self, c: &Command, _external: Option<&str>) -> Result<(), Failure> {
+    async fn cancel(&self, c: &Command, _device: &str, _external: Option<&str>) -> Result<(), Failure> {
         self.append(json!({"cancel": c.id.to_string()}))
     }
 

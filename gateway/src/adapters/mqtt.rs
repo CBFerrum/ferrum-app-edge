@@ -2,9 +2,8 @@
 //! the broker did, never what the equipment did, so a command is accepted only by a reply on its
 //! status topic, and commands carry an expiry so a broker cannot deliver a stale one later.
 
-use crate::adapter::{Adapter, Dispatched, Failure, Observation, Reading};
+use crate::adapter::{Adapter, Dispatched, Failure, Observation, Reading, expiry_secs};
 use async_trait::async_trait;
-use chrono::Utc;
 use ferrum_ops_contract::telemetry::Class;
 use ferrum_ops_contract::{Command, sync::SiteDevice};
 use rumqttc::v5::mqttbytes::QoS;
@@ -158,12 +157,12 @@ impl Mqtt {
 
 #[async_trait]
 impl Adapter for Mqtt {
-    async fn dispatch(&self, c: &Command, device: &SiteDevice) -> Result<Dispatched, Failure> {
+    async fn dispatch(&self, c: &Command, device: &SiteDevice, left: Duration) -> Result<Dispatched, Failure> {
         let Some(topic) = &self.cfg.command_topic else { return Ok(Dispatched::Rejected("this adapter takes no commands".into())) };
         if !self.connected() {
             return Err(Failure::NotSent("not connected to the broker".into()));
         }
-        let left = (c.expires_at - Utc::now()).num_seconds().max(1) as u32;
+        let left = expiry_secs(left).ok_or_else(|| Failure::NotSent("its deadline has passed".into()))?;
         let properties = PublishProperties { message_expiry_interval: Some(left), ..Default::default() };
         let body = json!({"command": c.id, "operation": c.operation, "payload": c.payload, "expires_at": c.expires_at}).to_string();
         let topic = topic.replace("{device}", &device.code);
@@ -174,7 +173,7 @@ impl Adapter for Mqtt {
         }
     }
 
-    async fn observe(&self, c: &Command, _external: Option<&str>) -> Result<Observation, Failure> {
+    async fn observe(&self, c: &Command, _device: &str, _external: Option<&str>) -> Result<Observation, Failure> {
         let Some(status) = self.status(&c.id.to_string()) else { return Ok(Observation::Waiting) };
         Ok(match status["state"].as_str() {
             Some("accepted") => Observation::Waiting,
@@ -186,10 +185,14 @@ impl Adapter for Mqtt {
         })
     }
 
-    async fn cancel(&self, c: &Command, _external: Option<&str>) -> Result<(), Failure> {
+    async fn cancel(&self, c: &Command, device: &str, _external: Option<&str>) -> Result<(), Failure> {
         let Some(topic) = &self.cfg.command_topic else { return Ok(()) };
         let body = json!({"cancel": c.id}).to_string();
-        self.client.publish(topic.replace("{device}", "all"), QoS::AtLeastOnce, false, body).await.map_err(|e| Failure::NotSent(e.to_string()))
+        self.client.publish(topic.replace("{device}", device), QoS::AtLeastOnce, false, body).await.map_err(|e| Failure::NotSent(e.to_string()))
+    }
+
+    fn endpoint(&self, _device: &str) -> Option<String> {
+        Some(format!("{}:{}", self.cfg.host, self.cfg.port))
     }
 
     async fn read(&self) -> Result<Vec<Reading>, Failure> {

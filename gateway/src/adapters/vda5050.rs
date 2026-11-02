@@ -171,7 +171,7 @@ impl Vda {
 
 #[async_trait]
 impl Adapter for Vda {
-    async fn dispatch(&self, c: &Command, device: &SiteDevice) -> Result<Dispatched, Failure> {
+    async fn dispatch(&self, c: &Command, device: &SiteDevice, _left: Duration) -> Result<Dispatched, Failure> {
         if !supported(&self.cfg.version) {
             return Ok(Dispatched::Rejected(format!("VDA 5050 {} is not a version this adapter was written for", self.cfg.version)));
         }
@@ -192,29 +192,35 @@ impl Adapter for Vda {
         }
     }
 
-    async fn observe(&self, c: &Command, _external: Option<&str>) -> Result<Observation, Failure> {
+    async fn observe(&self, c: &Command, device: &str, _external: Option<&str>) -> Result<Observation, Failure> {
         let id = c.id.to_string();
-        // The device is found by the order it is working on, so a command's target can be a fleet.
-        let states: Vec<Value> = self.serials.iter().filter_map(|s| self.state_of(s)).collect();
-        let Some(state) = states.iter().find(|s| s["orderId"].as_str() == Some(&id)) else {
+        let Some(state) = self.state_of(device).filter(|s| s["orderId"].as_str() == Some(&id)) else {
             let connected = self.shared.lock().unwrap_or_else(|e| e.into_inner()).connected;
             return if connected { Ok(Observation::Waiting) } else { Err(Failure::Unknown("no broker".into())) };
         };
-        Ok(judge(state, &id))
+        Ok(judge(&state, &id))
     }
 
-    async fn cancel(&self, c: &Command, _external: Option<&str>) -> Result<(), Failure> {
+    /// `cancelOrder` stops whatever a vehicle is doing and names no order, so it goes to the vehicle
+    /// this was sent to, and only while that vehicle says this is what it is doing. Until then it is
+    /// asked again.
+    async fn cancel(&self, c: &Command, device: &str, _external: Option<&str>) -> Result<(), Failure> {
+        let id = c.id.to_string();
+        if self.state_of(device).is_none_or(|s| s["orderId"].as_str() != Some(&id)) {
+            return Err(Failure::NotSent(format!("{device} does not say it is working on this")));
+        }
         let actions = json!({
             "headerId": self.header_id(), "timestamp": Utc::now().to_rfc3339(), "version": self.cfg.version, "manufacturer": self.cfg.manufacturer,
-            "actions": [{"actionType": "cancelOrder", "actionId": c.id.to_string(), "blockingType": "HARD"}],
+            "actions": [{"actionType": "cancelOrder", "actionId": id, "blockingType": "HARD"}],
         });
-        for serial in &self.serials {
-            self.client
-                .publish(topic(&self.cfg, serial, "instantActions"), QoS::AtLeastOnce, false, actions.to_string())
-                .await
-                .map_err(|e| Failure::NotSent(e.to_string()))?;
-        }
-        Ok(())
+        self.client
+            .publish(topic(&self.cfg, device, "instantActions"), QoS::AtLeastOnce, false, actions.to_string())
+            .await
+            .map_err(|e| Failure::NotSent(e.to_string()))
+    }
+
+    fn endpoint(&self, _device: &str) -> Option<String> {
+        Some(format!("{}:{}", self.cfg.host, self.cfg.port))
     }
 
     async fn read(&self) -> Result<Vec<Reading>, Failure> {

@@ -48,7 +48,12 @@ async fn pass(State(relay): State<Relay>, Path((tenant, package, route)): Path<(
 }
 
 pub fn router(server: &str) -> Router {
-    let http = reqwest::Client::builder().timeout(Duration::from_secs(60)).connect_timeout(Duration::from_secs(10)).build().unwrap_or_default();
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .connect_timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap_or_default();
     let relay = Relay { server: server.trim_end_matches('/').to_string(), http };
     Router::new().route("/api/site/{tenant}/{package}/{route}", post(pass)).layer(DefaultBodyLimit::max(MAX_SYNC_BYTES)).with_state(relay)
 }

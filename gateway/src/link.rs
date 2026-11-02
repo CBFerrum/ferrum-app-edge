@@ -31,7 +31,13 @@ pub struct Link {
 }
 
 fn client() -> reqwest::Client {
-    reqwest::Client::builder().timeout(Duration::from_secs(60)).connect_timeout(Duration::from_secs(10)).build().unwrap_or_default()
+    // What goes to the platform goes to the platform: a redirect does not get to read a site's data.
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .connect_timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap_or_default()
 }
 
 /// Trades an enrollment code for this site's key, once.

@@ -1272,11 +1272,11 @@ impl Compiled {
 fn check_template(what: &str, template: &str) -> Result<(), String> {
     // `{payload.x}`, `{command}`, `{device}`, `{id}`, `{secret.x}`, `{settings.x}`: render with
     // everything present, so only an unknown root fails.
-    let probe = json!({"command": "c", "device": "d", "id": "i", "now": "t", "now_ms": 1, "seq": 1});
+    let probe = json!({"command": "c", "device": "d", "id": "i", "now": "t", "now_ms": 1, "seq": 1, "expires_at": "t", "epoch": 1});
     match render(template, &probe) {
         Ok(_) => Ok(()),
         Err(e) if ["{payload", "{secret", "{settings"].iter().any(|r| e.contains(r)) => Ok(()),
-        Err(e) => Err(format!("{what}: {e}. Placeholders are command, device, id, now, now_ms, seq, payload.*, secret.* and settings.*")),
+        Err(e) => Err(format!("{what}: {e}. Placeholders are command, device, id, now, now_ms, seq, expires_at, epoch, payload.*, secret.* and settings.*")),
     }
 }
 

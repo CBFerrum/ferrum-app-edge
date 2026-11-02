@@ -359,6 +359,10 @@ async fn scenario() {
     a_lost_answer_repeats_nothing(&w).await;
     equipment_that_cannot_say_leaves_the_outcome_unknown(&w).await;
     a_fleet_with_no_memory_is_not_sent_twice(&w).await;
+    a_crash_never_asks_another_device(&w).await;
+    what_a_site_has_forgotten_is_asked_of_the_platform(&w).await;
+    a_definition_changed_under_running_work_leaves_it_unknown(&w).await;
+    a_power_cut_with_no_link_waits_for_someone_to_vouch_for_the_time(&w).await;
     what_the_lease_and_the_disk_allow(&w).await;
     a_replaced_gateway_stops(&w).await;
     people_at_the_console(&w).await;
@@ -536,6 +540,247 @@ async fn a_fleet_with_no_memory_is_not_sent_twice(w: &World) {
     assert!(history["history"].as_array().unwrap().iter().any(|e| e["state"] == "OutcomeUnknown"), "and it said it did not know: {history}");
 }
 
+/// A fleet manager of its own, over HTTP, that remembers what it was sent and says who asked.
+#[derive(Clone, Default)]
+struct Manager {
+    missions: Arc<std::sync::Mutex<Vec<String>>>,
+    lookups: Arc<std::sync::Mutex<Vec<String>>>,
+    cancels: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl Manager {
+    async fn start() -> (Manager, String) {
+        use axum::routing::{delete, get};
+        let manager = Manager::default();
+        let router = Router::new()
+            .route(
+                "/missions",
+                post(|State(m): State<Manager>, axum::Json(asked): axum::Json<Value>| async move {
+                    let command = asked["command"].as_str().unwrap_or_default().to_string();
+                    m.missions.lock().unwrap().push(command.clone());
+                    axum::Json(json!({"id": command, "state": "Executing"}))
+                }),
+            )
+            .route(
+                "/missions/{id}",
+                get(|State(m): State<Manager>, UrlPath(id): UrlPath<String>| async move {
+                    if m.missions.lock().unwrap().contains(&id) {
+                        (StatusCode::OK, axum::Json(json!({"state": "Executing"})))
+                    } else {
+                        (StatusCode::NOT_FOUND, axum::Json(json!({})))
+                    }
+                }),
+            )
+            .route(
+                "/by-command/{id}",
+                get(|State(m): State<Manager>, UrlPath(id): UrlPath<String>| async move {
+                    m.lookups.lock().unwrap().push(id.clone());
+                    if m.missions.lock().unwrap().contains(&id) {
+                        (StatusCode::OK, axum::Json(json!({"state": "Executing"})))
+                    } else {
+                        (StatusCode::NOT_FOUND, axum::Json(json!({})))
+                    }
+                }),
+            )
+            .route(
+                "/missions/{id}/stop",
+                delete(|State(m): State<Manager>, UrlPath(id): UrlPath<String>| async move {
+                    m.cancels.lock().unwrap().push(id);
+                    StatusCode::NO_CONTENT
+                }),
+            )
+            .with_state(manager.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        (manager, address)
+    }
+
+    fn sent(&self, id: Uuid) -> usize {
+        self.missions.lock().unwrap().iter().filter(|m| **m == id.to_string()).count()
+    }
+}
+
+const ROBOT_DEFINITION: &str = r#"
+name: robot
+commands:
+  warehouse.move:
+    post: /missions
+    send: {command: "{command}"}
+    id: $.id
+    status:
+      poll: {get: "/missions/{id}"}
+      json: $.state
+      running: [Executing]
+      done: Done
+    find:
+      poll: {get: "/by-command/{command}"}
+      json: $.state
+      running: [Executing]
+      done: Done
+    cancel: {delete: "/missions/{id}/stop"}
+"#;
+
+/// Two robots that take the same operation, each behind its own fleet manager.
+async fn two_robots(w: &World, slug: &str) -> (Workspace, Site, Uuid, (Manager, String), (Manager, String)) {
+    let ws = workspace(w, slug).await;
+    let (a, b) = (Manager::start().await, Manager::start().await);
+    let robot_a = commissioned(&ws, "ROBOT-A").await;
+    commissioned(&ws, "ROBOT-B").await;
+    let definitions = std::env::temp_dir().join(format!("ferrum-defs-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&definitions).unwrap();
+    std::fs::write(definitions.join("robot.yaml"), ROBOT_DEFINITION).unwrap();
+    let extra = format!(
+        "definitions_dir: {}\ndevices:\n  - {{code: ROBOT-A, definition: robot, connect: \"{}\"}}\n  - {{code: ROBOT-B, definition: robot, connect: \"{}\"}}\n",
+        definitions.display(),
+        a.1,
+        b.1
+    );
+    let site = Site::new(w, &ws, &extra);
+    site.enroll(&ws).await;
+    activate_gateway(&ws).await;
+    (ws, site, robot_a, a, b)
+}
+
+/// Taken by the equipment, however far along by the time anyone looks.
+async fn going(ws: &Workspace, id: Uuid) {
+    until("it to be taken", 20, async || matches!(state_of(ws, id).await.as_str(), "Accepted" | "Executing")).await;
+}
+
+async fn commissioned(ws: &Workspace, code: &str) -> Uuid {
+    let d = equipment(&ws.k, &ws.admin, ws.site, code, "warehouse.move").await;
+    let (enrollment, _) = ferrum_ops::identity::new_enrollment(&ws.k, &ws.admin, d).await.unwrap();
+    ferrum_ops::identity::enroll(&ws.k, ws.tenant, &ferrum_ops::contract::sign::Enroll { code: enrollment, public_key: hex_key(d) }).await.unwrap();
+    devices::set_lifecycle(&ws.k, &ws.admin, d, Lifecycle::Commissioned, "checked").await.unwrap();
+    devices::set_lifecycle(&ws.k, &ws.admin, d, Lifecycle::Active, "in service").await.unwrap();
+    d
+}
+
+async fn what_a_site_has_forgotten_is_asked_of_the_platform(w: &World) {
+    let ws = workspace(w, "forgotten").await;
+    let mut site = running(w, &ws, "").await;
+    let first = issue(&ws, ws.robot, "warehouse.move", json!({"tote": "F"}), 60).await;
+    reaches(&ws, first, "Completed", 15).await;
+    until("its row to go", 15, async || site.journal().entry(first).unwrap().is_none()).await;
+    site.kill();
+    // Past what a site keeps: it has no record of this at all, and that is not the same as done.
+    rusqlite::Connection::open(site.dir.join("journal.db")).unwrap().execute("delete from outcome", []).unwrap();
+    assert_eq!(site.journal().outcome(first).unwrap(), None);
+    let waiting = issue(&ws, ws.robot, "warehouse.move", json!({"task": {"after": [first]}}), 60).await;
+    w.p.down.store(true, Ordering::SeqCst);
+    let mut tx = ws.k.db.tenant_tx(ws.tenant).await.unwrap();
+    let taken = commands::take_for_site(&mut tx, ws.tenant, &ws.slug, 1, 10).await.unwrap();
+    tx.commit().await.unwrap();
+    {
+        let j = site.journal();
+        for c in &taken {
+            j.receive(c, 0).unwrap();
+        }
+    }
+    site.start(None);
+    tokio::time::sleep(StdDuration::from_secs(1)).await;
+    assert_eq!(site.missions_for(waiting), 0, "with the platform away nothing can say it finished, so it waits");
+    w.p.down.store(false, Ordering::SeqCst);
+    reaches(&ws, waiting, "Completed", 20).await;
+    assert_eq!(site.missions_for(waiting), 1, "the platform said how the first one ended");
+}
+
+async fn a_crash_never_asks_another_device(w: &World) {
+    let (ws, mut site, robot_a, (a, _), (b, _)) = two_robots(w, "twins").await;
+    // Sent to A, and the gateway dies before it hears the answer. B takes the same operation, and has
+    // never heard of this: if B were asked, that "no" would look like leave to send it to A again.
+    site.start(Some("after_dispatch"));
+    let c = issue(&ws, robot_a, "warehouse.move", json!({"tote": "T"}), 60).await;
+    site.crashed().await;
+    assert_eq!(a.sent(c), 1, "A has it, and the journal does not know");
+    site.start(None);
+    going(&ws, c).await;
+    tokio::time::sleep(StdDuration::from_millis(500)).await;
+    assert_eq!(a.sent(c), 1, "A was asked, and said it had it: nothing was sent twice");
+    assert!(!a.lookups.lock().unwrap().is_empty(), "the device it went to was the one asked");
+    assert!(b.lookups.lock().unwrap().is_empty(), "the other was never asked");
+    assert_eq!(b.sent(c), 0);
+
+    // Stopping it reaches A, and only A.
+    let mut tx = ws.k.db.tenant_tx(ws.tenant).await.unwrap();
+    commands::cancel(&mut tx, &ws.admin, c, "not needed").await.unwrap();
+    tx.commit().await.unwrap();
+    until("the stop to reach the robot", 15, async || !a.cancels.lock().unwrap().is_empty()).await;
+    assert!(b.cancels.lock().unwrap().is_empty(), "the other was not touched");
+}
+
+async fn a_definition_changed_under_running_work_leaves_it_unknown(w: &World) {
+    let (ws, mut site, robot_a, (a, address_a), (b, address_b)) = two_robots(w, "moved").await;
+    site.start(None);
+    let c = issue(&ws, robot_a, "warehouse.move", json!({"tote": "T"}), 60).await;
+    going(&ws, c).await;
+    site.kill();
+    // The robot's address changes in the site's file, with the mission still running at the old one.
+    let text = std::fs::read_to_string(&site.config).unwrap().replace(&address_a, &address_b);
+    std::fs::write(&site.config, text).unwrap();
+    site.start(None);
+    reaches(&ws, c, "OutcomeUnknown", 20).await;
+    assert_eq!((a.sent(c), b.sent(c)), (1, 0), "nothing was sent again, and the new address was not asked about it");
+    assert!(b.lookups.lock().unwrap().is_empty());
+}
+
+async fn a_power_cut_with_no_link_waits_for_someone_to_vouch_for_the_time(w: &World) {
+    let ws = workspace(w, "powercut").await;
+    let mut tx = ws.k.db.tenant_tx(ws.tenant).await.unwrap();
+    sqlx::query("insert into user_role (tenant_id, user_id, role) values ($1, $2, 'Ops Manager') on conflict do nothing")
+        .bind(ws.tenant)
+        .bind(ws.admin.user)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("insert into op_operator_pin (tenant_id, site_id, user_id, pin_hash) values ($1, $2, $3, $4)")
+        .bind(ws.tenant)
+        .bind(ws.site)
+        .bind(ws.admin.user)
+        .bind(ferrum_ops::identity::pin_hash("975310"))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let mut site = running(w, &ws, "").await;
+    until("the operator list", 10, async || !site.journal().operators().unwrap().is_empty()).await;
+    let parked = issue(&ws, ws.robot, "warehouse.move", json!({"tote": "P"}), 120).await;
+    site.kill();
+    // The link is gone and the machine came back from a power cut: the same file, another boot.
+    w.p.down.store(true, Ordering::SeqCst);
+    let mut tx = ws.k.db.tenant_tx(ws.tenant).await.unwrap();
+    let taken = commands::take_for_site(&mut tx, ws.tenant, &ws.slug, 1, 10).await.unwrap();
+    tx.commit().await.unwrap();
+    {
+        let j = site.journal();
+        for c in &taken {
+            j.receive(c, 0).unwrap();
+        }
+        let mut clock: Value = serde_json::from_str(&j.get("clock").unwrap().unwrap()).unwrap();
+        clock["boot"] = json!("another boot");
+        j.set("clock", &clock.to_string()).unwrap();
+    }
+    site.start(None);
+    until("the console", 10, async || site.console("GET", "/api/status", None, None).await.0 == 200).await;
+    let status = site.console("GET", "/api/status", None, None).await.1;
+    assert!(status["stopped"].as_str().unwrap().contains("restarted"), "{status}");
+    assert_eq!(status["clock_sure"], json!(false));
+    tokio::time::sleep(StdDuration::from_millis(600)).await;
+    assert_eq!(site.missions_for(parked), 0, "nobody can say how long it was off, so nothing new starts");
+    assert_eq!(site.console("POST", "/api/clock", None, Some(json!({"found": "x"}))).await.0, 401);
+    let (_, signed) = site.console("POST", "/api/login", None, Some(json!({"pin": "975310"}))).await;
+    let token = signed["token"].as_str().unwrap().to_string();
+    assert_eq!(site.console("POST", "/api/clock", Some(&token), Some(json!({"found": " "}))).await.0, 422, "saying so takes saying how you know");
+    assert_eq!(site.console("POST", "/api/clock", Some(&token), Some(json!({"found": "The wall clock in the office agrees"}))).await.0, 204);
+    until("it to start", 10, async || site.missions_for(parked) == 1).await;
+    w.p.down.store(false, Ordering::SeqCst);
+    reaches(&ws, parked, "Completed", 20).await;
+    let mut tx = ws.k.db.tenant_tx(ws.tenant).await.unwrap();
+    let said: i64 = sqlx::query_scalar("select count(*) from op_fact where kind = 'site.clock.vouched'").fetch_one(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(said, 1, "who said so reached the platform");
+}
+
 async fn what_the_lease_and_the_disk_allow(w: &World) {
     let ws = workspace(w, "limits").await;
     let mut site = running(w, &ws, "").await;
@@ -655,6 +900,26 @@ async fn people_at_the_console(w: &World) {
     let wrong_scans: i64 = sqlx::query_scalar("select count(*) from op_fact where kind = 'site.scan.mismatch'").fetch_one(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
     assert_eq!(wrong_scans, 1, "and the wrong one was kept");
+
+    // A task that names its load wants the load scanned too: the place says nothing about what is in it.
+    let loaded = issue(&ws, ws.station, "pick", json!({"item": "BOLT-8", "verify": "A-02", "load": {"item": ["400638", "BOLT-8"], "lot": "L-1"}}), 60).await;
+    until("the second task", 15, async || site.console("GET", "/api/work", Some(&token), None).await.1["tasks"].as_array().is_some_and(|t| !t.is_empty()))
+        .await;
+    let path = format!("/api/tasks/{loaded}/done");
+    let wrong = site.console("POST", &path, Some(&token), Some(json!({"scan": "A-02", "load": {"item": "NUT-4", "lot": "L-1"}}))).await;
+    assert_eq!(wrong.0, 409, "the right place, the wrong thing: {:?}", wrong.1);
+    assert_eq!(
+        site.console("POST", &path, Some(&token), Some(json!({"scan": "A-02", "load": {"item": "BOLT-8"}}))).await.0,
+        409,
+        "a lot not scanned is not a lot that matches"
+    );
+    assert_eq!(
+        site.console("POST", &path, Some(&token), Some(json!({"scan": "A-02", "load": {"item": "400638", "lot": "L-1"}}))).await.0,
+        204,
+        "by its barcode"
+    );
+    reaches(&ws, loaded, "Completed", 20).await;
+    assert_eq!(described(&ws, loaded).await["outcome"]["evidence"]["found"]["load"]["lot"], json!("L-1"), "what was scanned goes up as the evidence");
 
     // An unknown outcome is settled by a person, on the site, and that reaches the platform.
     site.fleet_silent(true);
