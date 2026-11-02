@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.1
+
+- The gateway's releases are static, so they run on any 64-bit Linux. Those of 0.3.0 needed glibc 2.39 and
+  would not start on Ubuntu 22.04, Debian 12 or Raspberry Pi OS Bookworm. Names now come from `/etc/hosts`
+  and DNS alone, so a `.local` name found by mDNS needs an address, or a build of your own. On ARM the
+  program sits at a fixed address, as Rust's static ARM target builds it, so it gets no address
+  randomization of its own; a build of your own keeps that too.
+- A static build uses mimalloc, because on musl's own allocator a gateway stored about 15% fewer readings
+  at full load. On one 4-core ARM machine it carries what 0.3.0 did, about 90,000 readings a second into
+  the journal, and peaks at about 75 MB of memory rather than 40.
+- A release is started on Ubuntu 22.04, Debian 12, CentOS 7 and Alpine, and passes the gateway's tests on
+  the C library it ships with, before anything is published. Both run on a pull request that changes
+  the release, so a tag is not the first time they are tried.
+
 ## 0.3.0
 
 - Customers who own devices: their people see those devices, their alarms and the dashboards given to

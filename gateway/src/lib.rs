@@ -18,6 +18,13 @@ pub mod runtime;
 pub mod sinks;
 pub mod update;
 
+// In the library rather than the binary, so that the tests run on what ships. On musl's own allocator
+// a gateway stored about 15% fewer readings at full load than the same code on glibc. This one stores
+// as many, for about 40 MB more memory.
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// A deliberate crash at a named point, for the recovery tests: set `FERRUM_SITE_CRASH_AT`.
 #[inline]
 pub fn crash_point(_name: &str) {
