@@ -132,7 +132,6 @@ async fn request(ctx: &Ctx, tx: &mut Tx, payload: &Value, at: DateTime<Utc>) -> 
             step_id: body["node"].as_str().map(str::to_string),
             correlation_id: None,
             issuer: Issuer::Automation,
-            ..Default::default()
         };
         match commands::issue(tx, ctx, cmd).await {
             Ok(_) => None,
