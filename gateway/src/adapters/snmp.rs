@@ -1,6 +1,6 @@
 //! SNMP versions 1 and 2c: reading and setting by OID, walking a table, and hearing traps. `community`
-//! is a password sent in the clear, so that it stays on a network that can bear it. Version 3 is not
-//! here.
+//! is a password sent in the clear, so that it stays on a network that can bear it. Version 3 is in
+//! [`super::snmp3`].
 //!
 //! `snmp://10.0.0.7:161?community=public&version=2c`, and `listen+snmp://0.0.0.0:162` for traps.
 
@@ -14,22 +14,25 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
-const GET: u8 = 0xa0;
-const NEXT: u8 = 0xa1;
-const RESPONSE: u8 = 0xa2;
-const SET: u8 = 0xa3;
+pub const GET: u8 = 0xa0;
+pub const NEXT: u8 = 0xa1;
+pub const RESPONSE: u8 = 0xa2;
+pub const SET: u8 = 0xa3;
+pub const REPORT: u8 = 0xa8;
 const TRAP_V1: u8 = 0xa4;
 const INFORM: u8 = 0xa6;
 const TRAP_V2: u8 = 0xa7;
 const INTEGER: u8 = 0x02;
-const OCTETS: u8 = 0x04;
+pub const OCTETS: u8 = 0x04;
 const NULL: u8 = 0x05;
 const OID: u8 = 0x06;
-const SEQUENCE: u8 = 0x30;
+pub const SEQUENCE: u8 = 0x30;
+/// A variable asked about, which has no value yet.
+pub const BIND_NULL: [u8; 2] = [NULL, 0];
 /// What a walk will bring back, at most.
 const MAX_WALK: usize = 5_000;
 
-fn tlv(kind: u8, body: &[u8]) -> Vec<u8> {
+pub fn tlv(kind: u8, body: &[u8]) -> Vec<u8> {
     let mut out = vec![kind];
     match body.len() {
         n @ 0..=127 => out.push(n as u8),
@@ -43,13 +46,13 @@ fn tlv(kind: u8, body: &[u8]) -> Vec<u8> {
     out
 }
 
-fn integer(n: i64) -> Vec<u8> {
+pub fn integer(n: i64) -> Vec<u8> {
     let bytes = n.to_be_bytes();
     let start = (0..7).find(|i| !((bytes[*i] == 0 && bytes[i + 1] < 0x80) || (bytes[*i] == 0xff && bytes[i + 1] >= 0x80))).unwrap_or(7);
     tlv(INTEGER, &bytes[start..])
 }
 
-fn oid_bytes(arcs: &[u32]) -> Vec<u8> {
+pub fn oid_bytes(arcs: &[u32]) -> Vec<u8> {
     let mut out = vec![(arcs[0] * 40 + arcs[1]) as u8];
     for arc in &arcs[2..] {
         let mut groups = vec![(*arc & 0x7f) as u8];
@@ -79,7 +82,7 @@ fn oid_text(b: &[u8]) -> String {
 }
 
 /// One tag, length and value from the front of `b`, and what comes after it.
-fn read(b: &[u8]) -> Option<(u8, &[u8], &[u8])> {
+pub fn read(b: &[u8]) -> Option<(u8, &[u8], &[u8])> {
     let kind = *b.first()?;
     let first = *b.get(1)?;
     let (length, at) = match first {
@@ -116,24 +119,15 @@ pub struct Pdu {
     pub bindings: Vec<(String, Value, u8)>,
 }
 
-pub fn parse(message: &[u8]) -> Option<Pdu> {
-    let (SEQUENCE, body, _) = read(message)? else { return None };
-    let (INTEGER, _, rest) = read(body)? else { return None };
-    let (OCTETS, _, rest) = read(rest)? else { return None };
-    let (kind, pdu, _) = read(rest)?;
-    let (id, error, bound) = if kind == TRAP_V1 {
-        // Enterprise, agent address, generic, specific and time, then the variables.
-        let mut rest = pdu;
-        for _ in 0..5 {
-            rest = read(rest)?.2;
-        }
-        (0, 0, rest)
-    } else {
-        let (INTEGER, a, r) = read(pdu)? else { return None };
-        let (INTEGER, b, r) = read(r)? else { return None };
-        let (INTEGER, _, r) = read(r)? else { return None };
-        (number_of(a, true), number_of(b, true), r)
-    };
+/// What is inside a request or a response: its id, its error, and its variables.
+pub fn split_pdu(pdu: &[u8]) -> Option<(i64, i64, Vec<(String, Value, u8)>)> {
+    let (INTEGER, a, r) = read(pdu)? else { return None };
+    let (INTEGER, b, r) = read(r)? else { return None };
+    let (INTEGER, _, r) = read(r)? else { return None };
+    Some((number_of(a, true), number_of(b, true), variables(r)?))
+}
+
+fn variables(bound: &[u8]) -> Option<Vec<(String, Value, u8)>> {
     let (SEQUENCE, mut list, _) = read(bound)? else { return None };
     let mut bindings = Vec::new();
     while !list.is_empty() {
@@ -143,6 +137,23 @@ pub fn parse(message: &[u8]) -> Option<Pdu> {
         bindings.push((oid_text(name), json_of(value_kind, value), value_kind));
         list = more;
     }
+    Some(bindings)
+}
+
+pub fn parse(message: &[u8]) -> Option<Pdu> {
+    let (SEQUENCE, body, _) = read(message)? else { return None };
+    let (INTEGER, _, rest) = read(body)? else { return None };
+    let (OCTETS, _, rest) = read(rest)? else { return None };
+    let (kind, pdu, _) = read(rest)?;
+    if kind == TRAP_V1 {
+        // Enterprise, agent address, generic, specific and time, then the variables.
+        let mut rest = pdu;
+        for _ in 0..5 {
+            rest = read(rest)?.2;
+        }
+        return Some(Pdu { kind, id: 0, error: 0, bindings: variables(rest)? });
+    }
+    let (id, error, bindings) = split_pdu(pdu)?;
     Some(Pdu { kind, id, error, bindings })
 }
 

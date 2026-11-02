@@ -86,6 +86,16 @@ export const KINDS: Kind[] = [
     defaults: { key: "" },
   },
   {
+    kind: "input",
+    label: "Way into this flow",
+    group: "Listen",
+    says: "For a flow other flows use: where they come in. On its own, a number of this name comes in here",
+    params: [{ name: "name", label: "Name", type: "text", required: true }],
+    ports: out,
+    inputs: [],
+    defaults: { name: "in" },
+  },
+  {
     kind: "timer",
     label: "A timer",
     group: "Listen",
@@ -381,6 +391,20 @@ export const KINDS: Kind[] = [
     inputs: ["in"],
   },
   {
+    kind: "use",
+    label: "Use a flow",
+    group: "Decide",
+    says: "An approved flow's steps, copied in when this is checked. What it uses is part of what is reviewed",
+    params: [
+      { name: "flow", label: "Flow", type: "text", required: true },
+      { name: "inputs", label: "Its ways in", type: "list", hint: "One to a line, as it names them" },
+      { name: "outputs", label: "Its ways out", type: "list", hint: "One to a line, as it names them" },
+    ],
+    ports: out,
+    inputs: ["in"],
+    defaults: { flow: "", inputs: ["in"], outputs: ["out"] },
+  },
+  {
     kind: "reassign",
     label: "Make it another's",
     group: "Decide",
@@ -416,6 +440,16 @@ export const KINDS: Kind[] = [
     ports: [],
     inputs: ["in"],
     defaults: { title: "" },
+  },
+  {
+    kind: "output",
+    label: "Way out of this flow",
+    group: "Do",
+    says: "For a flow other flows use: where they carry on from",
+    params: [{ name: "name", label: "Name", type: "text", required: true }],
+    ports: [],
+    inputs: ["in"],
+    defaults: { name: "out" },
   },
   {
     kind: "reply",
@@ -476,10 +510,11 @@ const byKind = new Map(KINDS.map((k) => [k.kind, k]));
 
 export const kindOf = (kind: string): Kind => byKind.get(kind) ?? { kind, label: kind, group: "Decide", says: "", params: [], ports: out, inputs: ["in"] };
 
-export const portsOf = (n: FlowNode): string[] => (n.kind === "switch" ? [...((n.cases as string[]) ?? []), "other"] : kindOf(n.kind).ports);
+export const portsOf = (n: FlowNode): string[] => (n.kind === "switch" ? [...((n.cases as string[]) ?? []), "other"] : n.kind === "use" ? ((n.outputs as string[]) ?? ["out"]) : kindOf(n.kind).ports)
 
 /** Ways in that exist on the canvas: a combine's are whatever has been wired to it, and one more. */
 export function inputsOf(flow: Flow, n: FlowNode): string[] {
+  if (n.kind === "use") return (n.inputs as string[]) ?? ["in"];
   const fixed = kindOf(n.kind).inputs;
   if (fixed) return fixed;
   return [...new Set(flow.edges.filter((e) => e.to === n.id).map((e) => e.input ?? "in"))];

@@ -103,6 +103,11 @@ pub enum Kind {
         device: String,
         key: String,
     },
+    /// A way into a flow other flows use. On its own, a number of this name comes in here, so that it
+    /// can be simulated and reviewed by itself.
+    Input {
+        name: String,
+    },
     /// Fires on its own, with the time as its value.
     Timer {
         #[serde(deserialize_with = "period")]
@@ -284,6 +289,10 @@ pub enum Kind {
         to: String,
     },
 
+    /// A way out of a flow other flows use. On its own, it only says what reached it.
+    Output {
+        name: String,
+    },
     /// Raises at `in`, clears at `clear`, once each, for each device.
     Alarm {
         name: String,
@@ -381,7 +390,7 @@ fn five_minutes() -> Duration {
 
 impl Kind {
     fn is_source(&self) -> bool {
-        matches!(self, Kind::Metric { .. } | Kind::State { .. } | Kind::Event { .. } | Kind::Attribute { .. } | Kind::Timer { .. })
+        matches!(self, Kind::Input { .. } | Kind::Metric { .. } | Kind::State { .. } | Kind::Event { .. } | Kind::Attribute { .. } | Kind::Timer { .. })
     }
 
     fn is_action(&self) -> bool {
@@ -396,6 +405,7 @@ impl Kind {
                 | Kind::Command { .. }
                 | Kind::Reply { .. }
                 | Kind::Log { .. }
+                | Kind::Output { .. }
         )
     }
 
@@ -878,7 +888,9 @@ impl Compiled {
         let at = run.at;
         let key = device.unwrap_or_default();
         match &node.kind {
-            Kind::Metric { .. } | Kind::State { .. } | Kind::Event { .. } | Kind::Attribute { .. } | Kind::Timer { .. } => out_of("out", value),
+            Kind::Input { .. } | Kind::Metric { .. } | Kind::State { .. } | Kind::Event { .. } | Kind::Attribute { .. } | Kind::Timer { .. } => {
+                out_of("out", value)
+            }
             Kind::Compare { op, value: right } => match compares(*op, &value, right) {
                 Some(true) => out_of("yes", value),
                 Some(false) => out_of("no", value),
@@ -1201,6 +1213,10 @@ impl Compiled {
                 }
                 vec![]
             }
+            Kind::Output { name } => {
+                run.out.effects.push(Effect::Log { node: id.to_string(), device: device.map(str::to_string), text: format!("{name}: {}", word(&value)) });
+                vec![]
+            }
             Kind::Log { text } => {
                 let said = match text {
                     Some(t) => fill(&json!(t), &value, device).map_or_else(|why| why, |v| word(&v)),
@@ -1296,6 +1312,7 @@ impl Compiled {
         let mut run = Run { state, at, out: Output::default(), known };
         let matched = |n: &Node| match &n.kind {
             Kind::Metric { device, metric } => input.metric.as_ref() == Some(metric) && device_matches(device, &input.device),
+            Kind::Input { name } => input.metric.as_ref() == Some(name),
             Kind::State { device } => input.state.is_some() && device_matches(device, &input.device),
             Kind::Event { device, name } => input.event.as_ref() == Some(name) && device_matches(device, &input.device),
             Kind::Attribute { device, key } => input.attribute.as_ref() == Some(key) && device_matches(device, &input.device),

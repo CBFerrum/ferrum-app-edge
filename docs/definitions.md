@@ -39,6 +39,7 @@ start and not a promise: none has been tried on the equipment it names ([compati
 | `ads://plc:48898?target=…&port=851&source=…` | TwinCAT ADS, by name and type: `MAIN.speed:real` |
 | `bacnet://controller:47808?priority=16` | BACnet/IP: `analog-input:1`, `binary-value:2/present-value` |
 | `snmp://device:161?community=public&version=2c` | SNMP v1 and v2c: an OID, or `walk:` and one |
+| `snmp://device:161?version=3&user=u&auth={secret.a}&priv={secret.p}&auth_hash=sha256` | SNMP v3: SHA-1 or SHA-256, and AES if `priv` is given |
 | `listen+snmp://0.0.0.0:162` | Traps and informs |
 | `knx://interface:3671` | KNX over IP. `subscribe` and `node` say `1/2/3:dpt9` |
 | `iec104://rtu:2404?ca=1` | IEC 60870-5-104: `interrogate`, `single:4001`, `double:4002`, `setpoint:4003` |

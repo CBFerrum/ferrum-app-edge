@@ -35,6 +35,8 @@ export interface Widget {
   kind?: string;
   columns?: string;
   limit?: number;
+  /** Where a link or a table's rows go: another dashboard, with the device as its `device` variable. */
+  board?: string;
 }
 
 export interface Variable {
@@ -95,7 +97,7 @@ export const KINDS: Kind[] = [
     group: "Lists",
     w: 6,
     h: 5,
-    params: [{ name: "kind", label: "Kind of device", type: "text", hint: "Every kind, if empty" }, { name: "columns", label: "Metrics to show", type: "text", hint: "Separated by commas" }, limit],
+    params: [{ name: "board", label: "Rows open the dashboard", type: "text", hint: "Its address, after /dashboards/. Each row sets its device variable" }, { name: "kind", label: "Kind of device", type: "text", hint: "Every kind, if empty" }, { name: "columns", label: "Metrics to show", type: "text", hint: "Separated by commas" }, limit],
   },
   { type: "alarms", label: "Alarms", group: "Lists", w: 6, h: 5, params: [{ ...device, hint: "Every device, if empty" }, limit] },
   { type: "events", label: "Events", group: "Lists", w: 6, h: 5, params: [device, limit] },
@@ -109,6 +111,7 @@ export const KINDS: Kind[] = [
     params: [device, { name: "operation", label: "Operation", type: "text", hint: "It goes through the ledger like any other command" }, { name: "payload", label: "With", type: "long", hint: "JSON" }],
   },
   { type: "setpoint", label: "Set a value", group: "Control", w: 3, h: 3, params: [device, { name: "attribute", label: "Attribute", type: "text" }, unit] },
+  { type: "link", label: "A link to a dashboard", group: "Words", w: 3, h: 2, params: [{ name: "board", label: "Dashboard", type: "text", hint: "Its address, after /dashboards/" }, { name: "text", label: "Says", type: "text" }, device] },
   { type: "text", label: "Text", group: "Words", w: 4, h: 3, params: [{ name: "text", label: "Text", type: "long", hint: "Markdown" }] },
 ];
 

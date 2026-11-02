@@ -28,7 +28,7 @@ the detail of what each thing was tried against.
 | Claiming by a device's secret | ThingsBoard | **Built** | |
 | Bulk import from CSV, with tokens | ThingsBoard PE, Hono | **Built** | |
 | LwM2M server | ThingsBoard, Hono | **Verified** | Against Eclipse Leshan's client, by plain text values. **No DTLS, no bootstrap, no TLV or SenML writes** |
-| SNMP v1 and v2c, traps and informs | ThingsBoard, EdgeX | **Verified** | Against PySNMP. **No v3** |
+| SNMP v1, v2c and v3, traps and informs | ThingsBoard, EdgeX | **Verified** | Against PySNMP: v3 with SHA-1 and AES, and SHA-256. Traps are v1 and v2c |
 | OCPP 1.6-J and 2.0.1 | ThingsBoard Gateway, OpenRemote | **Verified** | 1.6 against the Python `ocpp` library; 2.0.1 against frames written here. Security profiles 0 to 2. **No certificates (profile 3), no smart charging** |
 | Modbus TCP and RTU | Everyone | **Built** | Against a stand-in and a pseudo-terminal |
 | OPC UA client: watch, read, write, call, encryption, users, browse | Ignition, Kura, Azure IoT Operations | **Verified** | Against async-opcua's server |
@@ -71,7 +71,7 @@ the detail of what each thing was tried against.
 
 | Capability | Who has it | Status | Notes |
 |---|---|---|---|
-| Flow builder on a canvas | Node-RED, ThingsBoard, OpenRemote, StreamPipes, EMQX | **Verified** | 41 kinds of step, on real binaries |
+| Flow builder on a canvas | Node-RED, ThingsBoard, OpenRemote, StreamPipes, EMQX | **Verified** | 44 kinds of step, on real binaries |
 | Filter, enrich, transform, delta, geofence, dedupe, split, schedule | ThingsBoard rule nodes | **Built** | |
 | Answer a device | ThingsBoard | **Verified** | A flow answered Paho on real binaries |
 | Rule engine on the platform | ThingsBoard, OpenRemote | **Verified** | Flows that run on the platform, a closed minute at a time |
@@ -80,7 +80,7 @@ the detail of what each thing was tried against.
 | Review by someone else, one site first | Rarely anywhere | **Verified** | |
 | Live debugging of a flow | Node-RED, ThingsBoard | **Verified** | Real messages at each step, on real binaries |
 | Version history, export and import | ThingsBoard, Node-RED | **Built** | |
-| Sub-flows | Node-RED, ThingsBoard | **No** | Copy a flow, or split the work into two. It is the next thing to build here |
+| Sub-flows | Node-RED, ThingsBoard | **Built** | A reviewed flow is copied in, so what is simulated and run is the whole thing, and a change to what it uses means seeing it again |
 | Scripts in a flow | Node-RED function, ThingsBoard TBEL | **By design** | No code in a flow, so that it can be reviewed and cannot hang a gateway |
 | Loops | Node-RED | **By design** | Refused when it is checked |
 | Flows acting directly on equipment | Node-RED, ThingsBoard | **By design** | A flow asks the ledger |
@@ -107,7 +107,7 @@ the detail of what each thing was tried against.
 | Maps | ThingsBoard, OpenRemote | **Built** | Where devices say they are |
 | Controls that send commands | ThingsBoard, Ignition | **Verified** | Through the ledger |
 | Public read-only links | ThingsBoard | **Verified** | A link can read only what was laid out |
-| Drill-down states inside a dashboard | ThingsBoard | **Partly** | Variables, and links out. No states |
+| Drill-down between dashboards | ThingsBoard states | **Built** | Links and table rows open another dashboard with its device variable set |
 | Custom widgets in JavaScript | ThingsBoard | **By design** | No code a reviewer cannot read |
 | History: long ranges by rollup, short by sample | ThingsBoard, Ignition | **Verified** | |
 | Time-series at scale | ThingsBoard with Cassandra, TimescaleDB | **Partly** | PostgreSQL carries this to what one database can take. Past that, export to ClickHouse or InfluxDB |

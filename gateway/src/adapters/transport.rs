@@ -330,6 +330,7 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
                         "ads" => super::ads::Ads::connect(&rest).await,
                         "bacnet" => super::bacnet::Bacnet::connect(&rest).await,
                         "mbus" => super::mbus::Mbus::connect(&rest).await,
+                        _ if query(&rest, "version").as_deref() == Some("3") => super::snmp3::Snmp3::connect(&rest).await,
                         _ => super::snmp::Snmp::connect(&rest).await,
                     }
                 })

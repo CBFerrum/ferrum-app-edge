@@ -80,7 +80,8 @@ pub enum Query {
 }
 
 /// Every kind of widget, for checking what is saved.
-pub const WIDGETS: &[&str] = &["value", "gauge", "level", "state", "symbol", "line", "bars", "table", "alarms", "events", "map", "button", "setpoint", "text"];
+pub const WIDGETS: &[&str] =
+    &["value", "gauge", "level", "state", "symbol", "line", "bars", "table", "alarms", "events", "map", "button", "setpoint", "text", "link"];
 /// Those that change something, which a shared dashboard leaves out.
 pub const CONTROLS: &[&str] = &["button", "setpoint"];
 /// Widgets on one dashboard.

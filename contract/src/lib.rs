@@ -10,4 +10,5 @@ pub mod flow;
 pub mod mbus;
 pub mod ocpp;
 pub mod sparkplug;
+pub mod subflow;
 pub mod tags;

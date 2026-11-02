@@ -211,6 +211,8 @@ impl DocHook for FlowHook {
         let me = hc.ctx.email.clone();
         let now = chrono::Utc::now().to_rfc3339();
         let platform = s(doc, "runs_at") == Some("Platform");
+        let used = usable_flows(hc.tx, hc.ctx.tenant, record).await?;
+        let whole = whole_flow(&body, &used).map_err(|why| Error::field("body", why))?;
         // A step that needs a gateway is found here and not by a flow that quietly does nothing.
         let parsed = |body: &str| {
             let flow = ferrum_edge_contract::flow::parse(body).map_err(|why| Error::field("body", why))?;
@@ -223,7 +225,7 @@ impl DocHook for FlowHook {
         match name {
             "submit_for_review" => {
                 flow_step(&status, &["Draft"], "sent for review")?;
-                let flow = parsed(&body)?;
+                let flow = parsed(&whole)?;
                 if s(doc, "simulated_digest") != Some(flow.digest.as_str()) {
                     return Err(Error::invalid("simulate this version first: a reviewer should see what it does, not only what it says"));
                 }
@@ -244,7 +246,7 @@ impl DocHook for FlowHook {
                 if s(doc, "submitted_by") == Some(me.as_str()) {
                     return Err(Error::Forbidden("someone else has to review what you sent".into()));
                 }
-                parsed(&body)?;
+                parsed(&whole)?;
                 values.insert("status".into(), json!("Approved"));
                 values.insert("approved_by".into(), json!(me));
                 values.insert("approved_at".into(), json!(now));
@@ -252,17 +254,20 @@ impl DocHook for FlowHook {
             "activate" => {
                 reviewer(hc.ctx)?;
                 flow_step(&status, &["Approved"], "run")?;
-                parsed(&body)?;
+                // What it uses may have changed since it was seen. What runs has to be what was seen.
+                if s(doc, "simulated_digest") != Some(parsed(&whole)?.digest.as_str()) {
+                    return Err(Error::invalid("a flow this uses has changed: draft it again, and simulate it"));
+                }
                 let revision = doc.get("revision").and_then(Value::as_i64).unwrap_or(0) + 1;
                 sqlx::query("insert into edge_flow_version (tenant_id, flow_id, revision, body, by_whom) values ($1, $2, $3, $4, $5)")
                     .bind(hc.ctx.tenant)
                     .bind(record)
                     .bind(revision)
-                    .bind(&body)
+                    .bind(&whole)
                     .bind(&me)
                     .execute(&mut **hc.tx)
                     .await?;
-                values.insert("published_body".into(), json!(body));
+                values.insert("published_body".into(), json!(whole));
                 values.insert("revision".into(), json!(revision));
                 values.insert("live".into(), json!(true));
                 values.insert("activated_by".into(), json!(me));
@@ -291,6 +296,25 @@ impl DocHook for FlowHook {
         ferrum_kernel::audit::record(hc.tx, hc.ctx, "EdgeFlow", record, &format!("edge.flow.{name}"), None, json!({"by": me})).await?;
         Ok(Some(json!({"done": name})))
     }
+}
+
+/// What flows may use: those that have been reviewed. A flow does not use itself.
+pub(crate) async fn usable_flows(tx: &mut ferrum_kernel::Tx, tenant: Uuid, not: Uuid) -> Result<Vec<(String, String)>> {
+    Ok(sqlx::query_as("select flow_name, body from e_edge_flow where tenant_id = $1 and id <> $2 and status = 'Approved' and body is not null")
+        .bind(tenant)
+        .bind(not)
+        .fetch_all(&mut **tx)
+        .await?)
+}
+
+/// A flow with what it uses copied in, which is what is checked, reviewed and run.
+pub(crate) fn whole_flow(body: &str, used: &[(String, String)]) -> std::result::Result<String, String> {
+    if !body.contains("\"use\"") {
+        return Ok(body.to_string());
+    }
+    let parsed: Value = serde_json::from_str(body).map_err(|e| e.to_string())?;
+    let find = |name: &str| used.iter().find(|(n, _)| n == name).and_then(|(_, b)| serde_json::from_str(b).ok());
+    ferrum_edge_contract::subflow::expand(&parsed, &find).map(|whole| whole.to_string())
 }
 
 /// What gateways report, in any order and at least once, which [`facts`] is written for.

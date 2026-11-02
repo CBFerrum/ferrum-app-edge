@@ -48,7 +48,7 @@ required* per device model, and the templates in `templates` are starts, not sup
 | EtherNet/IP | cpppo 5.2: read, write, arrays, direct and through a slot | Any Logix controller |
 | TwinCAT ADS | pyads 3.6's test server: symbols, read, write | Any TwinCAT runtime, routes |
 | BACnet/IP | BACpypes3: analog and binary values, names, a commandable write, a refused read | Any controller, foreign device registration |
-| SNMP v1, v2c | PySNMP 7.1: get, set, a missing OID, a trap and an inform | Any device's MIB, v3 |
+| SNMP v1, v2c, v3 | PySNMP 7.1: get, set, a missing OID, a trap and an inform, and v3 with SHA-1 and AES, SHA-256, and a wrong password. The key derivation matches RFC 3414's example | Any device's MIB, v3 traps |
 | KNX | A stand-in written from the specification (`gateway/tests/knx_it.rs`). Nothing independent could run as an interface | Any interface, any bus |
 | IEC 60870-5-104 | lib60870's server: interrogation and spontaneous data on real sockets. Commands were sent, and it did not hang up | Any RTU, redundancy groups |
 | M-Bus | Frames built here and read the same by pyMeterBus 0.8 | Any meter, any level converter |
@@ -87,7 +87,7 @@ two steps cost. **What a gateway sustains is not measured**: it depends on its d
 | What | Why, and what it would take |
 |---|---|
 | DNP3, DLMS/COSEM, PROFINET, EtherCAT, CANopen as such | Not built. An external driver is the way, and PROFINET and EtherCAT belong to a controller anyway |
-| SNMP v3, LwM2M over DTLS, CoAP over DTLS | Not built, so those stay on private networks |
+| LwM2M over DTLS, CoAP over DTLS | Not built, so those stay on private networks |
 | OPC UA history, alarms and conditions, a server of our own | Not built |
 | ROS 2 by DDS directly | Through rosbridge. A vendor-qualified adapter as a process of its own is the rule |
 | EPCIS | Not built |

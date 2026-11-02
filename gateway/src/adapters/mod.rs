@@ -17,6 +17,7 @@ pub mod operator;
 pub mod s7;
 pub mod sim;
 pub mod snmp;
+pub mod snmp3;
 pub mod sql;
 pub mod tags;
 pub mod transport;

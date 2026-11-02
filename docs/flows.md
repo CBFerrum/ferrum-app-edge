@@ -58,6 +58,14 @@ A device that asks a gateway something (`v1/devices/me/rpc/request/{id}`, or `PO
 event called `rpc.request`, holding its `id`, `method` and `params`. A flow can choose by `$.method`
 and *answer the device*, so a device that wants the time, a limit or a setting needs no platform.
 
+## One flow inside another
+
+A flow with *way into this flow* and *way out of this flow* steps can be used by others, with *use a
+flow*, once it has been approved. Its steps are copied in when the flow is checked, so what a reviewer
+simulates and a gateway runs is the whole of it, and a gateway has nothing to look up. If the flow
+it uses changes after it was seen, the flow that uses it will not run until it has been drafted,
+simulated and reviewed again, because what was seen would no longer be what runs.
+
 ## From a drawing to running
 
 | Stage | What happens | Who |
