@@ -8,6 +8,8 @@
 - Reports by the clock, by email, as CSV or PDF.
 - Pages hear on the platform's socket that readings landed, and ask again at once.
 - A workspace's allowance of measurements a day: past it, gateways hold readings until there is room.
+- CoAP and LwM2M over DTLS, by pre-shared key, so they can leave a private network: `listen+coaps` and
+  `listen+lwm2ms`. Met Eclipse Leshan's client.
 - ThingsBoard's own Python client works against a gateway unchanged, in CI, for devices and gateways.
   It found a real fault: its firmware subscription did not match the chunks, so a download hung.
 - Modbus TCP against pymodbus, and Sparkplug payloads against Eclipse Tahu's definitions, in CI.

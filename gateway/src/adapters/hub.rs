@@ -167,6 +167,12 @@ impl Hub {
         *self.directory.write().unwrap_or_else(|e| e.into_inner()) = directory;
     }
 
+    /// A device's key for DTLS: the hash of its token, which is what is held here.
+    pub fn key_of(&self, device: &str) -> Option<Vec<u8>> {
+        let directory = self.directory.read().unwrap_or_else(|e| e.into_inner());
+        directory.tokens.iter().find(|(_, code)| *code == device).and_then(|(token, _)| hex::decode(token).ok())
+    }
+
     pub fn who(&self, proof: &Proof<'_>) -> Option<String> {
         self.directory.read().unwrap_or_else(|e| e.into_inner()).who(proof)
     }

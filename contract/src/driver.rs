@@ -60,6 +60,7 @@ pub const SCHEMES: &[&str] = &[
     "listen+http",
     "listen+https",
     "listen+coap",
+    "listen+coaps",
     "s7",
     "enip",
     "ads",
@@ -77,6 +78,7 @@ pub const SCHEMES: &[&str] = &[
     "file",
     "ftp",
     "listen+lwm2m",
+    "listen+lwm2ms",
     "mtconnect",
     "mtconnects",
     "postgres",
@@ -89,10 +91,11 @@ pub const SCHEMES: &[&str] = &[
 ];
 
 /// What is read and written a named thing at a time, with `node`.
-const TAGGED: &[&str] = &["opcua", "s7", "enip", "ads", "bacnet", "snmp", "knx", "iec104", "dnp3", "mbus", "listen+lwm2m", "postgres", "sqlite", "dlms"];
+const TAGGED: &[&str] =
+    &["opcua", "s7", "enip", "ads", "bacnet", "snmp", "knx", "iec104", "dnp3", "mbus", "listen+lwm2m", "listen+lwm2ms", "postgres", "sqlite", "dlms"];
 
 /// What devices can prove themselves on.
-const DEVICE_SERVERS: [&str; 7] = ["listen+mqtt", "listen+mqtts", "listen+http", "listen+https", "listen+coap", "listen+ocpp", "listen+ocpps"];
+const DEVICE_SERVERS: [&str; 8] = ["listen+mqtt", "listen+mqtts", "listen+http", "listen+https", "listen+coap", "listen+coaps", "listen+ocpp", "listen+ocpps"];
 
 /// The longest message a site will assemble. A stream that never frames costs this much, not memory.
 pub const MAX_FRAME: usize = 1 << 20;
@@ -1390,7 +1393,7 @@ pub fn parse(text: &str) -> Result<Compiled, String> {
             return Err(format!("also: {other} is not a way for devices to call in"));
         }
     }
-    if matches!(scheme_of, Some("listen+http" | "listen+https" | "listen+coap")) && d.api != Some(Api::Device) {
+    if matches!(scheme_of, Some("listen+http" | "listen+https" | "listen+coap" | "listen+coaps")) && d.api != Some(Api::Device) {
         return Err("connect: this speaks the device API: say api: device".into());
     }
     if matches!(scheme_of, Some("listen+ocpp" | "listen+ocpps")) != (d.api == Some(Api::Ocpp)) {

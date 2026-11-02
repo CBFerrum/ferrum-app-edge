@@ -21,13 +21,13 @@ the detail of what each thing was tried against.
 | Device described as data | ThingsBoard profiles, EdgeX, OpenRemote | **Verified** | Definitions, tried on a sample, reviewed, published to gateways |
 | Device API over MQTT 3.1, 3.1.1, 5 | ThingsBoard | **Verified** | ThingsBoard's own topics, against Paho, rumqttc and ThingsBoard's own Python client, unchanged, in CI |
 | Device API over HTTP | ThingsBoard | **Verified** | ThingsBoard's paths, against curl |
-| Device API over CoAP, with Observe and blocks | ThingsBoard | **Verified** | Against aiocoap. **No DTLS** |
+| Device API over CoAP, with Observe and blocks | ThingsBoard | **Verified** | Against aiocoap, and `listen+coaps` over DTLS by pre-shared key. **No certificates over DTLS** |
 | Gateway API for devices behind a device | ThingsBoard | **Verified** | `v1/gateway/*`, against rumqttc and ThingsBoard's own gateway client, unchanged, in CI |
 | Access tokens, basic MQTT credentials, X.509 | ThingsBoard, Hono | **Verified** | Only hashes reach a gateway |
 | Device provisioning by a shared key | ThingsBoard | **Verified** | It adds a device that reports, and takes no command until commissioned |
 | Claiming by a device's secret | ThingsBoard | **Built** | |
 | Bulk import from CSV, with tokens | ThingsBoard PE, Hono | **Built** | |
-| LwM2M server | ThingsBoard, Hono | **Verified** | Against Eclipse Leshan's client, by plain text values. **No DTLS, no bootstrap, no TLV or SenML writes** |
+| LwM2M server | ThingsBoard, Hono | **Verified** | Against Eclipse Leshan's client, plain and over DTLS by pre-shared key, whose identity has to be the name it registers under, by plain text values. **No bootstrap, no TLV or SenML writes** |
 | SNMP v1, v2c and v3, traps and informs | ThingsBoard, EdgeX | **Verified** | Against PySNMP: v3 with SHA-1 and AES, and SHA-256. Traps are v1 and v2c |
 | OCPP 1.6-J and 2.0.1 | ThingsBoard Gateway, OpenRemote | **Verified** | 1.6 against the Python `ocpp` library; 2.0.1 against frames written here. Security profiles 0 to 2. **No certificates (profile 3), no smart charging** |
 | Modbus TCP and RTU | Everyone | **Verified** | TCP against pymodbus, in CI: typed reads, and writes read back. RTU against a pseudo-terminal only |
