@@ -37,7 +37,7 @@ start and not a promise: none has been tried on the equipment it names ([compati
 | `s7://plc:102?rack=0&slot=1` | Siemens S7: `DB1.DBD0:real`, `MW10`, `M0.1`, `I0.1` |
 | `enip://plc:44818?slot=0` | EtherNet/IP, by tag: `Line.Speed`, `Temps[3]` |
 | `ads://plc:48898?target=…&port=851&source=…` | TwinCAT ADS, by name and type: `MAIN.speed:real` |
-| `bacnet://controller:47808?priority=16` | BACnet/IP: `analog-input:1`, `binary-value:2/present-value` |
+| `bacnet://controller:47808?priority=16` | BACnet/IP: `analog-input:1`, `binary-value:2/present-value`. `discover` asks who is there, and a broadcast address asks a whole network |
 | `snmp://device:161?community=public&version=2c` | SNMP v1 and v2c: an OID, or `walk:` and one |
 | `snmp://device:161?version=3&user=u&auth={secret.a}&priv={secret.p}&auth_hash=sha256` | SNMP v3: SHA-1 or SHA-256, and AES if `priv` is given |
 | `listen+snmp://0.0.0.0:162` | Traps and informs |

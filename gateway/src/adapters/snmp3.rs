@@ -163,6 +163,61 @@ fn opened(message: &[u8]) -> Option<(u8, Vec<&[u8]>, &[u8], u8)> {
     Some((*flags.first()?, parts, data, kind))
 }
 
+/// Who may send traps in version 3. A sender's engine is the authority for its own traps, so its
+/// keys are worked out for whichever engine a trap says it came from.
+// ponytail: boots and time are not checked against a sender's clock, so a recorded trap can be
+// replayed. Keeping a clock per sender is the fix, and a trap only ever says something happened.
+pub struct TrapUser {
+    user: String,
+    hash: Hash,
+    auth: Option<String>,
+    private: Option<String>,
+}
+
+impl TrapUser {
+    /// From `?user=u&auth=..&priv=..&auth_hash=sha256`, if it names a user.
+    pub fn from_address(rest: &str) -> Option<TrapUser> {
+        let hash = if query(rest, "auth_hash").as_deref() == Some("sha256") { Hash::Sha256 } else { Hash::Sha1 };
+        Some(TrapUser { user: query(rest, "user")?, hash, auth: query(rest, "auth"), private: query(rest, "priv") })
+    }
+
+    /// What a trap says, if it is from this user, is signed as it should be, and reads.
+    pub fn open(&self, message: &[u8]) -> Option<(u8, Vec<(String, Value, u8)>)> {
+        let (flags, parts, data, _) = opened(message)?;
+        let [engine, boots, time, user, tag, salt] = parts[..] else { return None };
+        if user != self.user.as_bytes() {
+            return None;
+        }
+        if let Some(password) = &self.auth {
+            if flags & AUTH == 0 {
+                return None;
+            }
+            let at = message.windows(tag.len()).position(|w| w == tag)?;
+            let mut blanked = message.to_vec();
+            blanked[at..at + tag.len()].fill(0);
+            if self.hash.tag(&localized_key(self.hash, password, engine), &blanked) != tag {
+                return None;
+            }
+        }
+        let plain = match &self.private {
+            Some(password) => {
+                if flags & PRIVATE == 0 {
+                    return None;
+                }
+                let (OCTETS, cipher, _) = read(data)? else { return None };
+                let key = localized_key(self.hash, password, engine);
+                decrypted(&key, number_of(boots), number_of(time), u64::from_be_bytes(salt.try_into().ok()?), cipher)
+            }
+            None => data.to_vec(),
+        };
+        let (SEQUENCE, body, _) = read(&plain)? else { return None };
+        let (_, _, rest) = read(body)?;
+        let (_, _, rest) = read(rest)?;
+        let (kind, pdu, _) = read(rest)?;
+        Some((kind, split_pdu(pdu)?.2))
+    }
+}
+
 impl Snmp3 {
     pub async fn connect(rest: &str) -> Result<Box<dyn Tags>, String> {
         let (host, port) = host_port(rest, 161);
@@ -327,6 +382,29 @@ impl Tags for Snmp3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_trap_is_believed_only_from_its_user() {
+        let engine = Engine { id: vec![0x80, 0, 0, 1], boots: 3, time: 90 };
+        let pdu = tlv(0xa7, &[integer(1), integer(0), integer(0), tlv(SEQUENCE, &[])].concat());
+        let plain = scoped(&engine.id, pdu);
+        let key = localized_key(Hash::Sha1, "auth-password", &engine.id);
+        let private = localized_key(Hash::Sha1, "priv-password", &engine.id);
+        let salt = 7u64;
+        let cipher = tlv(OCTETS, &encrypted(&private, engine.boots, engine.time, salt, &plain));
+        let blank = vec![0u8; Hash::Sha1.tag_size()];
+        let unsigned = whole(1, AUTH | PRIVATE, &parameters(&engine, "watcher", &blank, &salt.to_be_bytes()), cipher.clone());
+        let tag = Hash::Sha1.tag(&key, &unsigned);
+        let signed = whole(1, AUTH | PRIVATE, &parameters(&engine, "watcher", &tag, &salt.to_be_bytes()), cipher);
+
+        let user = |name: &str, auth: &str| TrapUser { user: name.into(), hash: Hash::Sha1, auth: Some(auth.into()), private: Some("priv-password".into()) };
+        assert_eq!(user("watcher", "auth-password").open(&signed).map(|(kind, _)| kind), Some(0xa7));
+        assert!(user("watcher", "wrong").open(&signed).is_none(), "a wrong password fails its signature");
+        assert!(user("somebody", "auth-password").open(&signed).is_none(), "another user");
+        let mut altered = signed.clone();
+        *altered.last_mut().unwrap() ^= 1;
+        assert!(user("watcher", "auth-password").open(&altered).is_none(), "and anything changed on the way");
+    }
 
     #[test]
     fn a_password_becomes_the_key_rfc_3414_says() {

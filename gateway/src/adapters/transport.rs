@@ -350,7 +350,7 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
                 })
             }))
         }
-        "listen+snmp" => Arc::new(super::snmp::Traps { address: bind.to_string() }),
+        "listen+snmp" => Arc::new(super::snmp::Traps { address: bind.to_string(), user: super::snmp3::TrapUser::from_address(rest) }),
         #[cfg(feature = "ws")]
         "listen+ocpp" | "listen+ocpps" => {
             let address = bind.split('/').next().unwrap_or(bind).to_string();
