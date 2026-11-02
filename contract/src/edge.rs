@@ -146,10 +146,18 @@ pub const EXPORT_SCHEMES: &[&str] = &[
     "sparkplug",
     "sparkplugs",
     "listen+opcua",
+    "postgres",
 ];
 
 /// Whether an export's address can work, for saying so when it is saved. A password has no place
 /// in one: it would reach every gateway and every backup. It belongs to the site, as a secret.
+/// A table's name as a query can hold it, with its schema if it says one.
+pub fn a_table(name: &str) -> bool {
+    let plain = |part: &str| part.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    let parts: Vec<&str> = name.split('.').collect();
+    parts.len() <= 2 && parts.iter().all(|p| plain(p))
+}
+
 pub fn check_export(to: &str) -> Result<(), String> {
     let (scheme, rest) = to.split_once("://").ok_or("say where: https://historian/in, nats://bus:4222")?;
     if !EXPORT_SCHEMES.contains(&scheme) {
@@ -161,6 +169,12 @@ pub fn check_export(to: &str) -> Result<(), String> {
     }
     if authority.rsplit_once('@').is_some_and(|(login, _)| login.contains(':')) {
         return Err("a password goes in a secret at the site, not here".into());
+    }
+    if scheme == "postgres" {
+        let table = rest.split_once("table=").map(|(_, t)| t.split('&').next().unwrap_or(t));
+        if !table.is_some_and(a_table) {
+            return Err("say ?table= with the name of a table".into());
+        }
     }
     Ok(())
 }
@@ -379,6 +393,16 @@ impl Watch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_table_is_named_and_nothing_else() {
+        assert!(check_export("postgres://writer@historian/plant?table=readings").is_ok());
+        assert!(check_export("postgres://writer@historian/plant?table=plant.readings").is_ok());
+        assert!(check_export("postgres://writer@historian/plant").is_err(), "which table");
+        for bad in ["readings;drop table x", "a.b.c", "1x", "a b", "\"x\""] {
+            assert!(!a_table(bad), "{bad}");
+        }
+    }
 
     #[test]
     fn an_export_says_where_and_keeps_its_password_to_itself() {

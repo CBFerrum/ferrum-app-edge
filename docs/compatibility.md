@@ -44,7 +44,7 @@ required* per device model, and the templates in `templates` are starts, not sup
 | Device API | ThingsBoard's own Python client 1.13, unchanged, as a device and as a gateway, with firmware, in CI. Eclipse Paho 2.1 and 1.6 (MQTT 3.1.1), rumqttc v4 and v5, curl, aiocoap 0.4.17 | Any device's firmware, ThingsBoard's other SDKs |
 | Modbus TCP and RTU | pymodbus 3.16 over TCP, in CI, and a stand-in on a pseudo-terminal with two units | Any PLC, a real RS-485 bus, CRC errors on the line |
 | OPC UA | async-opcua 0.19's own server: None, and Basic256Sha256 with SignAndEncrypt, users, server trust by certificate, and browsing (`gateway/tests/protocols_it.rs`) | Any commercial server. Events have not been raised by anything |
-| OPC UA, the other way | asyncua 2.1, in CI: as a client of a gateway's server, browsing, reading, subscribing and refused a write; as a server, its events and its history. A server's login, encryption and certificates against async-opcua's client. Two faults it found here are fixed: a select clause it could not read, and a device clock running ahead holding a value back | Any SCADA or historian. Acknowledging a condition has met no server |
+| OPC UA, the other way | asyncua 2.1, in CI: as a client of a gateway's server, browsing, reading, subscribing and refused a write; as a server, its events and its history. A server's login, encryption and certificates against async-opcua's client. Two faults it found here are fixed: a select clause it could not read, and a device clock running ahead holding a value back. open62541's alarm server by hand: a condition enabled, raised, and acknowledged by the ids in its event | Any SCADA or historian |
 | Siemens S7 | python-snap7 3.3's server: reads of every type, writes, strings, a missing block, and on real binaries through a gateway. Its server treats a bit write as a byte, so bits have not met a faithful peer | Any PLC |
 | EtherNet/IP | cpppo 5.2: read, write, arrays, direct and through a slot | Any Logix controller |
 | TwinCAT ADS | pyads 3.6's test server: symbols, read, write | Any TwinCAT runtime, routes |
@@ -84,7 +84,20 @@ required* per device model, and the templates in `templates` are starts, not sup
 Measured on an Apple M1 Pro, in release, with `contract/tests/load.rs`: decoding alone,
 369,000 JSON messages a second with three values each, 1,040,000 Modbus reads, 12,000 Sparkplug
 messages of twenty metrics, and 269,000 readings a second through a five-step flow. That is what those
-two steps cost. **What a gateway sustains is not measured**: it depends on its disk and network.
+two steps cost.
+
+End to end, with `scripts/soak.py`: one device publishing over MQTT at QoS 0, through one gateway's journal
+and the platform, to rows in PostgreSQL with its default settings. An Apple M1 Pro with everything on
+it, publisher included, built in release without link-time optimization:
+
+| Offered | Happened |
+|---|---|
+| 28,500 readings a second for 20 seconds | All of them stored, 22 seconds after starting. Nothing dropped or shed |
+| 100,000 a second for 20 seconds | About 74,000 a second taken at the gateway, and 37,000 a second stored, sustained. The rest counted on `/metrics` as dropped, and none lost silently |
+| 7,500 a second with the platform killed for 30 seconds | About 225,000 kept at the gateway. All of them stored 32 seconds after the platform came back |
+
+**This is one gateway on one machine for under a minute.** Many gateways on one platform, hours of it, a
+real network, a gateway's own disk, and what happens as `op_measurement` grows are not measured.
 
 ## Known unsupported, for now
 

@@ -14,6 +14,10 @@
 - OCPP security profile 3: a charger known by its certificate. Charging profiles go as commands.
 - Templates for The Things Stack, Sigfox, LORIOT, ThingPark, AWS IoT Core and Azure Event Hubs. `bytes:`
   decodes a payload delivered inside JSON, and `device:` can come from the message.
+- An export to a table of your own in PostgreSQL.
+- A backlog drains as fast as the platform takes it, rather than 5,000 readings each `sync_secs`, and a
+  link piling up wakes the reader, rather than dropping them until its next `read_secs`. One gateway went
+  from about 1,000 stored a second to 28,500 with nothing lost. `scripts/soak.py` measures it.
 - AAS Part 2's repository, reading only, and what scanners saw as a GS1 EPCIS 2.0 document.
 - `ferrum-site release-key` and `sign`, and a workflow that builds the gateway on a tag.
 - ThingsBoard's own Python client works against a gateway unchanged, in CI, for devices and gateways.

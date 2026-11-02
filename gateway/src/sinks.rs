@@ -367,6 +367,32 @@ fn why_closed(payload: &[u8]) -> String {
     payload.get(7..7 + length).map_or_else(|| "it closed the connection".to_string(), |t| String::from_utf8_lossy(t).into_owned())
 }
 
+/// A table in a database of someone else's, for what is built around SQL. It wants columns `device`,
+/// `metric`, `value` and `at`. A unique index on those makes a repeated batch land once, and without
+/// one it lands twice, as any export can. `?table=` names it, and this is plain TCP: a control network
+/// is what keeps it safe.
+pub async fn postgres(url: &Url, bodies: &[String], secret: Option<&str>) -> Result<(), String> {
+    let table = query(url, "table").filter(|t| ferrum_edge_contract::edge::a_table(t)).ok_or("say ?table= with the name of a table")?;
+    let mut config = tokio_postgres::Config::new();
+    config.host(url.host_str().ok_or("it names no host")?).port(url.port().unwrap_or(5432)).user(url.username()).dbname(url.path().trim_start_matches('/'));
+    if let Some(secret) = secret {
+        config.password(secret);
+    }
+    let connected = timeout(PATIENCE, config.connect(tokio_postgres::NoTls)).await.map_err(|_| "it did not answer")?;
+    let (client, connection) = connected.map_err(|e| e.to_string())?;
+    tokio::spawn(connection);
+    let rows: Vec<Value> = bodies.iter().filter_map(|b| serde_json::from_str(b).ok()).collect();
+    let text = |key: &str| rows.iter().map(|r| r[key].as_str().unwrap_or_default().to_string()).collect::<Vec<_>>();
+    let values: Vec<f64> = rows.iter().map(|r| r["value"].as_f64().unwrap_or(f64::NAN)).collect();
+    let statement = format!(
+        "insert into {table} (device, metric, value, at) select d, m, v, a::timestamptz from unnest($1::text[], $2::text[], $3::float8[], $4::text[]) as t(d, m, v, a) where v = v on conflict do nothing"
+    );
+    let (devices, metrics, times) = (text("device"), text("metric"), text("at"));
+    let inserted = timeout(PATIENCE, client.execute(&statement, &[&devices, &metrics, &values, &times])).await;
+    inserted.map_err(|_| "it did not answer")?.map_err(|e| e.as_db_error().map_or_else(|| e.to_string(), |d| d.message().to_string()))?;
+    Ok(())
+}
+
 fn tag(text: &str) -> String {
     text.replace('\\', "\\\\").replace(',', "\\,").replace('=', "\\=").replace(' ', "\\ ").replace('\n', "\\n")
 }

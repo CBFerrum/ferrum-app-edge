@@ -105,8 +105,8 @@ const MAX_TRACES: usize = 1_000;
 /// How often what flows remember is written down. A crash loses this much of a window or a hold.
 const FLOW_SAVE_MS: i64 = 15_000;
 
-/// How many readings go in one exchange. The platform takes ten times this.
-const MEASUREMENTS_AT_ONCE: i64 = 5_000;
+/// How many readings go in one exchange. The platform takes more than this.
+const MEASUREMENTS_AT_ONCE: i64 = 20_000;
 
 pub struct Runtime {
     pub cfg: Config,
@@ -1277,7 +1277,11 @@ impl Runtime {
         let reading = tokio::spawn(async move {
             loop {
                 reader.read_equipment().await;
-                tokio::select! { _ = s.changed() => return, _ = tokio::time::sleep(StdDuration::from_secs(reader.cfg.read_secs)) => {} }
+                tokio::select! {
+                    _ = s.changed() => return,
+                    _ = tokio::time::sleep(StdDuration::from_secs(reader.cfg.read_secs)) => {}
+                    () = reader.defined.pressing.notified() => {}
+                }
             }
         });
         let _ = tokio::join!(exchange, working, reading, managing, exporting);
