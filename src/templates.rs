@@ -14,6 +14,12 @@ macro_rules! templates {
 
 templates![
     "device-api.yaml",
+    "s7-plc.yaml",
+    "enip-logix.yaml",
+    "ads-twincat.yaml",
+    "bacnet-building.yaml",
+    "snmp-device.yaml",
+    "snmp-traps.yaml",
     "vda5050-3.yaml",
     "rosbridge.yaml",
     "open-rmf.yaml",

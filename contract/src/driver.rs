@@ -38,7 +38,7 @@ use std::time::Duration;
 
 /// The schemes a site can open. Anything else is an error when the definition is saved, not when it
 /// reaches a gateway at three in the morning.
-pub const SCHEMES: [&str; 21] = [
+pub const SCHEMES: &[&str] = &[
     "tcp",
     "udp",
     "serial",
@@ -60,7 +60,16 @@ pub const SCHEMES: [&str; 21] = [
     "listen+http",
     "listen+https",
     "listen+coap",
+    "s7",
+    "enip",
+    "ads",
+    "bacnet",
+    "snmp",
+    "listen+snmp",
 ];
+
+/// What is read and written a named thing at a time, with `node`.
+const TAGGED: &[&str] = &["opcua", "s7", "enip", "ads", "bacnet", "snmp"];
 
 /// What devices can prove themselves on.
 const DEVICE_SERVERS: [&str; 5] = ["listen+mqtt", "listen+mqtts", "listen+http", "listen+https", "listen+coap"];
@@ -1227,6 +1236,7 @@ fn check_step(what: &str, step: &Step, scheme: Option<&str>) -> Result<(), Strin
     let http = matches!(scheme, "http" | "https");
     let modbus = matches!(scheme, "modbus+tcp" | "modbus+rtu");
     let opcua = scheme == "opcua";
+    let tagged = TAGGED.contains(&scheme);
     let mqtt = matches!(scheme, "mqtt" | "mqtts");
     if step.method().is_some() && !http {
         return Err(format!("{what}: get, post, put, patch and delete are for http, and this connects by {scheme}"));
@@ -1237,13 +1247,19 @@ fn check_step(what: &str, step: &Step, scheme: Option<&str>) -> Result<(), Strin
     if (step.read.is_some() || !step.write.is_empty() || step.unit.is_some()) && !modbus {
         return Err(format!("{what}: read, write and unit are for Modbus, and this connects by {scheme}"));
     }
-    if (step.node.is_some() || step.call.is_some()) && !opcua {
-        return Err(format!("{what}: node and call are for opcua, and this connects by {scheme}"));
+    if step.node.is_some() && !tagged {
+        return Err(format!("{what}: node is for {}, and this connects by {scheme}", TAGGED.join(", ")));
+    }
+    if step.call.is_some() && !opcua {
+        return Err(format!("{what}: call is for opcua, and this connects by {scheme}"));
+    }
+    if let Some(node) = step.node.as_deref().filter(|n| !n.contains('{')) {
+        crate::tags::check(scheme, node).map_err(|why| format!("{what}: {why}"))?;
     }
     if step.call.is_some() && step.node.is_none() {
         return Err(format!("{what}: call needs the node it belongs to"));
     }
-    if opcua && step.node.is_none() && (step.send.is_some() || step.hex.is_some()) {
+    if tagged && step.node.is_none() && (step.send.is_some() || step.hex.is_some()) {
         return Err(format!("{what}: say which node this is for"));
     }
     if step.retain && !mqtt {
@@ -1298,10 +1314,31 @@ pub fn scheme(connect: &str) -> Option<&str> {
     connect.split_once("://").map(|(s, _)| s).filter(|s| SCHEMES.contains(s))
 }
 
+/// `tags:` is the short way to say what most equipment needs: a thing to read, how often, and what it
+/// is. Each one becomes a poll and a read rule, so nothing past here knows about them.
+fn expand_tags(raw: &mut Value) -> Result<(), String> {
+    let Some(tags) = raw.as_object_mut().and_then(|d| d.remove("tags")) else { return Ok(()) };
+    let tags = tags.as_array().cloned().ok_or("tags: this is a list")?;
+    for mut tag in tags {
+        let rule = tag.as_object_mut().ok_or("tags: each is a node and what it is")?;
+        let node = rule.remove("node").ok_or("tags: each needs a node")?;
+        let every = rule.remove("every").unwrap_or(json!("10s"));
+        rule.insert("topic".into(), node.clone());
+        rule.insert("json".into(), json!("$.value"));
+        let poll = raw.as_object_mut().ok_or("a definition is a map")?.entry("poll").or_insert(json!([]));
+        poll.as_array_mut().ok_or("poll: this is a list")?.push(json!({"every": every, "node": node}));
+        let read = raw.as_object_mut().ok_or("a definition is a map")?.entry("read").or_insert(json!([]));
+        read.as_array_mut().ok_or("read: this is a list")?.push(tag);
+    }
+    Ok(())
+}
+
 /// Reads and checks a definition. Every error names where it is, so a person can fix it from the
 /// message, and a definition that passes here cannot fail for its shape on a gateway.
 pub fn parse(text: &str) -> Result<Compiled, String> {
-    let definition: Definition = serde_yaml::from_str(text).map_err(|e| e.to_string())?;
+    let mut raw: Value = serde_yaml::from_str(text).map_err(|e| e.to_string())?;
+    expand_tags(&mut raw)?;
+    let definition: Definition = serde_json::from_value(raw).map_err(|e| e.to_string())?;
     let d = &definition;
     if d.name.trim().is_empty() {
         return Err("a definition needs a name".into());
@@ -1794,6 +1831,20 @@ commands:
         fails("name: x\nread:\n  - {metric: 'no spaces', json: $.a}", "not a metric");
         fails("name: x\nconnect: modbus+tcp://a:502\npoll:\n  - {every: 1s, send: hi}", "Modbus takes");
         fails("name: x\nconnect: tcp://a:1\npoll:\n  - {every: 1s, read: holding, at: 1}", "are for Modbus");
+    }
+
+    #[test]
+    fn tags_are_the_short_way_to_say_it() {
+        let c = parse("name: a\nconnect: s7://plc:102\ntags:\n  - {node: \"DB1.DBD0:real\", every: 2s, metric: temp.c, unit: C}\n  - {node: M0.1, state: true, map: {\"true\": Running, \"false\": Idle}}\n").unwrap();
+        assert_eq!(c.definition.poll.len(), 2);
+        assert_eq!(c.definition.poll[0].every, Duration::from_secs(2));
+        assert_eq!(c.definition.poll[1].every, Duration::from_secs(10), "unless it says");
+        assert_eq!(c.definition.poll[0].step.node.as_deref(), Some("DB1.DBD0:real"));
+        let got = c.decode("DB1.DBD0:real", br#"{"value": 21.5}"#);
+        assert!(matches!(&got[0], Decoded::Metric { metric, value, .. } if metric == "temp.c" && *value == 21.5), "{got:?}");
+        let bad = parse("name: a\nconnect: s7://plc:102\ntags:\n  - {node: Z1, metric: x}\n").err().unwrap();
+        assert!(bad.contains("S7 address"), "a wrong address is found when it is saved: {bad}");
+        assert!(parse("name: a\nconnect: tcp://x:1\ntags:\n  - {node: a, metric: x}\n").is_err(), "and tags are for what reads by name");
     }
 
     #[test]

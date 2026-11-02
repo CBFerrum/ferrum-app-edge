@@ -286,6 +286,22 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
         }),
         #[cfg(feature = "opcua")]
         "opcua" => Arc::new(super::opcua::Opcua::new(rest, subscribe, limits)?),
+        "s7" | "enip" | "ads" | "bacnet" | "snmp" => {
+            let (scheme, rest) = (scheme.to_string(), rest.to_string());
+            Arc::new(super::tags::Tagged::new(move || {
+                let (scheme, rest) = (scheme.clone(), rest.clone());
+                Box::pin(async move {
+                    match scheme.as_str() {
+                        "s7" => super::s7::S7::connect(&rest).await,
+                        "enip" => super::enip::Enip::connect(&rest).await,
+                        "ads" => super::ads::Ads::connect(&rest).await,
+                        "bacnet" => super::bacnet::Bacnet::connect(&rest).await,
+                        _ => super::snmp::Snmp::connect(&rest).await,
+                    }
+                })
+            }))
+        }
+        "listen+snmp" => Arc::new(super::snmp::Traps { address: bind.to_string() }),
         other => return Err(format!("this build cannot open {other}")),
     })
 }
