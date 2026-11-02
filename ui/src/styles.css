@@ -1,7 +1,7 @@
 /* Ferrum-Frontend's stylesheet (the kit's look and Tailwind), with the classes of the kit's
    components and of this app's files. */
-@import "../../../../web/src/index.css";
-@source "../../../../web/src";
+@import "../../../ferrum/web/src/index.css";
+@source "../../../ferrum/web/src";
 @source ".";
 
 .edge-page {
