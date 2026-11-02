@@ -119,9 +119,14 @@ fn peer(python: &str, kind: &str, port: u16) -> (Child, Lines) {
     (child, lines)
 }
 
+/// What it says next, past anything that is not one of its own lines: the library talks too.
 async fn next(lines: &mut Lines) -> Value {
-    let line = timeout(Wait::from_secs(30), lines.next_line()).await.expect("it said something").unwrap().expect("a line");
-    serde_json::from_str(&line).unwrap()
+    loop {
+        let line = timeout(Wait::from_secs(30), lines.next_line()).await.expect("it said something").unwrap().expect("a line");
+        if let Ok(said) = serde_json::from_str(&line) {
+            return said;
+        }
+    }
 }
 
 /// Reads what the library says until `key` comes, ignoring what comes first.
