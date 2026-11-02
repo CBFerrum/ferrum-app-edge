@@ -5,7 +5,7 @@
   <img alt="Ferrum IoT Edge" src="docs/assets/banner-light.svg" width="100%">
 </picture>
 
-[![CI](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-0.1.0-0369a1?style=flat-square) ![Ferrum](https://img.shields.io/badge/Ferrum-%3E%3D0.3%2C%20%3C0.4-2f5bea?style=flat-square) ![License](https://img.shields.io/badge/license-AGPL--3.0-3b82f6?style=flat-square) ![Rust](https://img.shields.io/badge/Rust-native%20app-b7410e?style=flat-square&logo=rust&logoColor=white) ![Interface](https://img.shields.io/badge/interface-React%20%2B%20Vite-0ea5e9?style=flat-square&logo=react&logoColor=white) ![MCP](https://img.shields.io/badge/AI%20agents-MCP-8b5cf6?style=flat-square)
+[![CI](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-0.2.0-0369a1?style=flat-square) ![Ferrum](https://img.shields.io/badge/Ferrum-%3E%3D0.3%2C%20%3C0.4-2f5bea?style=flat-square) ![License](https://img.shields.io/badge/license-AGPL--3.0-3b82f6?style=flat-square) ![Rust](https://img.shields.io/badge/Rust-native%20app-b7410e?style=flat-square&logo=rust&logoColor=white) ![Interface](https://img.shields.io/badge/interface-React%20%2B%20Vite-0ea5e9?style=flat-square&logo=react&logoColor=white) ![MCP](https://img.shields.io/badge/AI%20agents-MCP-8b5cf6?style=flat-square)
 
 **A native app for [Ferrum](https://github.com/CBFerrum/Ferrum), the open-source, AI-first business platform.**
 
@@ -20,8 +20,12 @@
 Ferrum IoT Edge connects equipment to Ferrum without writing a driver. A device is described in
 a few lines of YAML: how to reach it, how to read it and how to command it. Those definitions run on
 `ferrum-site`, the gateway in this repository, which reads, decides and keeps working on location
-through outages and power cuts, and catches up when the link returns. Logic is drawn on a canvas,
-simulated, and reviewed by a second person before it runs at the gateway. The strongest thing a flow
+through outages and power cuts, and catches up when the link returns. Devices can also call it
+themselves, with ThingsBoard's own topics and paths, so their firmware needs no change.
+
+Logic is drawn on a canvas, simulated, reviewed by a second person, and then runs at a gateway or on
+the platform, and you can watch real messages pass through it. Dashboards, alarms that escalate,
+firmware rollouts and exports to the usual buses and clouds are all here. The strongest thing a flow
 can do is ask for a command, and Ferrum's ledger decides whether it goes out.
 
 Ferrum coordinates equipment and does not control it. Motion, machine sequencing and every safety
@@ -30,14 +34,14 @@ function stay with their own controllers.
 
 | At a glance | |
 |---|---|
-| 📦 Version | `0.1.0` |
+| 📦 Version | `0.2.0` |
 | 🧱 Platform | Ferrum `>=0.3, <0.4` |
 | 🔗 Requires | ops `>=0.1` |
 | 🖥️ Interface | its own, at `/edge/` |
-| 🗃️ Records | 6 entities in 1 package |
+| 🗃️ Records | 13 entities in 1 package |
 | 👥 Roles | 3: Edge Viewer, Edge Engineer, Edge Reviewer |
 | 📊 Reports | 0 |
-| 🧪 Tests | 114 Rust tests, 2 interface test files |
+| 🧪 Tests | 303 Rust tests, 5 interface test files |
 
 
 > [!IMPORTANT]
@@ -51,27 +55,27 @@ function stay with their own controllers.
 <td width="50%" valign="top">
 
 ### 📝 Devices as data
-TCP, UDP, serial, HTTP, WebSocket, MQTT, Modbus TCP and RTU and OPC UA need no code, nor do Sparkplug B and MTConnect. Anything else runs as a driver in any language.
+One line per thing to read, for S7, EtherNet/IP, ADS, BACnet, OPC UA, Modbus, SNMP, KNX, IEC 104 and M-Bus, and a few lines for TCP, serial, HTTP, MQTT, Sparkplug B and MTConnect. Anything else is an external driver in any language.
 
 </td>
 <td width="50%" valign="top">
 
-### 🧩 Twenty templates
-VDA 5050, Open-RMF, openTCS, ROS 2 through rosbridge, MiR, Universal Robots and more, as starting points.
+### 📡 Devices that call in
+MQTT, HTTP and CoAP on ThingsBoard's own topics and paths, LwM2M, and OCPP 1.6 and 2.0.1 for EV chargers, with tokens, passwords or certificates.
 
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
 
-### 🧪 Tried at a desk
-A definition is checked when saved, tried on a sample with no device attached, and reaches gateways only when published.
+### 🧩 Thirty-nine templates
+VDA 5050, Open-RMF, openTCS, ROS 2 through rosbridge, ChirpStack, Zigbee2MQTT and more, and whole solutions in one file.
 
 </td>
 <td width="50%" valign="top">
 
 ### 🔀 Flows
-A canvas of 29 kinds of step, with no code and no loops, simulated by the code a gateway runs and approved by someone else.
+A canvas of 44 kinds of step, with no code and no loops, simulated by the code a gateway runs, approved by someone else, and watched live. At the gateway offline, or on the platform across sites.
 
 </td>
 </tr>
@@ -79,7 +83,7 @@ A canvas of 29 kinds of step, with no code and no loops, simulated by the code a
 <td width="50%" valign="top">
 
 ### 🛑 Asks, never acts
-A flow can ask the ledger for a command. An approved automation rule or a person decides, so nothing on a canvas moves equipment by itself.
+A flow, a schedule or a rollout asks the ledger for a command. An approved envelope or a person decides, so nothing here moves equipment by itself.
 
 </td>
 <td width="50%" valign="top">
@@ -92,14 +96,22 @@ Reading, deciding, alarms and commands carry on through outages, crashes and res
 <tr>
 <td width="50%" valign="top">
 
-### 🔗 Server to server
-Boxes in cabinets over signed links, a relay out of a closed network, exports held until delivered, webhooks, signed updates with rollback.
+### 📊 Dashboards and alarms
+Drag-and-drop dashboards with shared links, history charts, alarms that are assigned, shelved and escalated, and reports.
 
 </td>
 <td width="50%" valign="top">
 
-### 🤖 Robots and alarms
-Where each robot says it is, on a plan of the site, and alarms that raise at the edge and come back to be acknowledged.
+### 🚚 A fleet at once
+Import from CSV, tags and assets, bulk commands, schedules, and firmware rollouts that stop by themselves. Never for a robot, a controller or anything a safety function runs on.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🔗 Everywhere else
+NATS, Kafka, RabbitMQ, InfluxDB, ClickHouse, S3, SQS, SNS, Pub/Sub, Azure and Sparkplug, held until delivered, plus peers, relays, twins, Thing Descriptions and Asset Administration Shells.
 
 </td>
 </tr>
@@ -109,17 +121,31 @@ Where each robot says it is, on a plan of the site, and alarms that raise at the
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/edge-home-dark.webp">
-  <img alt="The overview: gateways, what they reach and what needs a person." src="docs/assets/edge-home-light.webp" width="100%">
+  <img alt="The overview: gateways, what they reach, how the fleet stands and what needs a person." src="docs/assets/edge-home-light.webp" width="100%">
 </picture>
 
-<p align="center"><sub>The overview: gateways, what they reach and what needs a person.</sub></p>
+<p align="center"><sub>The overview: gateways, what they reach, how the fleet stands and what needs a person.</sub></p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/edge-board-dark.webp">
+  <img alt="A dashboard: gauges, charts, alarms and controls, laid out by hand, with commands going through the ledger." src="docs/assets/edge-board-light.webp" width="100%">
+</picture>
+
+<p align="center"><sub>A dashboard: gauges, charts, alarms and controls, laid out by hand, with commands going through the ledger.</sub></p>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/edge-flow-dark.webp">
-  <img alt="A flow: logic drawn as steps and wires, simulated and reviewed before it runs at the gateway." src="docs/assets/edge-flow-light.webp" width="100%">
+  <img alt="A flow: logic drawn as steps and wires, simulated and reviewed, and watched live while it runs at the gateway." src="docs/assets/edge-flow-light.webp" width="100%">
 </picture>
 
-<p align="center"><sub>A flow: logic drawn as steps and wires, simulated and reviewed before it runs at the gateway.</sub></p>
+<p align="center"><sub>A flow: logic drawn as steps and wires, simulated and reviewed, and watched live while it runs at the gateway.</sub></p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/edge-devices-dark.webp">
+  <img alt="Devices: found by tag and site, imported from a file, and asked for something all at once." src="docs/assets/edge-devices-light.webp" width="100%">
+</picture>
+
+<p align="center"><sub>Devices: found by tag and site, imported from a file, and asked for something all at once.</sub></p>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/edge-robots-dark.webp">
@@ -175,7 +201,7 @@ flowchart LR
     subgraph Server["Ferrum server"]
         API["REST · MCP · live"]
         K["Kernel<br/><small>permissions · row-level security · audit</small>"]
-        APP["IoT Edge<br/><small>6 entities · 3 roles</small>"]
+        APP["IoT Edge<br/><small>13 entities · 3 roles</small>"]
         OB[("Outbox")]
     end
     DB[("PostgreSQL")]
@@ -199,6 +225,8 @@ with them under the same rules as people.
 | 🚀 Launcher | **IoT Edge** at `/edge/` |
 | ➕ Create menu | Device definition |
 | ➕ Create menu | Flow |
+| ➕ Create menu | Dashboard |
+| 🌐 Public page | Dashboard |
 
 ## The gateway
 
@@ -214,6 +242,8 @@ cargo build --release --locked -p ferrum-site
 | [Running a gateway](docs/gateway.md) | Installing, enrolling, backing up, updating, boxes in cabinets, closed networks, exports |
 | [Definitions](docs/definitions.md) | Describing a device |
 | [Flows](docs/flows.md) | Drawing logic that runs at the gateway |
+| [Looking after a fleet](docs/fleet.md) | Importing, asking many at once, firmware, schedules, solutions |
+| [Parity](docs/parity.md) | What ThingsBoard and the rest do, capability by capability, and where this stands |
 | [Compatibility](docs/compatibility.md) | What was tried on what, and what was not |
 | [Licenses](docs/licenses.md), [accepted advisories](docs/advisories.yaml) | What a gateway compiles in, and what was reviewed |
 
@@ -221,7 +251,7 @@ cargo build --release --locked -p ferrum-site
 
 ## Data model
 
-The main records and how they connect (6 entities in all; `packages/` has every field).
+The main records and how they connect (13 entities in all; `packages/` has every field).
 
 ```mermaid
 erDiagram
@@ -239,31 +269,31 @@ erDiagram
         string summary PK
         string status
     }
+    EdgeAsset {
+        string asset_name PK
+    }
+    EdgeFirmware {
+        string firmware_name PK
+        string firmware_version
+        string url
+    }
     EdgeFlow {
         string flow_name PK
         string status
     }
-    EdgeExport {
-        string export_name PK
-        string send_to
-    }
-    EdgeRelease {
-        string release_version PK
-        string url
-        string sha256
-    }
     DeviceDefinition ||--o{ EdgeRule : "definition"
     EdgeRule ||--o{ EdgeAlarm : "rule"
     EdgeFlow ||--o{ EdgeAlarm : "flow"
+    DeviceDefinition ||--o{ EdgeFirmware : "definition"
 ```
 
 ### Roles
 
 | Role | What it is for | Entities |
 |---|---|---|
-| **Edge Viewer** | Sees gateways, devices, alarms and robots. | 8 |
-| **Edge Engineer** | Writes and publishes definitions, rules and exports, and acknowledges alarms. | 11 |
-| **Edge Reviewer** | Reviews flows drawn by others, and decides when they run. | 7 |
+| **Edge Viewer** | Sees gateways, devices, alarms and robots. | 14 |
+| **Edge Engineer** | Writes and publishes definitions, rules and exports, and acknowledges alarms. | 17 |
+| **Edge Reviewer** | Reviews flows drawn by others, and decides when they run. | 8 |
 
 ## Install
 
@@ -299,11 +329,9 @@ The tests need PostgreSQL with an ordinary (non-superuser) role, so row-level se
 applies:
 
 ```bash
-createuser ferrum --pwprompt && createdb -O ferrum ferrum_edge_test
+createuser ferrum --pwprompt && createdb -O ferrum ferrum_test
 cargo test
 ```
-
-`FERRUM_EDGE_TEST_DATABASE_URL` overrides the database URL.
 
 
 The interface lives in `ui/` and builds with Ferrum-Frontend's packages:
@@ -349,6 +377,7 @@ CHANGELOG.md  what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.2.0** | Devices that call in: MQTT 3.1 to 5, HTTP and CoAP on ThingsBoard's own topics and paths, with tokens, passwords and certificates, provisioning … |
 | **0.1.0** | Definitions: devices described in a few lines of YAML over TCP, UDP, serial, HTTP, WebSocket, MQTT, Modbus TCP and RTU, OPC UA, listeners and … |
 
 Every version is in [CHANGELOG.md](CHANGELOG.md).
