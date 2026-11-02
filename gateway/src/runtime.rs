@@ -191,7 +191,7 @@ impl Runtime {
             files_dir: cfg.files_dir.clone(),
             state_dir: Some(cfg.state_dir.clone()),
         };
-        let exporting = OpenLimits { allow: cfg.allow.clone(), tls_dir: Some(cfg.state_dir.join("tls")), ..OpenLimits::default() };
+        let exporting = OpenLimits { allow: cfg.allow.clone(), listen: cfg.listen.clone(), tls_dir: Some(cfg.state_dir.join("tls")), ..OpenLimits::default() };
         let defined = Arc::new(Defined::new(limits, json!(cfg.secrets)));
         adapters.push(("definitions".to_string(), defined.clone()));
         let high_water = journal.high_water().map_err(|e| e.to_string())?.map(|t| t.timestamp_millis()).unwrap_or(0);
@@ -271,6 +271,8 @@ impl Runtime {
         }
         *self.problems.lock().unwrap_or_else(|e| e.into_inner()) = problems;
         self.rules.lock().unwrap_or_else(|e| e.into_inner()).rules = managed.rules;
+        #[cfg(feature = "opcua")]
+        self.sender.keep_servers(&managed.exports);
         *self.exports.lock().unwrap_or_else(|e| e.into_inner()) = managed.exports;
     }
 

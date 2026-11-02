@@ -145,6 +145,7 @@ pub const EXPORT_SCHEMES: &[&str] = &[
     "eventhub",
     "sparkplug",
     "sparkplugs",
+    "listen+opcua",
 ];
 
 /// Whether an export's address can work, for saying so when it is saved. A password has no place

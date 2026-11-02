@@ -31,12 +31,17 @@ APP_UNIT = ("-p", "ferrum-app-edge", "--lib")
 DEVICES = ("-p", "ferrum-site", "--test", "devices_it")
 OCPP = ("-p", "ferrum-site", "--test", "ocpp_it")
 DNP3 = ("-p", "ferrum-site", "--test", "dnp3_it")
+EXPORTS = ("-p", "ferrum-site", "--test", "exports_it")
 METERS = ("-p", "ferrum-site", "--test", "dlms_it")
 # Generous enough to compile and run; passing it means the mutant hung the test.
 TIMEOUT = 600
 
 # name, file, text to replace, what breaks it, test
 MUTANTS = [
+    ("served-on-a-port-nobody-listed", "gateway/src/export.rs", "if !self.limits.listen.contains(&bind) {", "if false {", EXPORTS),
+    ("served-variable-can-be-written", "gateway/src/adapters/opcua_server.rs", ".value(0.0f64).organized_by(&folder)", ".value(0.0f64).writable().organized_by(&folder)", EXPORTS),
+    ("served-to-any-client", "gateway/src/adapters/opcua_server.rs", ".pki_dir(pki)", ".pki_dir(pki).trust_client_certs(true)", EXPORTS),
+    ("served-port-outlives-its-export", "gateway/src/export.rs", ".retain(|to, _| exports", ".retain(|to, _| !to.is_empty() || exports", EXPORTS),
     ("dnp3-operates-unselected", "gateway/src/adapters/dnp3.rs", "        if !self.direct {\n", "        if false {\n", DNP3),
     ("dnp3-silence-counts-as-not-sent", "gateway/src/adapters/dnp3.rs", ".await.map_err(Failure::Unknown)?;", ".await.map_err(Failure::NotSent)?;", DNP3),
     ("dnp3-events-never-confirmed", "gateway/src/adapters/dnp3.rs", "    if control & CON != 0 {", "    if false {", DNP3),

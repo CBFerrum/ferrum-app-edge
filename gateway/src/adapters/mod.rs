@@ -36,5 +36,7 @@ pub mod nats;
 pub mod ocpp;
 #[cfg(feature = "opcua")]
 pub mod opcua;
+#[cfg(feature = "opcua")]
+pub mod opcua_server;
 #[cfg(feature = "mqtt")]
 pub mod vda5050;
