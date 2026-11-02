@@ -66,12 +66,22 @@ async fn mine(k: &Kernel, ctx: &Ctx) -> Result<Value> {
     Ok(json!({"customers": theirs.iter().map(|(_, name)| name).collect::<Vec<_>>(), "devices": devices, "dashboards": dashboards}))
 }
 
+/// Whether a customer sees a metric: `temp.*, power`, or everything if a device says nothing.
+fn shown(shows: &str, metric: &str) -> bool {
+    let mut names = shows.split(',').map(str::trim).filter(|n| !n.is_empty()).peekable();
+    names.peek().is_none()
+        || names.any(|n| match n.strip_suffix('*') {
+            Some(prefix) => metric.starts_with(prefix),
+            None => n == metric,
+        })
+}
+
 /// That a device is theirs, or that as far as they can tell it does not exist.
 async fn device_of(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
     let theirs = ids(k, ctx).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let found: Option<Value> = sqlx::query_scalar(
-        "select jsonb_build_object('id', d.id, 'code', d.device_code, 'name', d.device_name, 'lifecycle', d.lifecycle, 'site', s.site_name) \
+        "select jsonb_build_object('id', d.id, 'code', d.device_code, 'name', d.device_name, 'lifecycle', d.lifecycle, 'site', s.site_name, 'shows', d.edge_shows) \
          from e_device d left join e_site s on s.tenant_id = d.tenant_id and s.id = d.site \
          where d.tenant_id = $1 and d.id = $2 and d.edge_customer = any($3) and d.lifecycle <> 'Retired'",
     )
@@ -86,7 +96,9 @@ async fn device_of(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
 
 async fn device(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
     let device = device_of(k, ctx, id).await?;
-    let latest = ferrum_ops::telemetry::latest(k, &sys(ctx), id).await?;
+    let shows = device["shows"].as_str().unwrap_or_default();
+    let mut latest = ferrum_ops::telemetry::latest(k, &sys(ctx), id).await?;
+    latest.retain(|m| shown(shows, m["metric"].as_str().unwrap_or_default()));
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let alarms: Value = sqlx::query_scalar(
         "select coalesce(jsonb_agg(r order by r.raised_at desc), '[]') from ( \
@@ -136,7 +148,12 @@ pub async fn answer(k: &Kernel, ctx: &Ctx, req: &SiteRequest, path: &[&str]) -> 
         ("GET", ["devices", id]) => device(k, ctx, uuid(id)?).await,
         ("GET", ["devices", id, "history"]) => {
             let id = uuid(id)?;
-            device_of(k, ctx, id).await?;
+            let device = device_of(k, ctx, id).await?;
+            let shows = device["shows"].as_str().unwrap_or_default();
+            let asked = req.query.get("metrics").and_then(Value::as_str).unwrap_or_default();
+            if let Some(hidden) = asked.split(',').map(str::trim).find(|m| !m.is_empty() && !shown(shows, m)) {
+                return Err(Error::NotFound(format!("reading {hidden}")));
+            }
             site::history(k, &sys(ctx), id, req).await
         }
         ("GET", ["dashboards", id]) => dashboard(k, ctx, uuid(id)?).await,
@@ -145,5 +162,19 @@ pub async fn answer(k: &Kernel, ctx: &Ctx, req: &SiteRequest, path: &[&str]) -> 
             acknowledge(k, ctx, uuid(id)?, body["note"].as_str()).await
         }
         _ => Err(Error::NotFound("route".into())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_device_shows_what_it_says() {
+        assert!(shown("", "anything"));
+        assert!(shown("temp.*, power", "temp.c"));
+        assert!(shown("temp.*, power", "power"));
+        assert!(!shown("temp.*, power", "power.w"));
+        assert!(!shown("temp.*", "pressure"));
     }
 }

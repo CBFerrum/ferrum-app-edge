@@ -58,7 +58,7 @@ the detail of what each thing was tried against.
 | HTTP polling, WebSocket, TCP, UDP, serial, webhooks | Everyone | **Built** | Against real sockets |
 | Any other protocol | EdgeX, Kura | **Verified** | External drivers, as JSON lines in any language |
 | XMPP | ThingsBoard Gateway | **External** | By an external driver. Nothing here has met one |
-| Discovery of devices | EdgeX | **Partly** | Strangers on a connection are noticed and a person claims them. No network scanning, on purpose |
+| Discovery of devices | EdgeX | **By design** | Strangers on a connection are noticed and a person claims them, and BACnet and OPC UA can be asked what is there. Nothing sweeps a network: on a plant, that alone can stop an old controller |
 
 ## Robots
 
@@ -99,7 +99,7 @@ the detail of what each thing was tried against.
 | Acknowledge, clear, assign, comment, shelve | ThingsBoard, Ignition | **Built** | |
 | Escalation and notification rules | ThingsBoard, Ignition pipelines | **Built** | In-app, email and webhooks, durable, at least once |
 | SMS and voice | ThingsBoard PE, Ignition | **External** | By a webhook to a provider |
-| Mobile push | ThingsBoard | **Partly** | Through the workspace's PWA and its notifications |
+| Mobile push | ThingsBoard | **Built** | By web push through the workspace's PWA, which a person chooses for alarms. No native app, and it has not been tried on a phone |
 
 ## Dashboards and data
 
@@ -118,7 +118,7 @@ the detail of what each thing was tried against.
 | Reports | ThingsBoard PE | **Built** | Availability, alarms and readings, to read and export, and by schedule to anyone by email as CSV or PDF, with the mail in one transaction with the note that it ran. The PDF path needs the server's renderer and has not been run |
 | Assets and hierarchy | ThingsBoard, OpenRemote | **Built** | Assets inside assets, devices on them, selection by what is under an asset |
 | Arbitrary entity relations | ThingsBoard | **Built** | Between devices, by any name, and devices can be chosen by them. Assets contain. Flows do not follow them |
-| Entity views | ThingsBoard | **Partly** | A dashboard given to a customer shows a chosen part of a device. The portal's device page shows all of its readings |
+| Entity views | ThingsBoard | **Built** | A device says which readings its customer sees, and a dashboard given to them shows what was laid out |
 | Customers owning devices | ThingsBoard | **Built** | A customer's people sign in to the workspace's portal and see their devices, alarms and given dashboards, and nothing else. They can acknowledge an alarm, and they cannot command |
 
 ## Fleet
