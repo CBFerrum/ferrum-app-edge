@@ -4,6 +4,7 @@
 
 - Customers who own devices: their people see those devices, their alarms and the dashboards given to
   them in the workspace's portal, and nothing else.
+- A device can show its customer only some of its readings, and alarms can be chosen for push.
 - Relations between devices, by any name, shown on both and usable to choose them.
 - Reports by the clock, by email, as CSV or PDF.
 - Pages hear on the platform's socket that readings landed, and ask again at once.

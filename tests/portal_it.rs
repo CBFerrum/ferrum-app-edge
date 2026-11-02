@@ -79,6 +79,24 @@ async fn owners() {
     is_missing(t.get(&acme_person, &format!("/portal/devices/{others}/history"), json!({})).await, "another's history");
     t.get(&acme_person, &format!("/portal/devices/{theirs}/history"), json!({"metrics": "temp.c"})).await.expect("its own history");
 
+    // A device can show its customer part of what it reports, which is ThingsBoard's entity view.
+    let mut tx = t.tx().await;
+    sqlx::query("insert into op_rollup_minute (tenant_id, device_id, metric, minute, samples, bad, last_value, last_time) values ($1, $2, 'temp.c', now(), 1, 0, 21.5, now()), ($1, $2, 'secret.margin', now(), 1, 0, 9.0, now())")
+        .bind(t.tenant)
+        .bind(theirs)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("update e_device set edge_shows = 'temp.*' where tenant_id = $1 and id = $2").bind(t.tenant).bind(theirs).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    let seen = t.api(&acme_person, "GET", &format!("/portal/devices/{theirs}"), json!({})).await.unwrap();
+    let metrics: Vec<&str> = seen["latest"].as_array().unwrap().iter().map(|m| m["metric"].as_str().unwrap()).collect();
+    assert_eq!(metrics, ["temp.c"], "{seen}");
+    is_missing(
+        t.get(&acme_person, &format!("/portal/devices/{theirs}/history"), json!({"metrics": "temp.c,secret.margin"})).await,
+        "what it does not show, by asking for it",
+    );
+
     // A dashboard is what was laid out, and a control takes someone who may give commands.
     let shown = t.api(&acme_person, "GET", &format!("/portal/dashboards/{board}"), json!({})).await.unwrap();
     let kinds: Vec<&str> = shown["board"]["widgets"].as_array().unwrap().iter().map(|w| w["type"].as_str().unwrap()).collect();

@@ -88,7 +88,8 @@ An **Edge Customer** names who owns what, and the people who may look. Set **Own
 **Customer** on a dashboard, and add the people as portal people of the workspace. They sign in to the
 workspace's portal and find **Your devices**: how each is doing, its readings and alarms, and the
 dashboards given to them, without their controls. They can acknowledge an alarm, and it says who did.
-They cannot send a command, and a device of anyone else's is simply not there.
+They cannot send a command, and a device of anyone else's is simply not there. **Shows Its Customer** on
+a device limits them to some of its readings, as `temp.*, power`.
 
 ## Relations
 
