@@ -8,3 +8,4 @@ pub mod driver;
 pub mod edge;
 pub mod flow;
 pub mod sparkplug;
+pub mod tags;
