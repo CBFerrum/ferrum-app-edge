@@ -1,0 +1,8 @@
+# about: Sigfox devices through a backend callback, decoding the payload here.
+# group: Generic
+# A custom callback with the body {"device": "{device}", "data": "{data}", "rssi": {rssi}}. The fields are examples.
+name: sigfox-callback
+connect: webhook://0.0.0.0:8088?token={secret.webhook_token}
+read:
+  - {topic: /sigfox, device: "{json.device}", bytes: $.data, values: [{metric: temp.c, at: 0, type: i16, order: le, scale: 0.01, unit: C}, {metric: battery.pct, at: 2, type: u8, unit: "%"}]}
+  - {topic: /sigfox, device: "{json.device}", attribute: rssi, json: $.rssi}

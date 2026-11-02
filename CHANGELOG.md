@@ -11,6 +11,8 @@
 - CoAP and LwM2M over DTLS, by pre-shared key, so they can leave a private network: `listen+coaps` and
   `listen+lwm2ms`. Met Eclipse Leshan's client.
 - OCPP security profile 3: a charger known by its certificate. Charging profiles go as commands.
+- Templates for The Things Stack, Sigfox, LORIOT, ThingPark, AWS IoT Core and Azure Event Hubs. `bytes:`
+  decodes a payload delivered inside JSON, and `device:` can come from the message.
 - AAS Part 2's repository, reading only, and what scanners saw as a GS1 EPCIS 2.0 document.
 - `ferrum-site release-key` and `sign`, and a workflow that builds the gateway on a tag.
 - ThingsBoard's own Python client works against a gateway unchanged, in CI, for devices and gateways.

@@ -46,7 +46,7 @@ the detail of what each thing was tried against.
 | CANopen and raw CAN | ThingsBoard Gateway, Kura | **External** | `drivers/can_bridge.py`, on python-can's virtual bus |
 | Bluetooth Low Energy | ThingsBoard Gateway | **External** | `drivers/ble_bridge.py`. Has met no device |
 | LoRaWAN, Zigbee | ThingsBoard, OpenRemote | **External** | ChirpStack and Zigbee2MQTT over MQTT, with templates |
-| Sigfox, NB-IoT platforms, other clouds as sources | ThingsBoard PE integrations | **Partly** | By webhook or MQTT, as any other source. No ready-made decoders |
+| Sigfox, The Things Stack, LORIOT, ThingPark, AWS IoT, Azure Event Hubs | ThingsBoard PE integrations | **Built** | Templates over webhooks, MQTT and Kafka, and `bytes:` decodes a payload inside JSON with no code. None has met the service it names |
 | CoAP client, with Observe and blocks | Hono | **Verified** | Against aiocoap |
 | Sparkplug B primary host | Ignition, HiveMQ | **Built** | STATE, sequence checks, rebirth, births and deaths, over rumqttd. Eclipse Tahu's own definitions read and write the same payloads, in CI. No other host or node has met it |
 | Sparkplug B edge node | Ignition Edge, Kura | **Built** | As an export, over rumqttd, with the same check of its payloads. **No datasets or templates** |
