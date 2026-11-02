@@ -131,6 +131,8 @@ pub struct Limits {
     /// Where a definition may read files. Without it, nowhere: a definition comes from the platform,
     /// and must not be able to read whatever it likes on a gateway.
     pub files_dir: Option<PathBuf>,
+    /// Where a source keeps how far it has read.
+    pub state_dir: Option<PathBuf>,
 }
 
 impl Limits {
@@ -312,12 +314,16 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
         }
         "mtconnect" | "mtconnects" => Arc::new(super::mtconnect::Mtconnect::new(scheme, rest)),
         "nats" => Arc::new(super::nats::Nats::new(rest, subscribe)),
+        "amqp" | "amqps" => Arc::new(super::sources::AmqpSource::new(scheme, rest, subscribe)?),
+        #[cfg(feature = "kafka")]
+        "kafka" | "kafkas" => Arc::new(super::sources::KafkaSource::new(scheme, rest, subscribe, limits.state_dir.as_deref())?),
         "file" => Arc::new(super::files::Folder::new(rest)),
         "ftp" => Arc::new(super::files::Ftp::new(rest)),
         "listen+lwm2m" => Arc::new(super::lwm2m::Lwm2m::new(bind.to_string(), subscribe, hub.ok_or("nothing here can check who calls")?)),
         "knx" => Arc::new(super::knx::Knx::new(rest, subscribe)),
         "iec104" => Arc::new(super::iec104::Iec104::new(rest)),
-        "s7" | "enip" | "ads" | "bacnet" | "snmp" | "mbus" | "postgres" | "sqlite" => {
+        "dnp3" => Arc::new(super::dnp3::Dnp3::new(rest)),
+        "s7" | "enip" | "ads" | "bacnet" | "snmp" | "mbus" | "dlms" | "postgres" | "sqlite" => {
             let (scheme, rest, address) = (scheme.to_string(), rest.to_string(), address.to_string());
             Arc::new(super::tags::Tagged::new(move || {
                 let (scheme, rest, address) = (scheme.clone(), rest.clone(), address.clone());
@@ -330,6 +336,7 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
                         "ads" => super::ads::Ads::connect(&rest).await,
                         "bacnet" => super::bacnet::Bacnet::connect(&rest).await,
                         "mbus" => super::mbus::Mbus::connect(&rest).await,
+                        "dlms" => super::dlms::Dlms::connect(&rest).await,
                         _ if query(&rest, "version").as_deref() == Some("3") => super::snmp3::Snmp3::connect(&rest).await,
                         _ => super::snmp::Snmp::connect(&rest).await,
                     }

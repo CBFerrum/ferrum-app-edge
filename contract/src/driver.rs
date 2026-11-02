@@ -70,6 +70,7 @@ pub const SCHEMES: &[&str] = &[
     "listen+ocpps",
     "knx",
     "iec104",
+    "dnp3",
     "mbus",
     "coap",
     "nats",
@@ -80,10 +81,15 @@ pub const SCHEMES: &[&str] = &[
     "mtconnects",
     "postgres",
     "sqlite",
+    "dlms",
+    "amqp",
+    "amqps",
+    "kafka",
+    "kafkas",
 ];
 
 /// What is read and written a named thing at a time, with `node`.
-const TAGGED: &[&str] = &["opcua", "s7", "enip", "ads", "bacnet", "snmp", "knx", "iec104", "mbus", "listen+lwm2m", "postgres", "sqlite"];
+const TAGGED: &[&str] = &["opcua", "s7", "enip", "ads", "bacnet", "snmp", "knx", "iec104", "dnp3", "mbus", "listen+lwm2m", "postgres", "sqlite", "dlms"];
 
 /// What devices can prove themselves on.
 const DEVICE_SERVERS: [&str; 7] = ["listen+mqtt", "listen+mqtts", "listen+http", "listen+https", "listen+coap", "listen+ocpp", "listen+ocpps"];

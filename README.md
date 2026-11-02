@@ -366,7 +366,7 @@ ui/           its own interface (React + Vite), built into ui/dist
 tests/        integration tests against a real PostgreSQL
 contract/     ferrum-edge-contract: definitions, flows and Sparkplug, pure code a simulation and a gateway share
 gateway/      ferrum-site, the gateway: journal, transports, flows, links between servers, a console
-templates/    the twenty definitions to start from
+templates/    definitions to start from
 deploy/       the systemd unit, a starting configuration, Mosquitto beside the gateway
 docs/         guides, what was tried on what, licenses and accepted advisories
 scripts/      mutants, the license inventory, the advisory check
