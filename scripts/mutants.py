@@ -34,11 +34,47 @@ DNP3 = ("-p", "ferrum-site", "--test", "dnp3_it")
 PORTAL = ("-p", "ferrum-app-edge", "--test", "portal_it")
 EXPORTS = ("-p", "ferrum-site", "--test", "exports_it")
 METERS = ("-p", "ferrum-site", "--test", "dlms_it")
+DISPATCH = ("-p", "ferrum-site", "--test", "dispatch_it")
+CLOCK = "gateway/src/clock.rs"
+RUNTIME = "gateway/src/runtime.rs"
 # Generous enough to compile and run; passing it means the mutant hung the test.
 TIMEOUT = 600
 
 # name, file, text to replace, what breaks it, test
 MUTANTS = [
+    ("clock-follows-the-wall", CLOCK, "        m.at_ms + passed + passed * self.drift_ppm / 1_000_000\n", "        let _ = passed;\n        m.at_ms.max((self.source.wall)())\n", SITE_UNIT),
+    ("clock-believes-a-reboot", CLOCK, "None => Mark { at_ms: high_water.max((source.wall)() + offset), boot_ms: now, sure: false },", "None => Mark { at_ms: high_water.max((source.wall)() + offset), boot_ms: now, sure: true },", SITE_UNIT),
+    ("clock-loses-a-restart", CLOCK, "let mark = match saved.filter(|s| s.boot.is_some() && s.boot == source.boot_id && s.boot_ms <= now) {", "let mark = match saved.filter(|_| false) {", SITE_UNIT),
+    ("clock-goes-back-before-a-reboot", CLOCK, "None => Mark { at_ms: high_water.max((source.wall)() + offset), boot_ms: now, sure: false },", "None => Mark { at_ms: (source.wall)() + offset, boot_ms: now, sure: false },", SITE_UNIT),
+    ("clock-cannot-sign-again", CLOCK, "        self.last_signed.fetch_min(server.timestamp_millis() + MAX_CLOCK_SKEW_MS - 5_000, Ordering::Relaxed);\n", "", SITE_UNIT),
+    ("clock-has-no-margin", CLOCK, "m.at_ms + passed + passed * self.drift_ppm / 1_000_000", "m.at_ms + passed", SITE_UNIT),
+    ("gate-past-a-deadline", RUNTIME, "        if now >= e.command.expires_at {\n            self.establish(self.report(id, State::Expired", "        if false {\n            self.establish(self.report(id, State::Expired", DISPATCH),
+    ("gate-past-the-lease", RUNTIME, "        if let Some(why) = self.stopped() {\n            let _ = self.journal.hold(id, Some(&why));\n            return None;", "        if let Some(why) = self.stopped().filter(|_| false) {\n            let _ = self.journal.hold(id, Some(&why));\n            return None;", DISPATCH),
+    ("gate-past-the-epoch", RUNTIME, "if let Err(why) = e.command.startable(now, self.epoch()) {", "if let Err(why) = e.command.startable(now, e.command.epoch) {", DISPATCH),
+    ("gate-past-a-cancel", RUNTIME, "        if e.cancel_requested {\n            self.establish(self.report(id, State::Aborted", "        if false {\n            self.establish(self.report(id, State::Aborted", DISPATCH),
+    ("gate-past-the-lifecycle", RUNTIME, "if Lifecycle::parse(&device.lifecycle) != Some(Lifecycle::Active) {", "if false {", DISPATCH),
+    ("gate-past-the-operations", RUNTIME, "if !device.operations.contains(&e.command.operation) {", "if false {", DISPATCH),
+    ("intent-ignores-a-fence", "gateway/src/journal.rs", " and not exists (select 1 from meta where key in ('fenced', 'restored'))", "", SITE_UNIT),
+    ("intent-ignores-the-epoch", "gateway/src/journal.rs", "and coalesce((select value from meta where key = 'epoch'), '0') = ?4 ", "and ?4 is not null ", SITE_UNIT),
+    ("intent-written-twice", "gateway/src/journal.rs", "where id = ?1 and state = 'Queued' and intent_at is null and cancel_requested = 0", "where id = ?1 and state = 'Queued' and cancel_requested = 0", SITE_UNIT),
+    ("dependency-absent-is-done", RUNTIME, "matches!(self.journal.outcome(*id), Ok(Some(State::Completed)))).collect();", "matches!(self.journal.outcome(*id), Ok(None | Some(State::Completed)))).collect();", DISPATCH),
+    ("dependency-failed-is-done", RUNTIME, "matches!(self.journal.outcome(*id), Ok(Some(State::Completed)))).collect();", "matches!(self.journal.outcome(*id), Ok(Some(s)) if s.is_final())).collect();", DISPATCH),
+    ("dependency-garbled-is-dropped", RUNTIME, "a.iter().map(|v| v.as_str().and_then(|s| s.parse().ok()).unwrap_or(Uuid::nil())).collect()", "a.iter().filter_map(|v| v.as_str()?.parse().ok()).collect()", DISPATCH),
+    ("ending-forgotten-with-its-row", "gateway/src/journal.rs", '        tx.execute(&format!("insert or replace into outcome (id, state, at) select id, state, ?1 from command where {DONE}"), [now])?;\n', "", SITE_UNIT),
+    ("platform-never-asked-of-a-dependency", RUNTIME, ".chain(self.unknown_predecessors(500))", ".chain(self.unknown_predecessors(0))", SITE),
+    ("binding-not-compared", RUNTIME, "(now == *binding).then(|| (slot, binding.device.clone()))", "Some((slot, binding.device.clone()))", DISPATCH),
+    ("find-asks-any-device", "gateway/src/adapters/defined.rs", "        match self.link_of(device) {\n            Some(link) => link.find(command, device).await,", "        let any = self.by_device.read().unwrap_or_else(|e| e.into_inner()).values().next().cloned();\n        match any {\n            Some(link) => link.find(command, device).await,", ADAPTERS),
+    ("cancel-stops-every-vehicle", "gateway/src/adapters/vda5050.rs", 'if self.state_of(device).is_none_or(|s| s["orderId"].as_str() != Some(&id)) {', "if false {", ADAPTERS),
+    ("expired-sent-with-no-time", "gateway/src/adapter.rs", ".ok().filter(|s| *s > 0)", ".ok()", ADAPTERS),
+    ("failure-says-the-address", "gateway/src/adapters/transport.rs", "Err(e) if e.is_connect() => return Err(Failure::NotSent(e.without_url().to_string())),", "Err(e) if e.is_connect() => return Err(Failure::NotSent(e.to_string())),", SITE_UNIT),
+    ("redirect-leaves-for-firmware", "gateway/src/adapters/defined.rs", "connect_timeout(std::time::Duration::from_secs(10)).redirect(limits.redirects()).build()", "connect_timeout(std::time::Duration::from_secs(10)).build()", SITE_UNIT),
+    ("redirect-leaves-for-exports", "gateway/src/export.rs", "            .redirect(limits.redirects())\n            .build()\n            .unwrap_or_default();\n        Sender {", "            .build()\n            .unwrap_or_default();\n        Sender {", LINKS),
+    ("update-ignores-the-list", "gateway/src/export.rs", '        if !self.limits.reaches(url) {\n            return Err(format!("{url} is not in this site\'s allow list"));\n        }\n        let response', "        let response", LINKS),
+    ("allow-list-is-a-prefix", "gateway/src/adapters/transport.rs", "host == a || (a.ends_with(['.', '-']) && host.starts_with(a.as_str()))", "host.starts_with(a.as_str())", SITE_UNIT),
+    ("box-takes-what-has-no-time", "gateway/src/peer.rs", ".map(Duration::from_millis).filter(|l| !l.is_zero());", ".map(Duration::from_millis);", LINKS),
+    ("box-takes-what-was-changed", "gateway/src/peer.rs", "let Some(left) = left.filter(|_| c.intact()) else {", "let Some(left) = left else {", LINKS),
+    ("box-speaks-for-anything", "gateway/src/peer.rs", "(Some(&now) == binding.as_ref()).then_some((adapter, code.as_str()))", "Some((adapter, code.as_str()))", LINKS),
+    ("station-ignores-the-load", "gateway/src/console.rs", 'if let Some((name, want)) = wrong_load(&e.command.payload["load"], &s.load) {', "if let Some((name, want)) = None::<(String, String)> {", SITE),
     ("customer-asks-for-what-is-hidden", "src/portal.rs", 'return Err(Error::NotFound(format!("reading {hidden}")));', "let _ = hidden;", PORTAL),
     ("a-burst-waits-for-the-clock", "gateway/src/adapters/defined.rs", "                self.pressing.notify_one();\n", "", PROTOCOLS),
     ("held-readings-thrown-away", "gateway/src/runtime.rs", "        if !r.measurements_held {\n", "        if true {\n", SITE),

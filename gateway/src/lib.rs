@@ -7,6 +7,7 @@
 
 pub mod adapter;
 pub mod adapters;
+pub mod clock;
 pub mod config;
 pub mod console;
 pub mod export;

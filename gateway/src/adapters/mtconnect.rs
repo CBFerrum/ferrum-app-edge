@@ -20,10 +20,10 @@ pub struct Mtconnect {
 }
 
 impl Mtconnect {
-    pub fn new(scheme: &str, rest: &str) -> Mtconnect {
+    pub fn new(scheme: &str, rest: &str, limits: &super::transport::Limits) -> Mtconnect {
         let place = rest.split('?').next().unwrap_or(rest).trim_end_matches('/');
         let web = if scheme == "mtconnects" { "https" } else { "http" };
-        let http = reqwest::Client::builder().connect_timeout(ANSWER).build().unwrap_or_default();
+        let http = reqwest::Client::builder().connect_timeout(ANSWER).redirect(limits.redirects()).build().unwrap_or_default();
         Mtconnect { base: format!("{web}://{place}"), interval: query(rest, "interval").and_then(|i| i.parse().ok()).unwrap_or(1000), http }
     }
 }
@@ -56,16 +56,16 @@ pub fn parts(buffer: &mut Vec<u8>) -> Vec<Vec<u8>> {
 #[async_trait]
 impl Transport for Mtconnect {
     async fn run(&self, tx: mpsc::Sender<Message>, ready: mpsc::Sender<()>) -> Result<(), String> {
-        let current = self.http.get(format!("{}/current", self.base)).send().await.map_err(|e| e.to_string())?;
+        let current = self.http.get(format!("{}/current", self.base)).send().await.map_err(|e| e.without_url().to_string())?;
         if !current.status().is_success() {
             return Err(format!("it answered {}", current.status()));
         }
-        let text = current.text().await.map_err(|e| e.to_string())?;
+        let text = current.text().await.map_err(|e| e.without_url().to_string())?;
         let next = next_sequence(&text).ok_or("that is not an MTConnect agent")?;
         let _ = tx.send(Message { topic: "/current".into(), body: text.into_bytes(), status: None, from: None }).await;
         let _ = ready.send(()).await;
         let url = format!("{}/sample?from={next}&interval={}&count=1000", self.base, self.interval);
-        let mut stream = self.http.get(url).send().await.map_err(|e| e.to_string())?;
+        let mut stream = self.http.get(url).send().await.map_err(|e| e.without_url().to_string())?;
         if !stream.status().is_success() {
             return Err(format!("it answered {}", stream.status()));
         }
@@ -73,7 +73,7 @@ impl Transport for Mtconnect {
         loop {
             let piece = tokio::select! {
                 () = tx.closed() => return Ok(()),
-                piece = stream.chunk() => piece.map_err(|e| e.to_string())?,
+                piece = stream.chunk() => piece.map_err(|e| e.without_url().to_string())?,
             };
             let Some(piece) = piece else { return Err("the stream ended".into()) };
             buffer.extend_from_slice(&piece);

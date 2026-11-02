@@ -8,6 +8,26 @@ use ferrum_ops_contract::telemetry::Class;
 use ferrum_ops_contract::{Command, sync::SiteDevice};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::time::Duration;
+
+/// What a command went out on, written with the intent. Asking about it later, stopping it or
+/// retrying it means going back to exactly this: another device that happens to take the same
+/// operation knows nothing about it, and hearing nothing from one is not hearing it from the other.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Binding {
+    /// Its code when it was sent.
+    pub device: String,
+    /// Which of this site's adapters.
+    pub adapter: String,
+    /// What that adapter reached it through, in words that change when that does.
+    pub endpoint: String,
+}
+
+/// Whole seconds for a message's own expiry, rounded up, or nothing if there is no time left: an
+/// expired command is not sent with a second to live.
+pub fn expiry_secs(left: Duration) -> Option<u32> {
+    u32::try_from(left.as_millis().div_ceil(1000)).ok().filter(|s| *s > 0)
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Dispatched {
@@ -76,21 +96,28 @@ pub enum Reading {
 
 #[async_trait]
 pub trait Adapter: Send + Sync {
-    /// Hands the work over, once. The runtime has already made its intent durable.
-    async fn dispatch(&self, command: &Command, device: &SiteDevice) -> Result<Dispatched, Failure>;
+    /// Hands the work over, once. The runtime has already made its intent durable. `left` is how long
+    /// it has, by the site's clock: equipment that can hold a deadline is told it.
+    async fn dispatch(&self, command: &Command, device: &SiteDevice, left: Duration) -> Result<Dispatched, Failure>;
 
-    /// What the equipment says about work it took.
-    async fn observe(&self, command: &Command, external: Option<&str>) -> Result<Observation, Failure>;
+    /// What the equipment says about work it took. Everything after a dispatch names the device it
+    /// went to, and asks that device and no other.
+    async fn observe(&self, command: &Command, device: &str, external: Option<&str>) -> Result<Observation, Failure>;
 
     /// After a crash between the intent and an answer: does the equipment know this command? `None`
     /// means it cannot say, and the outcome stays unknown. Only an adapter whose equipment keeps
     /// its own record may answer `NotFound`, because that makes a resend safe.
-    async fn find(&self, _command: &Command) -> Result<Option<Observation>, Failure> {
+    async fn find(&self, _command: &Command, _device: &str) -> Result<Option<Observation>, Failure> {
         Ok(None)
     }
 
     /// Asks it to stop. Not a statement that it stopped: `observe` says that.
-    async fn cancel(&self, command: &Command, external: Option<&str>) -> Result<(), Failure>;
+    async fn cancel(&self, command: &Command, device: &str, external: Option<&str>) -> Result<(), Failure>;
+
+    /// What reaches this device now, for [`Binding::endpoint`]. `None` means nothing does.
+    fn endpoint(&self, _device: &str) -> Option<String> {
+        Some(String::new())
+    }
 
     /// Readings since the last call.
     async fn read(&self) -> Result<Vec<Reading>, Failure> {

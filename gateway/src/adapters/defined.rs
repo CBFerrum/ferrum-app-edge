@@ -8,7 +8,7 @@
 //! A definition promises no more than an adapter may: a command is accepted once it has gone, ends
 //! only when its status says so, and a write that was not answered leaves it unknown.
 
-use crate::adapter::{Adapter, Dispatched, Failure, Observation, Reading};
+use crate::adapter::{Adapter, Dispatched, Failure, Observation, Reading, expiry_secs};
 use crate::adapters::hub::{Hub, Offered};
 use crate::adapters::transport::{self, Limits, Message, Out, Transport};
 use async_trait::async_trait;
@@ -71,6 +71,9 @@ pub struct Counters {
 pub struct Link {
     compiled: Arc<Compiled>,
     address: String,
+    /// What a command's binding names: the definition and where it was told to connect, as written,
+    /// hashed, because an address can hold a secret and a journal goes into backups.
+    endpoint: String,
     transport: Arc<dyn Transport>,
     devices: RwLock<Vec<DeviceLink>>,
     secrets: Value,
@@ -180,8 +183,9 @@ async fn fetched(limits: &Limits, payload: &Value) -> Result<PathBuf, String> {
         return Err(format!("{url} is not in this site's allow list"));
     }
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let client = reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10)).build().map_err(|e| e.to_string())?;
-    let mut response = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let client =
+        reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10)).redirect(limits.redirects()).build().map_err(|e| e.to_string())?;
+    let mut response = client.get(url).send().await.map_err(|e| e.without_url().to_string())?;
     if !response.status().is_success() {
         return Err(format!("{url} answered {}", response.status()));
     }
@@ -189,7 +193,7 @@ async fn fetched(limits: &Limits, payload: &Value) -> Result<PathBuf, String> {
     let mut file = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;
     let (mut hash, mut size) = (Sha256::new(), 0u64);
     let outcome = async {
-        while let Some(piece) = response.chunk().await.map_err(|e| e.to_string())? {
+        while let Some(piece) = response.chunk().await.map_err(|e| e.without_url().to_string())? {
             size += piece.len() as u64;
             if size > MAX_FIRMWARE {
                 return Err("that is more firmware than a device should need".to_string());
@@ -220,6 +224,7 @@ impl Link {
         limits: &Limits,
     ) -> Result<Arc<Link>, String> {
         let d = &compiled.definition;
+        let endpoint = hex::encode(Sha256::digest(format!("{}\n{address}", compiled.digest)));
         let vars = json!({"secret": secrets, "device": devices.first().map(|x| x.code.clone()), "settings": devices.first().map(|x| x.settings.clone())});
         let mut headers = Vec::new();
         for (k, v) in &d.headers {
@@ -249,6 +254,7 @@ impl Link {
         let link = Arc::new(Link {
             compiled,
             address,
+            endpoint,
             transport,
             pressing,
             devices: RwLock::new(devices),
@@ -403,6 +409,8 @@ impl Link {
             "settings": device.map(|d| d.settings.clone()).unwrap_or(Value::Null),
             "command": command.map(|c| c.id.to_string()),
             "operation": command.map(|c| c.operation.clone()),
+            "expires_at": command.map(|c| c.expires_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+            "epoch": command.map(|c| c.epoch),
             "payload": command.map(|c| c.payload.clone()).unwrap_or(Value::Null),
             "id": external,
             "secret": self.secrets,
@@ -581,7 +589,8 @@ impl Link {
 
     /// A command for a device that called in: it hears it if it is connected and listening, and
     /// that being said out loud is what a retry depends on.
-    async fn dispatch_to_device(&self, c: &Command, device: &SiteDevice, link: Option<&DeviceLink>) -> Result<Dispatched, Failure> {
+    async fn dispatch_to_device(&self, c: &Command, device: &SiteDevice, link: Option<&DeviceLink>, left: Duration) -> Result<Dispatched, Failure> {
+        let expires = expiry_secs(left).ok_or_else(|| Failure::NotSent("its deadline has passed".into()))?;
         if c.operation == device_api::FIRMWARE {
             let path = fetched(&self.limits, &c.payload).await.map_err(Failure::NotSent)?;
             let text = |key: &str| c.payload[key].as_str().unwrap_or_default().to_string();
@@ -592,7 +601,6 @@ impl Link {
         if let Some(key) = c.operation.strip_prefix("set.") {
             self.hub.shared(&device.code, key, c.payload.get("value").unwrap_or(&Value::Null));
         }
-        let expires = (c.expires_at - Utc::now()).num_seconds().max(1) as u32;
         let out = Out::Publish { topic: sending.topic, body: sending.body.to_string().into_bytes(), expiry: Some(expires), retain: false };
         locked(&self.shared).inflight.insert(
             c.id,
@@ -620,16 +628,16 @@ impl Link {
         self.devices.read().unwrap_or_else(|e| e.into_inner()).iter().find(|d| d.code == code).cloned()
     }
 
-    async fn dispatch(&self, c: &Command, device: &SiteDevice) -> Result<Dispatched, Failure> {
+    async fn dispatch(&self, c: &Command, device: &SiteDevice, left: Duration) -> Result<Dispatched, Failure> {
         let link = self.settings_of(&device.code);
         if self.device_api() {
-            return self.dispatch_to_device(c, device, link.as_ref()).await;
+            return self.dispatch_to_device(c, device, link.as_ref(), left).await;
         }
         if self.ocpp() {
             return self.dispatch_to_charger(c, device).await;
         }
         let vars = self.vars(link.as_ref(), Some(c), None);
-        let expires = (c.expires_at - Utc::now()).num_seconds().max(1) as u32;
+        let expires = expiry_secs(left).ok_or_else(|| Failure::NotSent("its deadline has passed".into()))?;
         let (out, id_path) = if self.native() {
             let line = json!({"op": "dispatch", "command": c.id, "operation": c.operation, "device": device.code, "payload": c.payload, "settings": vars["settings"], "expires_at": c.expires_at});
             (Out::Bytes(format!("{line}\n").into_bytes()), None)
@@ -684,13 +692,13 @@ impl Link {
         Ok(Dispatched::Accepted { external: external.or_else(|| Some(c.id.to_string())) })
     }
 
-    async fn observe(&self, c: &Command, external: Option<&str>) -> Result<Observation, Failure> {
+    async fn observe(&self, c: &Command, device: &str, external: Option<&str>) -> Result<Observation, Failure> {
         // After a restart the journal knows the command and this does not yet.
         {
             let mut s = locked(&self.shared);
             s.inflight.entry(c.id).or_insert_with(|| Inflight {
                 operation: c.operation.clone(),
-                device: String::new(),
+                device: device.to_string(),
                 external: external.filter(|e| *e != c.id.to_string()).map(str::to_string),
                 ending: Ending::Waiting,
                 evidence: None,
@@ -702,14 +710,10 @@ impl Link {
                 return Ok(Observation::Completed(json!({"sent": true, "proved": "nothing beyond the send: this device gives no answer"})));
             }
             if let Some(step) = def.status.as_ref().and_then(|s| s.poll.as_ref()) {
-                let (name, device) = {
-                    let s = locked(&self.shared);
-                    let f = s.inflight.get(&c.id);
-                    (f.and_then(|f| f.external.clone()).or_else(|| external.map(str::to_string)), f.map(|f| f.device.clone()).unwrap_or_default())
-                };
-                let vars = self.vars(self.settings_of(&device).as_ref(), Some(c), name.as_deref());
+                let name = locked(&self.shared).inflight.get(&c.id).and_then(|f| f.external.clone()).or_else(|| external.map(str::to_string));
+                let vars = self.vars(self.settings_of(device).as_ref(), Some(c), name.as_deref());
                 let out = outgoing(step, &vars, None).map_err(Failure::Unknown)?;
-                if let Some(reply) = self.send(out, Some(&device)).await? {
+                if let Some(reply) = self.send(out, Some(device)).await? {
                     self.heard(&reply, None);
                 }
             }
@@ -726,16 +730,16 @@ impl Link {
         })
     }
 
-    async fn find(&self, c: &Command) -> Result<Option<Observation>, Failure> {
+    async fn find(&self, c: &Command, device: &str) -> Result<Option<Observation>, Failure> {
         let Some(rule) = self.compiled.command(&c.operation).and_then(|d| d.find.as_ref()) else { return Ok(None) };
         let Some(step) = &rule.poll else { return Ok(None) };
-        let out = outgoing(step, &self.vars(None, Some(c), None), None).map_err(Failure::Unknown)?;
-        let Some(reply) = self.send(out, None).await? else { return Ok(None) };
+        let out = outgoing(step, &self.vars(self.settings_of(device).as_ref(), Some(c), None), None).map_err(Failure::Unknown)?;
+        let Some(reply) = self.send(out, Some(device)).await? else { return Ok(None) };
         if reply.status == Some(404) {
             return Ok(Some(Observation::NotFound));
         }
         let id = c.id.to_string();
-        Ok(self.compiled.found(&c.operation, "", &reply.topic, &reply.body, &[id.as_str()]).map(|ending| {
+        Ok(self.compiled.found(&c.operation, device, &reply.topic, &reply.body, &[id.as_str()]).map(|ending| {
             let evidence = serde_json::from_slice(&reply.body).unwrap_or(Value::Null);
             match ending {
                 Ending::Waiting => Observation::Waiting,
@@ -747,24 +751,19 @@ impl Link {
         }))
     }
 
-    async fn cancel(&self, c: &Command, external: Option<&str>) -> Result<(), Failure> {
+    async fn cancel(&self, c: &Command, device: &str, external: Option<&str>) -> Result<(), Failure> {
         if self.native() {
             let line = json!({"op": "cancel", "command": c.id});
-            return self.send(Out::Bytes(format!("{line}\n").into_bytes()), None).await.map(drop);
+            return self.send(Out::Bytes(format!("{line}\n").into_bytes()), Some(device)).await.map(drop);
         }
         let step = self
             .compiled
             .command(&c.operation)
             .and_then(|d| d.cancel.as_ref())
             .ok_or_else(|| Failure::NotSent("this definition has no way to stop it".into()))?;
-        let (name, device) = {
-            let s = locked(&self.shared);
-            let f = s.inflight.get(&c.id);
-            (f.and_then(|f| f.external.clone()).or_else(|| external.map(str::to_string)), f.map(|f| f.device.clone()).filter(|d| !d.is_empty()))
-        };
-        let link = device.as_deref().and_then(|d| self.settings_of(d));
-        let out = outgoing(step, &self.vars(link.as_ref(), Some(c), name.as_deref()), None).map_err(Failure::NotSent)?;
-        self.send(out, device.as_deref()).await.map(drop)
+        let name = locked(&self.shared).inflight.get(&c.id).and_then(|f| f.external.clone()).or_else(|| external.map(str::to_string));
+        let out = outgoing(step, &self.vars(self.settings_of(device).as_ref(), Some(c), name.as_deref()), None).map_err(Failure::NotSent)?;
+        self.send(out, Some(device)).await.map(drop)
     }
 
     fn take(&self) -> Vec<Reading> {
@@ -968,17 +967,6 @@ impl Defined {
         self.by_device.read().unwrap_or_else(|e| e.into_inner()).get(code).cloned()
     }
 
-    fn link_for(&self, c: &Command) -> Option<Arc<Link>> {
-        let links = self.by_device.read().unwrap_or_else(|e| e.into_inner());
-        // After a restart the command's device is known by the journal, not here: its operation
-        // and who holds it in flight say which link it belongs to.
-        links
-            .values()
-            .find(|l| locked(&l.shared).inflight.contains_key(&c.id))
-            .cloned()
-            .or_else(|| links.values().find(|l| l.compiled.command(&c.operation).is_some() || l.native() || l.device_api()).cloned())
-    }
-
     pub fn links(&self) -> Vec<LinkHealth> {
         let mut out: Vec<LinkHealth> = self.links.read().unwrap_or_else(|e| e.into_inner()).values().map(|l| l.health()).collect();
         out.sort_by(|a, b| a.address.cmp(&b.address));
@@ -1003,32 +991,36 @@ impl Defined {
 
 #[async_trait]
 impl Adapter for Defined {
-    async fn dispatch(&self, command: &Command, device: &SiteDevice) -> Result<Dispatched, Failure> {
+    async fn dispatch(&self, command: &Command, device: &SiteDevice, left: Duration) -> Result<Dispatched, Failure> {
         match self.link_of(&device.code) {
-            Some(link) => link.dispatch(command, device).await,
+            Some(link) => link.dispatch(command, device, left).await,
             None => Ok(Dispatched::Rejected(format!("no definition reaches {}", device.code))),
         }
     }
 
-    async fn observe(&self, command: &Command, external: Option<&str>) -> Result<Observation, Failure> {
-        match self.link_for(command) {
-            Some(link) => link.observe(command, external).await,
+    async fn observe(&self, command: &Command, device: &str, external: Option<&str>) -> Result<Observation, Failure> {
+        match self.link_of(device) {
+            Some(link) => link.observe(command, device, external).await,
             None => Err(Failure::Unknown("no link holds this any more".into())),
         }
     }
 
-    async fn find(&self, command: &Command) -> Result<Option<Observation>, Failure> {
-        match self.link_for(command) {
-            Some(link) => link.find(command).await,
+    async fn find(&self, command: &Command, device: &str) -> Result<Option<Observation>, Failure> {
+        match self.link_of(device) {
+            Some(link) => link.find(command, device).await,
             None => Ok(None),
         }
     }
 
-    async fn cancel(&self, command: &Command, external: Option<&str>) -> Result<(), Failure> {
-        match self.link_for(command) {
-            Some(link) => link.cancel(command, external).await,
+    async fn cancel(&self, command: &Command, device: &str, external: Option<&str>) -> Result<(), Failure> {
+        match self.link_of(device) {
+            Some(link) => link.cancel(command, device, external).await,
             None => Err(Failure::NotSent("no link holds this any more".into())),
         }
+    }
+
+    fn endpoint(&self, device: &str) -> Option<String> {
+        self.link_of(device).map(|l| l.endpoint.clone())
     }
 
     async fn read(&self) -> Result<Vec<Reading>, Failure> {
@@ -1045,6 +1037,60 @@ impl Adapter for Defined {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncReadExt;
+
+    /// A server that says one thing to everyone, and counts who asked.
+    async fn says(what: String) -> (String, Arc<AtomicU64>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let asked = Arc::new(AtomicU64::new(0));
+        let count = asked.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                let mut request = [0u8; 2048];
+                let _ = socket.read(&mut request).await;
+                let _ = socket.write_all(what.as_bytes()).await;
+            }
+        });
+        (port.to_string(), asked)
+    }
+
+    fn firmware_limits(allow: &[&str]) -> Limits {
+        let dir = std::env::temp_dir().join(format!("ferrum-firmware-{}", Uuid::now_v7()));
+        Limits { allow: allow.iter().map(|a| a.to_string()).collect(), firmware_dir: Some(dir), ..Default::default() }
+    }
+
+    #[tokio::test]
+    async fn a_redirect_cannot_take_a_download_off_the_allow_list() {
+        let body = "the real firmware";
+        let sha256 = hex::encode(Sha256::digest(body));
+        let (outside, reached) = says(format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{body}", body.len())).await;
+        let (allowed, _) = says(format!("HTTP/1.1 302 Found\r\nlocation: http://localhost:{outside}/fw.bin\r\ncontent-length: 0\r\n\r\n")).await;
+        let payload = json!({"url": format!("http://127.0.0.1:{allowed}/fw.bin"), "sha256": sha256});
+        let refused = fetched(&firmware_limits(&["127.0.0.1"]), &payload).await;
+        assert!(
+            refused.is_err_and(|e| e.contains("does not allow") || e.contains("redirect") || e.contains("error following")),
+            "the hash would catch the file, not the trip"
+        );
+        assert_eq!(reached.load(Ordering::SeqCst), 0, "no request reached it");
+        let path = fetched(&firmware_limits(&["127.0.0.1", "localhost"]), &payload).await.expect("every hop is on the list");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), body);
+        assert_eq!(reached.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn an_allow_list_means_the_host_it_names() {
+        let limits = Limits { allow: vec!["plant.example.com".into(), "10.0.".into(), "plc-".into()], ..Default::default() };
+        assert!(limits.reaches("https://plant.example.com/x"));
+        assert!(limits.reaches("https://user:pw@plant.example.com:8443/x"));
+        assert!(!limits.reaches("https://plant.example.com.elsewhere.org/x"), "a name is not a prefix");
+        assert!(limits.reaches("http://10.0.3.4:80/x"), "a range says so with its dot");
+        assert!(!limits.reaches("http://10.01.3.4/x"));
+        assert!(limits.reaches("tcp://plc-7:502"), "or its dash");
+        assert!(!limits.reaches("http://other/x"));
+        assert!(Limits::default().reaches("http://anywhere/x"), "no list, no limit");
+    }
 
     #[test]
     fn an_address_shown_gives_nothing_away() {
