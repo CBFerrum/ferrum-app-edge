@@ -25,6 +25,7 @@ pub mod modbus;
 #[cfg(feature = "mqtt")]
 pub mod mqtt;
 pub mod mqtt_server;
+pub mod mtconnect;
 pub mod nats;
 #[cfg(feature = "ws")]
 pub mod ocpp;

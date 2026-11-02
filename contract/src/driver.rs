@@ -76,6 +76,8 @@ pub const SCHEMES: &[&str] = &[
     "file",
     "ftp",
     "listen+lwm2m",
+    "mtconnect",
+    "mtconnects",
 ];
 
 /// What is read and written a named thing at a time, with `node`.
