@@ -5,7 +5,7 @@
   <img alt="Ferrum IoT Edge" src="docs/assets/banner-light.svg" width="100%">
 </picture>
 
-[![CI](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-0.3.1-0369a1?style=flat-square) ![Ferrum](https://img.shields.io/badge/Ferrum-%3E%3D0.3%2C%20%3C0.4-2f5bea?style=flat-square) ![License](https://img.shields.io/badge/license-AGPL--3.0-3b82f6?style=flat-square) ![Rust](https://img.shields.io/badge/Rust-native%20app-b7410e?style=flat-square&logo=rust&logoColor=white) ![Interface](https://img.shields.io/badge/interface-React%20%2B%20Vite-0ea5e9?style=flat-square&logo=react&logoColor=white) ![MCP](https://img.shields.io/badge/AI%20agents-MCP-8b5cf6?style=flat-square)
+[![CI](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-0.4.0-0369a1?style=flat-square) ![Ferrum](https://img.shields.io/badge/Ferrum-%3E%3D0.3%2C%20%3C0.4-2f5bea?style=flat-square) ![License](https://img.shields.io/badge/license-AGPL--3.0-3b82f6?style=flat-square) ![Rust](https://img.shields.io/badge/Rust-native%20app-b7410e?style=flat-square&logo=rust&logoColor=white) ![Interface](https://img.shields.io/badge/interface-React%20%2B%20Vite-0ea5e9?style=flat-square&logo=react&logoColor=white) ![MCP](https://img.shields.io/badge/AI%20agents-MCP-8b5cf6?style=flat-square)
 
 **A native app for [Ferrum](https://github.com/CBFerrum/Ferrum), the open-source, AI-first business platform.**
 
@@ -34,7 +34,7 @@ function stay with their own controllers.
 
 | At a glance | |
 |---|---|
-| 📦 Version | `0.3.1` |
+| 📦 Version | `0.4.0` |
 | 🧱 Platform | Ferrum `>=0.3, <0.4` |
 | 🔗 Requires | ops `>=0.1` |
 | 🖥️ Interface | its own, at `/edge/` |
@@ -385,6 +385,7 @@ CHANGELOG.md  what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.4.0** | Recovery, following and stopping go back to exactly what a command went out on. Time is the platform's, on a clock nothing here can set. Every command is checked again the moment before it goes … |
 | **0.3.1** | The gateway's releases are static, so they run on any 64-bit Linux. Those of 0.3.0 needed glibc 2.39 and would not start on Ubuntu 22.04, Debian … |
 | **0.3.0** | Customers who own devices: their people see those devices, their alarms and the dashboards given to them in the workspace's portal, and nothing else. |
 | **0.2.0** | Devices that call in: MQTT 3.1 to 5, HTTP and CoAP on ThingsBoard's own topics and paths, with tokens, passwords and certificates, provisioning … |

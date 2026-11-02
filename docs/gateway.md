@@ -175,7 +175,7 @@ holds no key, because a release is a person's to sign:
 
 ```
 ferrum-site release-key > release.key     # once: public goes in update_keys, secret stays off every gateway
-ferrum-site sign --key secret.txt --version 0.3.1 --url https://…/ferrum-site --file ferrum-site --days 90
+ferrum-site sign --key secret.txt --version 0.4.0 --url https://…/ferrum-site --file ferrum-site --days 90
 ```
 
 `sign` prints the version, hash, signature and expiry for the Edge Release. Keep the secret half on a
