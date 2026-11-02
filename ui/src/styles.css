@@ -203,6 +203,8 @@ a.edge-row-main:hover strong {
 }
 
 .edge-code {
+  /* The kit's inputs are one line tall, whatever `rows` says. */
+  height: auto;
   width: 100%;
   font-family: var(--font-mono);
   font-size: 13px;
