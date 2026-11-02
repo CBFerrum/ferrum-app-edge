@@ -33,6 +33,10 @@ struct Asked {
     command: Option<Command>,
     device: Option<SiteDevice>,
     external: Option<String>,
+    /// How long a dispatch has, by the clock of the site that holds authority: a box with no platform
+    /// of its own has nothing better to judge a deadline by.
+    #[serde(default)]
+    left_ms: Option<u64>,
 }
 
 /// What one side of a link knows of the other.
@@ -86,32 +90,45 @@ async fn answer(State(trust): State<Trust>, headers: HeaderMap, Path(op): Path<S
         let Some(adapter) = rt.local_adapter(&device.code) else {
             return axum::Json(Ok::<Dispatched, Failure>(Dispatched::Rejected(format!("nothing here reaches {}", device.code)))).into_response();
         };
-        return axum::Json(dispatch_once(rt, adapter.as_ref(), &c, &device).await).into_response();
+        // Only the holder's clock can say this is still alive, and the payload is what was authorized.
+        let left = asked.left_ms.map(Duration::from_millis).filter(|l| !l.is_zero());
+        let Some(left) = left.filter(|_| c.intact()) else {
+            return axum::Json(Ok::<Dispatched, Failure>(Dispatched::Rejected("it has no time left, or is not what was authorized".into()))).into_response();
+        };
+        return axum::Json(dispatch_once(rt, adapter.as_ref(), &c, &device, left).await).into_response();
     }
-    // What was dispatched here says which device it was for.
-    let adapter = rt.journal.peer_device(c.id).ok().flatten().and_then(|code| rt.local_adapter(&code));
-    match (op.as_str(), adapter) {
-        ("observe", Some(a)) => axum::Json(a.observe(&c, asked.external.as_deref()).await).into_response(),
-        ("cancel", Some(a)) => axum::Json(a.cancel(&c, asked.external.as_deref()).await).into_response(),
-        ("find", Some(a)) => axum::Json(a.find(&c).await).into_response(),
+    // What was dispatched here says which device it was for, and what it went out on. If that has
+    // changed nothing here can speak for it, which is not the same as never having heard of it.
+    let asked_of = rt.journal.peer_device(c.id).ok().flatten();
+    let bound = asked_of.as_ref().and_then(|(code, binding)| {
+        let adapter = rt.local_adapter(code)?;
+        let (_, now) = rt.reach(code)?;
+        (Some(&now) == binding.as_ref()).then_some((adapter, code.as_str()))
+    });
+    match (op.as_str(), bound, &asked_of) {
+        ("observe", Some((a, code)), _) => axum::Json(a.observe(&c, code, asked.external.as_deref()).await).into_response(),
+        ("cancel", Some((a, code)), _) => axum::Json(a.cancel(&c, code, asked.external.as_deref()).await).into_response(),
+        ("find", Some((a, code)), _) => axum::Json(a.find(&c, code).await).into_response(),
         // Never heard of it: it did not go out from here.
-        ("find", None) => axum::Json(Ok::<Option<Observation>, Failure>(Some(Observation::NotFound))).into_response(),
-        ("observe", None) => axum::Json(Err::<Observation, Failure>(Failure::Unknown("this was never asked of this site".into()))).into_response(),
-        ("cancel", None) => axum::Json(Err::<(), Failure>(Failure::NotSent("this was never asked of this site".into()))).into_response(),
+        ("find", None, None) => axum::Json(Ok::<Option<Observation>, Failure>(Some(Observation::NotFound))).into_response(),
+        ("find", None, Some(_)) => axum::Json(Ok::<Option<Observation>, Failure>(None)).into_response(),
+        ("observe", None, _) => axum::Json(Err::<Observation, Failure>(Failure::Unknown("this site cannot speak for that".into()))).into_response(),
+        ("cancel", None, _) => axum::Json(Err::<(), Failure>(Failure::NotSent("this site cannot speak for that".into()))).into_response(),
         _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
 /// The first asking sends it. Any other gets the first's answer, or if that never came, the truth:
 /// nobody knows, and it is not sent again.
-async fn dispatch_once(rt: &Runtime, adapter: &dyn Adapter, c: &Command, device: &SiteDevice) -> Result<Dispatched, Failure> {
-    match rt.journal.peer_begin(c.id, &device.code) {
+async fn dispatch_once(rt: &Runtime, adapter: &dyn Adapter, c: &Command, device: &SiteDevice, left: Duration) -> Result<Dispatched, Failure> {
+    let Some((_, binding)) = rt.reach(&device.code) else { return Ok(Dispatched::Rejected(format!("nothing here reaches {}", device.code))) };
+    match rt.journal.peer_begin(c.id, &device.code, &binding) {
         Ok(None) => {}
         Ok(Some(Some(said))) => return serde_json::from_str(&said).unwrap_or_else(|_| Err(Failure::Unknown("its answer cannot be read".into()))),
         Ok(Some(None)) => return Err(Failure::Unknown("asked before, and it stopped before it could answer".into())),
         Err(e) => return Err(Failure::NotSent(e.to_string())),
     }
-    let said = adapter.dispatch(c, device).await;
+    let said = adapter.dispatch(c, device, left).await;
     let _ = rt.journal.peer_end(c.id, &serde_json::to_string(&said).unwrap_or_default());
     said
 }
@@ -136,7 +153,12 @@ pub struct Peer {
 
 impl Peer {
     pub fn new(url: &str, key: SigningKey) -> Peer {
-        let http = reqwest::Client::builder().timeout(Duration::from_secs(20)).connect_timeout(Duration::from_secs(5)).build().unwrap_or_default();
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .connect_timeout(Duration::from_secs(5))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_default();
         Peer { url: url.trim_end_matches('/').to_string(), key, http, last: AtomicI64::new(0), health: RwLock::new("not heard from".into()) }
     }
 
@@ -180,14 +202,18 @@ impl Peer {
 
 #[async_trait]
 impl Adapter for Peer {
-    async fn dispatch(&self, command: &Command, device: &SiteDevice) -> Result<Dispatched, Failure> {
-        self.call("dispatch", &Asked { command: Some(command.clone()), device: Some(device.clone()), external: None }).await?
+    async fn dispatch(&self, command: &Command, device: &SiteDevice, left: Duration) -> Result<Dispatched, Failure> {
+        let left_ms = Some(u64::try_from(left.as_millis()).unwrap_or(u64::MAX));
+        self.call("dispatch", &Asked { command: Some(command.clone()), device: Some(device.clone()), external: None, left_ms }).await?
     }
 
-    async fn observe(&self, command: &Command, external: Option<&str>) -> Result<Observation, Failure> {
+    async fn observe(&self, command: &Command, _device: &str, external: Option<&str>) -> Result<Observation, Failure> {
         // A link that is down says nothing about the work: it is still going, as far as anyone knows.
         match self
-            .call::<Result<Observation, Failure>>("observe", &Asked { command: Some(command.clone()), device: None, external: external.map(str::to_string) })
+            .call::<Result<Observation, Failure>>(
+                "observe",
+                &Asked { command: Some(command.clone()), device: None, external: external.map(str::to_string), left_ms: None },
+            )
             .await
         {
             Ok(said) => said,
@@ -196,16 +222,20 @@ impl Adapter for Peer {
         }
     }
 
-    async fn find(&self, command: &Command) -> Result<Option<Observation>, Failure> {
-        self.call("find", &Asked { command: Some(command.clone()), device: None, external: None }).await?
+    async fn find(&self, command: &Command, _device: &str) -> Result<Option<Observation>, Failure> {
+        self.call("find", &Asked { command: Some(command.clone()), device: None, external: None, left_ms: None }).await?
     }
 
-    async fn cancel(&self, command: &Command, external: Option<&str>) -> Result<(), Failure> {
-        self.call("cancel", &Asked { command: Some(command.clone()), device: None, external: external.map(str::to_string) }).await?
+    async fn cancel(&self, command: &Command, _device: &str, external: Option<&str>) -> Result<(), Failure> {
+        self.call("cancel", &Asked { command: Some(command.clone()), device: None, external: external.map(str::to_string), left_ms: None }).await?
     }
 
     async fn read(&self) -> Result<Vec<Reading>, Failure> {
-        self.call("read", &Asked { command: None, device: None, external: None }).await
+        self.call("read", &Asked { command: None, device: None, external: None, left_ms: None }).await
+    }
+
+    fn endpoint(&self, _device: &str) -> Option<String> {
+        Some(self.url.clone())
     }
 
     fn health(&self) -> String {

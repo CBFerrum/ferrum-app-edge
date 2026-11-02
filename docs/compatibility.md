@@ -9,6 +9,45 @@ Levels, in the assessment's words: *Known supported*, *Known unsupported*, *Cond
 Certification labels (Community, Security-reviewed, Operationally verified, Vendor-qualified) are
 earned per device model and firmware. None is held yet.
 
+## How far each has been taken
+
+There is no one word for this, so none is used. Five separate things can be true of a protocol, and
+being true of one says nothing about the next.
+
+| Label | Means |
+|---|---|
+| **Implemented transport** | The code exists and speaks it |
+| **Independent software tested** | It met software we did not write, such as a reference library or server |
+| **Vendor simulator tested** | It met a simulator its equipment's maker ships |
+| **Physical equipment qualified** | It ran on named equipment and firmware, through recovery and failure, and the record says which |
+| **Production profile supported** | Someone stands behind that equipment and firmware at a site, with procedures |
+
+| Protocol or path | Implemented | Independent software | Vendor simulator | Physical equipment | Production profile |
+|---|---|---|---|---|---|
+| MQTT 3.1.1 and 5 | Yes | Yes: Mosquitto, Paho | No | No | No |
+| OPC UA, both ways | Yes | Yes: async-opcua, asyncua, open62541 | No | No | No |
+| Sparkplug B | Yes | Yes: Eclipse Tahu's definitions | No | No | No |
+| Modbus TCP | Yes | Yes: pymodbus | No | No | No |
+| Modbus RTU | Yes | No: a pseudo-terminal | No | No | No |
+| Siemens S7 | Yes | Yes: python-snap7 | No | No | No |
+| EtherNet/IP | Yes | Yes: cpppo | No | No | No |
+| TwinCAT ADS | Yes | Yes: pyads | No | No | No |
+| BACnet/IP | Yes | Yes: BACpypes3 | No | No | No |
+| SNMP | Yes | Yes: PySNMP | No | No | No |
+| IEC 60870-5-104 | Yes | Yes: lib60870 | No | No | No |
+| DNP3 | Yes | Yes: opendnp3 | No | No | No |
+| OCPP 1.6 | Yes | Yes: the Python `ocpp` library | No | No | No |
+| OCPP 2.0.1 | Yes | No: frames written here | No | No | No |
+| LwM2M, CoAP | Yes | Yes: Leshan, aiocoap | No | No | No |
+| KNX, M-Bus, DLMS, MTConnect | Yes | No: stand-ins or frames compared | No | No | No |
+| VDA 5050 2.x | Yes | No: a stand-in broker | No | No | No |
+| VDA 5050 3.0.0, Open-RMF, openTCS, rosbridge, MiR, Universal Robots | A template only | No | No | No | No |
+| A robotic warehouse mission, end to end | Yes | Against a simulated fleet only | No | No | No |
+| A machine start, end to end | Yes | Against a simulated press only | No | No | No |
+
+Nothing has reached the last two columns. A template in `templates` is a start for someone with the
+equipment, and no row here is a claim about any device.
+
 ## Adapters
 
 | | Simulator | Operator tasks | MQTT 5 | VDA 5050 | Modbus TCP |

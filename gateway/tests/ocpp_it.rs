@@ -19,6 +19,9 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use uuid::Uuid;
 
+/// How long a dispatch is told it has.
+const LEFT: std::time::Duration = std::time::Duration::from_secs(600);
+
 fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
@@ -169,32 +172,32 @@ async fn a_charger_speaks_and_is_answered_in_either_version() {
     plant.reading(|r| matches!(r, Reading::Event { name, .. } if name == "transaction.started")).await;
 
     let c = command("ocpp.RemoteStartTransaction", json!({"idTag": "A1"}));
-    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("CP-1")).await else { panic!("not accepted") };
+    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("CP-1"), LEFT).await else { panic!("not accepted") };
     let asked = hear(&mut old).await;
     assert_eq!((asked[0].as_i64(), asked[2].as_str(), asked[3]["idTag"].as_str()), (Some(2), Some("RemoteStartTransaction"), Some("A1")));
-    assert!(matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Waiting)));
+    assert!(matches!(plant.d.observe(&c, "CP-1", Some(&external)).await, Ok(Observation::Waiting)));
     old.send(Message::text(json!([3, asked[1], {"status": "Accepted"}]).to_string())).await.unwrap();
     for _ in 0..200 {
         let _ = plant.d.read().await;
-        if matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Completed(_))) {
+        if matches!(plant.d.observe(&c, "CP-1", Some(&external)).await, Ok(Observation::Completed(_))) {
             break;
         }
         tokio::time::sleep(Wait::from_millis(10)).await;
     }
-    assert!(matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Completed(_))));
+    assert!(matches!(plant.d.observe(&c, "CP-1", Some(&external)).await, Ok(Observation::Completed(_))));
 
     let c = command("ocpp.Reset", json!({"type": "Hard"}));
-    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("CP-1")).await else { panic!("not accepted") };
+    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("CP-1"), LEFT).await else { panic!("not accepted") };
     let asked = hear(&mut old).await;
     old.send(Message::text(json!([3, asked[1], {"status": "Rejected"}]).to_string())).await.unwrap();
     for _ in 0..200 {
         let _ = plant.d.read().await;
-        if matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Failed(_))) {
+        if matches!(plant.d.observe(&c, "CP-1", Some(&external)).await, Ok(Observation::Failed(_))) {
             break;
         }
         tokio::time::sleep(Wait::from_millis(10)).await;
     }
-    assert!(matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Failed(_))), "a charger that says no has said no");
+    assert!(matches!(plant.d.observe(&c, "CP-1", Some(&external)).await, Ok(Observation::Failed(_))), "a charger that says no has said no");
     drop(old);
 
     let mut new = connect(plant.port, "CP-1", "ocpp2.0.1", Some("secret")).await.unwrap();
@@ -230,28 +233,28 @@ async fn a_charger_written_by_someone_else() {
     plant.reading(|r| matches!(r, Reading::State { state, .. } if state == "Charging")).await;
     plant.reading(|r| matches!(r, Reading::Event { name, .. } if name == "transaction.started")).await;
     let c = command("ocpp.RemoteStartTransaction", json!({"idTag": "A1"}));
-    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("CP_1")).await else { panic!("not accepted") };
+    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("CP_1"), LEFT).await else { panic!("not accepted") };
     for _ in 0..200 {
         let _ = plant.d.read().await;
-        if matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Completed(_))) {
+        if matches!(plant.d.observe(&c, "CP_1", Some(&external)).await, Ok(Observation::Completed(_))) {
             break;
         }
         tokio::time::sleep(Wait::from_millis(10)).await;
     }
-    assert!(matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Completed(_))), "it said it would");
+    assert!(matches!(plant.d.observe(&c, "CP_1", Some(&external)).await, Ok(Observation::Completed(_))), "it said it would");
     // Smart charging is a command like any other, and the library holds it to OCPP's own schema.
     let profile = json!({"connectorId": 1, "csChargingProfiles": {"chargingProfileId": 1, "stackLevel": 0, "chargingProfilePurpose": "TxDefaultProfile", "chargingProfileKind": "Relative",
         "chargingSchedule": {"chargingRateUnit": "A", "chargingSchedulePeriod": [{"startPeriod": 0, "limit": 16.0}]}}});
     let c = command("ocpp.SetChargingProfile", profile);
-    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("CP_1")).await else { panic!("not accepted") };
+    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("CP_1"), LEFT).await else { panic!("not accepted") };
     for _ in 0..200 {
         let _ = plant.d.read().await;
-        if matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Completed(_))) {
+        if matches!(plant.d.observe(&c, "CP_1", Some(&external)).await, Ok(Observation::Completed(_))) {
             break;
         }
         tokio::time::sleep(Wait::from_millis(10)).await;
     }
-    assert!(matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Completed(_))), "it took the limit");
+    assert!(matches!(plant.d.observe(&c, "CP_1", Some(&external)).await, Ok(Observation::Completed(_))), "it took the limit");
     let _ = run.wait().await;
     let out = run.wait_with_output().await.unwrap();
     let said = String::from_utf8_lossy(&out.stdout);

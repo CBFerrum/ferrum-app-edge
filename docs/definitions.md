@@ -67,7 +67,8 @@ address is one connection, shared by the devices on it, and it reconnects on its
 
 A definition can come from the platform, so the site decides what one may do there (`site.yaml`):
 
-- `allow` limits hosts, by what they start with. Empty means any.
+- `allow` limits hosts: a whole host, or a range when it ends in a dot or a dash (`10.0.`, `plc-`). Empty
+  means any. A redirect is held to it at every hop, and cannot go from encrypted to plain.
 - `listen` names addresses a definition may listen on, exactly. Empty means none.
 - `drivers_dir` is the only place a driver can be run from.
 - `files_dir` is the only place a definition can read files and SQLite databases from.
@@ -223,6 +224,14 @@ status:
 asks the equipment whether it has heard of a command after a crash, only for equipment that keeps its
 own record: a "no" makes sending it again safe. `cancel` is how to stop it, and whether it stopped is
 for the status to say. `once: true` admits that this device can prove nothing beyond the send.
+
+`find`, a status and `cancel` go to the device the command went to, on the link it went out on. If the
+definition or the address has changed since, they go nowhere and the outcome is unknown, so change those
+with nothing running.
+
+Equipment that can hold a deadline or refuse an old authority can be told: `{expires_at}` and `{epoch}`
+work in anything a command sends. A site checks both before a command leaves, and only the equipment
+can check them after.
 
 A definition promises no more than an adapter may: a command is accepted once it has gone, ends only
 when its status says so, and a write that was not answered leaves it unknown, for a person to settle.

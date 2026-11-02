@@ -17,6 +17,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 use uuid::Uuid;
 
+/// How long a dispatch is told it has.
+const LEFT: std::time::Duration = std::time::Duration::from_secs(600);
+
 fn command(operation: &str, payload: Value) -> Command {
     Command {
         id: Uuid::now_v7(),
@@ -127,7 +130,7 @@ commands:
 
     let c = command("tracker.ping", json!({}));
     assert!(
-        matches!(d.dispatch(&c, &device("T-1")).await, Err(Failure::NotSent(why)) if why.contains("has not called in")),
+        matches!(d.dispatch(&c, &device("T-1"), LEFT).await, Err(Failure::NotSent(why)) if why.contains("has not called in")),
         "nobody to say it to, so it did not go"
     );
 
@@ -138,12 +141,12 @@ commands:
     seen.reading(&d, |r| of(r, "T-1") && metric(r, "temp", 20.5)).await;
     seen.reading(&d, |r| of(r, "T-2") && metric(r, "temp", 30.5)).await;
 
-    d.dispatch(&command("tracker.ping", json!({})), &device("T-2")).await.expect("sent");
+    d.dispatch(&command("tracker.ping", json!({})), &device("T-2"), LEFT).await.expect("sent");
     let mut buf = [0u8; 32];
     let n = tokio::time::timeout(Wait::from_secs(2), two.read(&mut buf)).await.unwrap().unwrap();
     assert_eq!(&buf[..n], b"PING T-2\n", "it reached the one it was for");
     assert!(tokio::time::timeout(Wait::from_millis(100), one.read(&mut buf)).await.is_err(), "and nobody else");
-    d.dispatch(&command("tracker.ping", json!({})), &device("T-1")).await.expect("sent");
+    d.dispatch(&command("tracker.ping", json!({})), &device("T-1"), LEFT).await.expect("sent");
     let n = tokio::time::timeout(Wait::from_secs(2), one.read(&mut buf)).await.unwrap().unwrap();
     assert_eq!(&buf[..n], b"PING T-1\n", "and so did the other");
 
@@ -152,7 +155,7 @@ commands:
 
     drop(two);
     tokio::time::sleep(Wait::from_millis(100)).await;
-    let gone = d.dispatch(&command("tracker.ping", json!({})), &device("T-2")).await;
+    let gone = d.dispatch(&command("tracker.ping", json!({})), &device("T-2"), LEFT).await;
     assert!(matches!(gone, Err(Failure::NotSent(_))), "a caller that hung up is not there to hear it: {gone:?}");
 }
 
@@ -202,7 +205,7 @@ async fn datagrams_from_anyone_and_answers_back() {
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     socket.send_to(b"B1 4.5", &address).await.unwrap();
     seen.reading(&d, |r| metric(r, "level", 4.5)).await;
-    d.dispatch(&command("beacon.ack", json!({})), &device("B1")).await.expect("sent");
+    d.dispatch(&command("beacon.ack", json!({})), &device("B1"), LEFT).await.expect("sent");
     let mut buf = [0u8; 8];
     let (n, _) = tokio::time::timeout(Wait::from_secs(2), socket.recv_from(&mut buf)).await.unwrap().unwrap();
     assert_eq!(&buf[..n], b"ACK");
@@ -320,7 +323,7 @@ async fn a_controller_written_by_someone_else_over_modbus_tcp() {
     seen.reading(&d, |r| metric(r, "started", 0.0)).await;
 
     let job = command("machine.start_job", json!({"job": 7}));
-    assert!(matches!(d.dispatch(&job, &device("PRESS-1")).await, Ok(Dispatched::Accepted { .. })));
+    assert!(matches!(d.dispatch(&job, &device("PRESS-1"), LEFT).await, Ok(Dispatched::Accepted { .. })));
     seen.reading(&d, |r| metric(r, "job", 7.0)).await;
     seen.reading(&d, |r| metric(r, "started", 1.0)).await;
 }
@@ -360,7 +363,7 @@ async fn a_binary_protocol_is_checked_both_ways() {
     seen.reading(&d, |r| metric(r, "speed", 9.0)).await;
     assert_eq!(d.links()[0].dropped, 1, "the damaged frame was not a reading");
     assert!(d.links()[0].last_error.as_deref().is_some_and(|e| e.contains("check")));
-    d.dispatch(&command("drive.stop", json!({})), &device("D1")).await.expect("sent");
+    d.dispatch(&command("drive.stop", json!({})), &device("D1"), LEFT).await.expect("sent");
     let sent = tokio::time::timeout(Wait::from_secs(2), got.recv()).await.unwrap().unwrap();
     assert_eq!(sent[..2], [1, 2]);
     assert_eq!(sent[2..], crc(&[1, 2]).to_le_bytes(), "it went out with its check");
@@ -454,7 +457,7 @@ commands:
     seen.reading(&d, |r| of(r, "M1") && metric(r, "Motor/Speed_rpm", 1500.5)).await;
     seen.reading(&d, |r| of(r, "BOT-1") && metric(r, "battery", 64.0)).await;
 
-    d.dispatch(&command("machine.set", json!({"value": 12.5})), &device("M1")).await.expect("sent");
+    d.dispatch(&command("machine.set", json!({"value": 12.5})), &device("M1"), LEFT).await.expect("sent");
     let raw = tokio::time::timeout(Wait::from_secs(5), cmd.recv()).await.unwrap().unwrap();
     let said = ferrum_edge_contract::sparkplug::decode(&raw).unwrap();
     assert_eq!(said["metrics"][0]["name"], "Setpoint");
@@ -612,9 +615,9 @@ commands:
     assert!(value.as_array().unwrap().iter().any(|c| c["name"] == "Server" && c["class"] == "Object"), "{value}");
 
     // A value that does not fit is refused here, not rounded and sent.
-    let wide = d.dispatch(&command("press.set_job", json!({"job": 70000})), &device("PRESS-1")).await;
+    let wide = d.dispatch(&command("press.set_job", json!({"job": 70000})), &device("PRESS-1"), LEFT).await;
     assert!(matches!(wide, Err(Failure::NotSent(ref why)) | Ok(Dispatched::Rejected(ref why)) if why.contains("does not fit")), "{wide:?}");
-    let cut = d.dispatch(&command("press.set_job", json!({"job": 1.5})), &device("PRESS-1")).await;
+    let cut = d.dispatch(&command("press.set_job", json!({"job": 1.5})), &device("PRESS-1"), LEFT).await;
     assert!(matches!(cut, Err(Failure::NotSent(ref why)) if why.contains("does not fit")), "nor is a fraction cut off: {cut:?}");
     assert_eq!(plc.get("Job"), Some(opcua::types::Variant::Int16(0)));
 
@@ -625,17 +628,17 @@ commands:
     assert!(!seen.0.lock().unwrap().iter().any(|r| metric(r, "temp", 999.5)), "a failed sensor's number was recorded");
 
     let c = command("press.start", json!({"job": 42}));
-    d.dispatch(&c, &device("PRESS-1")).await.expect("called");
+    d.dispatch(&c, &device("PRESS-1"), LEFT).await.expect("called");
     assert_eq!(plc.calls.lock().unwrap().as_slice(), [vec![opcua::types::Variant::Int32(42)]]);
-    assert!(matches!(d.observe(&c, None).await, Ok(Observation::Completed(_))));
+    assert!(matches!(d.observe(&c, "PRESS-1", None).await, Ok(Observation::Completed(_))));
 
-    let refused = d.dispatch(&command("press.bad", json!({"job": 1})), &device("PRESS-1")).await;
+    let refused = d.dispatch(&command("press.bad", json!({"job": 1})), &device("PRESS-1"), LEFT).await;
     assert!(matches!(refused, Err(Failure::NotSent(ref why)) if why.contains("refused")), "the server said no, so nothing changed: {refused:?}");
 
     // The link goes away with the server, and comes back with it.
     plc.handle.cancel();
     until("the link to fall", async || !d.links()[0].up).await;
-    assert!(matches!(d.dispatch(&command("press.start", json!({"job": 1})), &device("PRESS-1")).await, Err(Failure::NotSent(_))));
+    assert!(matches!(d.dispatch(&command("press.start", json!({"job": 1})), &device("PRESS-1"), LEFT).await, Err(Failure::NotSent(_))));
     let _ = std::fs::remove_dir_all(dir);
 }
 

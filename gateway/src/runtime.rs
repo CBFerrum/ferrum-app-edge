@@ -2,10 +2,11 @@
 //! equipment. They share nothing but the journal, so any of them can stall or crash without the
 //! others losing anything, and a restart picks up from the file.
 
-use crate::adapter::{Adapter, Dispatched, Failure, Observation, Reading};
+use crate::adapter::{Adapter, Binding, Dispatched, Failure, Observation, Reading};
 use crate::adapters::defined::{Defined, LinkHealth};
 use crate::adapters::transport::Limits as OpenLimits;
 use crate::adapters::{operator::OperatorTasks, sim::Sim};
+use crate::clock::{Clock, Source};
 use crate::config::{AdapterKind, Config};
 use crate::crash_point;
 use crate::export::{self, Sender};
@@ -32,52 +33,20 @@ use tokio::sync::watch;
 use tokio::time::timeout;
 use uuid::Uuid;
 
-/// Time on this site: the platform's, as far as it has been told, and never going backwards. A
-/// clock that jumps back must not bring a command back to life or stretch a lease.
-pub struct Clock {
-    offset_ms: AtomicI64,
-    high_water: AtomicI64,
-    last_signed: AtomicI64,
-}
-
-impl Clock {
-    fn new(high_water: i64, offset: i64) -> Clock {
-        Clock { offset_ms: AtomicI64::new(offset), high_water: AtomicI64::new(high_water), last_signed: AtomicI64::new(high_water) }
-    }
-
-    pub fn now_ms(&self) -> i64 {
-        let wall = Utc::now().timestamp_millis() + self.offset_ms.load(Ordering::Relaxed);
-        self.high_water.fetch_max(wall, Ordering::Relaxed).max(wall)
-    }
-
-    pub fn now(&self) -> DateTime<Utc> {
-        DateTime::from_timestamp_millis(self.now_ms()).unwrap_or_else(Utc::now)
-    }
-
-    /// Learns the platform's time. Going backwards takes effect only as the high-water mark is
-    /// reached: signatures must keep rising in any case.
-    fn correct(&self, server: DateTime<Utc>) {
-        self.offset_ms.store(server.timestamp_millis() - Utc::now().timestamp_millis(), Ordering::Relaxed);
-    }
-
-    /// A time to sign with: rising on every call, as the platform requires.
-    fn signing_ms(&self) -> i64 {
-        let now = self.now_ms();
-        let mut last = self.last_signed.load(Ordering::Relaxed);
-        loop {
-            let next = now.max(last + 1);
-            match self.last_signed.compare_exchange(last, next, Ordering::Relaxed, Ordering::Relaxed) {
-                Ok(_) => return next,
-                Err(seen) => last = seen,
-            }
-        }
-    }
-}
-
 #[derive(Clone)]
-struct Slot {
-    adapter: Arc<dyn Adapter>,
+pub struct Slot {
+    /// Its name at this site, which a binding keeps.
+    pub name: String,
+    pub adapter: Arc<dyn Adapter>,
     concurrency: u32,
+}
+
+/// What it takes to send a command, as the gate found it.
+struct Go {
+    device: SiteDevice,
+    slot: Slot,
+    binding: Binding,
+    left: StdDuration,
 }
 
 /// The edge's own rules, and where each stands on each device.
@@ -177,14 +146,14 @@ impl Runtime {
                 AdapterKind::Modbus(c) => Arc::new(crate::adapters::modbus::Modbus::new(c.clone())),
             };
             for d in &a.devices {
-                by_device.insert(d.clone(), Slot { adapter: adapter.clone(), concurrency: a.concurrency.max(1) });
+                by_device.insert(d.clone(), Slot { name: a.name.clone(), adapter: adapter.clone(), concurrency: a.concurrency.max(1) });
             }
             adapters.push((a.name.clone(), adapter));
         }
         for p in &cfg.peers {
             let adapter: Arc<dyn Adapter> = Arc::new(Peer::new(&p.url, key.clone()));
             for d in &p.devices {
-                by_device.insert(d.clone(), Slot { adapter: adapter.clone(), concurrency: p.concurrency.max(1) });
+                by_device.insert(d.clone(), Slot { name: format!("peer {}", p.name), adapter: adapter.clone(), concurrency: p.concurrency.max(1) });
             }
             adapters.push((format!("peer {}", p.name), adapter));
         }
@@ -202,10 +171,13 @@ impl Runtime {
         adapters.push(("definitions".to_string(), defined.clone()));
         let high_water = journal.high_water().map_err(|e| e.to_string())?.map(|t| t.timestamp_millis()).unwrap_or(0);
         let offset = journal.get("clock_offset").map_err(|e| e.to_string())?.and_then(|v| v.parse().ok()).unwrap_or(0);
+        let saved = journal.get("clock").map_err(|e| e.to_string())?.and_then(|t| serde_json::from_str(&t).ok());
+        // A box that only answers a peer never hears the platform, so nothing would ever reset a margin.
+        let drift = if cfg.peer_only { 0 } else { cfg.clock_drift_ppm };
         let runtime = Arc::new(Runtime {
             cfg,
             journal,
-            clock: Clock::new(high_water, offset),
+            clock: Clock::start(saved, high_water, offset, drift, Source::default()),
             link,
             adapters,
             by_device,
@@ -641,6 +613,9 @@ impl Runtime {
         if self.clock.now() >= lease {
             return Some(format!("Offline past the site's limit, since {lease}. Running work is followed; nothing new starts"));
         }
+        if !self.clock.sure() {
+            return Some("This machine restarted, and nothing has said how long it was off. Nothing new starts until the platform answers, or a person vouches for the time here".into());
+        }
         match free_disk(&self.cfg.state_dir) {
             Some(free) if free < self.cfg.reserve_mb << 20 => Some(format!("Only {} MB of disk left: keeping what remains for what is running", free >> 20)),
             None => Some("Cannot tell how much disk is left".into()),
@@ -651,8 +626,37 @@ impl Runtime {
     fn adapter_for(&self, code: &str) -> Option<Slot> {
         self.by_device.get(code).cloned().or_else(|| {
             let concurrency = self.defined.concurrency(code)?;
-            Some(Slot { adapter: self.defined.clone(), concurrency })
+            Some(Slot { name: "definitions".into(), adapter: self.defined.clone(), concurrency })
         })
+    }
+
+    /// What reaches a device now, and how to say so.
+    pub fn reach(&self, code: &str) -> Option<(Slot, Binding)> {
+        let slot = self.adapter_for(code)?;
+        let endpoint = slot.adapter.endpoint(code)?;
+        let binding = Binding { device: code.to_string(), adapter: slot.name.clone(), endpoint };
+        Some((slot, binding))
+    }
+
+    /// What a command went out on, if that is still what reaches its device. Anything else asks the
+    /// wrong thing: an answer from another endpoint says nothing about this command, and an answer of
+    /// "never heard of it" would look like leave to send it again.
+    fn bound(&self, e: &Entry) -> Option<(Slot, String)> {
+        let binding = e.binding.as_ref()?;
+        let (slot, now) = self.reach(&binding.device)?;
+        (now == *binding).then(|| (slot, binding.device.clone()))
+    }
+
+    /// A person at the site says the time will do.
+    pub fn vouch_time(&self) -> Result<(), String> {
+        self.clock.vouch();
+        self.journal.set("clock", &json!(self.clock.saved()).to_string()).map_err(|e| e.to_string())
+    }
+
+    /// Writes down the time the platform gave.
+    fn keep_time(&self, server: DateTime<Utc>) {
+        let _ = self.journal.set("clock", &json!(self.clock.saved()).to_string());
+        let _ = self.journal.set("clock_offset", &(server.timestamp_millis() - Utc::now().timestamp_millis()).to_string());
     }
 
     fn devices_by_id(&self) -> HashMap<Uuid, SiteDevice> {
@@ -670,10 +674,9 @@ impl Runtime {
         if doubts.is_empty() {
             return;
         }
-        let devices = self.devices_by_id();
         for e in doubts {
-            let found = match devices.get(&e.command.target_id).and_then(|d| self.adapter_for(&d.code)) {
-                Some(slot) => timeout(self.call_limit(), slot.adapter.find(&e.command)).await.unwrap_or(Ok(None)).unwrap_or(None),
+            let found = match self.bound(&e) {
+                Some((slot, device)) => timeout(self.call_limit(), slot.adapter.find(&e.command, &device)).await.unwrap_or(Ok(None)).unwrap_or(None),
                 None => None,
             };
             let id = e.command.id;
@@ -716,67 +719,103 @@ impl Runtime {
         Ok(())
     }
 
-    /// Starts what is ready.
+    /// Whether a command may leave now, and what it would take. Everything here is asked when work is
+    /// planned and again the moment before it goes: an adapter ahead of it may have taken its time,
+    /// and a deadline, the lease, a device or the authority may have changed meanwhile. Saying no here
+    /// also says why, in the journal.
+    fn admit(&self, e: &Entry) -> Option<Go> {
+        let id = e.command.id;
+        let now = self.clock.now();
+        // A cancel needs no one's permission, and what is past its deadline needs no equipment.
+        if e.cancel_requested {
+            self.establish(self.report(id, State::Aborted, json!({"reason": "cancelled before it started"}), None), None);
+            return None;
+        }
+        if now >= e.command.expires_at {
+            self.establish(self.report(id, State::Expired, json!({"reason": "its deadline passed before it started"}), None), None);
+            return None;
+        }
+        if let Some(why) = self.stopped() {
+            let _ = self.journal.hold(id, Some(&why));
+            return None;
+        }
+        let reject = |why: String| self.establish(self.report(id, State::Rejected, json!({"reason": why}), None), None);
+        if let Err(why) = e.command.startable(now, self.epoch()) {
+            reject(why.to_string());
+            return None;
+        }
+        let Some(device) = self.journal.device(e.command.target_id).ok().flatten() else {
+            reject("this site does not know that device".into());
+            return None;
+        };
+        if Lifecycle::parse(&device.lifecycle) != Some(Lifecycle::Active) {
+            reject(format!("{} is {}", device.code, device.lifecycle));
+            return None;
+        }
+        if !device.operations.contains(&e.command.operation) {
+            reject(format!("{} was not commissioned for {}", device.code, e.command.operation));
+            return None;
+        }
+        let Some((slot, binding)) = self.reach(&device.code) else {
+            reject(format!("nothing at this site reaches {}", device.code));
+            return None;
+        };
+        Some(Go { device, slot, binding, left: (e.command.expires_at - now).to_std().ok()? })
+    }
+
+    /// Starts what is ready. The plan says what comes next, and only the gate says it may go.
     pub async fn dispatch_ready(&self) {
         let queued = self.journal.queued(200).unwrap_or_default();
         if queued.is_empty() {
             return;
         }
-        let (now, epoch) = (self.clock.now(), self.epoch());
-        // A cancel needs no one's permission, and what is past its deadline needs no equipment.
-        let mut ready = Vec::new();
-        let devices = self.devices_by_id();
-        for e in queued {
-            let id = e.command.id;
-            if e.cancel_requested {
-                self.establish(self.report(id, State::Aborted, json!({"reason": "cancelled before it started"}), None), None);
-            } else if now >= e.command.expires_at {
-                self.establish(self.report(id, State::Expired, json!({"reason": "its deadline passed before it started"}), None), None);
-            } else {
-                ready.push(e);
-            }
-        }
-        if let Some(why) = self.stopped() {
-            for e in &ready {
-                let _ = self.journal.hold(e.command.id, Some(&why));
-            }
-            return;
-        }
-        let mut startable = Vec::new();
-        for e in ready {
-            let id = e.command.id;
-            let reject = |why: String| self.establish(self.report(id, State::Rejected, json!({"reason": why}), None), None);
-            if let Err(why) = e.command.startable(now, epoch) {
-                reject(why.to_string());
-                continue;
-            }
-            let Some(device) = devices.get(&e.command.target_id) else {
-                reject("this site does not know that device".into());
-                continue;
-            };
-            if Lifecycle::parse(&device.lifecycle) != Some(Lifecycle::Active) {
-                reject(format!("{} is {}", device.code, device.lifecycle));
-                continue;
-            }
-            if !device.operations.contains(&e.command.operation) {
-                reject(format!("{} was not commissioned for {}", device.code, e.command.operation));
-                continue;
-            }
-            if self.adapter_for(&device.code).is_none() {
-                reject(format!("nothing at this site reaches {}", device.code));
-                continue;
-            }
-            startable.push(e);
-        }
-        let plan = self.plan(&startable, &devices, now);
-        let by_id: HashMap<Uuid, &Entry> = startable.iter().map(|e| (e.command.id, e)).collect();
+        let startable: Vec<Entry> = queued.into_iter().filter(|e| self.admit(e).is_some()).collect();
+        let plan = self.plan(&startable, &self.devices_by_id(), self.clock.now());
         for (task, why) in &plan.held {
-            let _ = self.journal.hold(*task, Some(&held_text(why)));
+            let _ = self.journal.hold(*task, Some(&self.held_text(why)));
         }
         for a in plan.assign {
-            let Some(e) = by_id.get(&a.task) else { continue };
-            let Some(device) = devices.get(&e.command.target_id) else { continue };
-            self.dispatch(e, device).await;
+            let Ok(Some(e)) = self.journal.entry(a.task) else { continue };
+            if e.state != State::Queued || e.intent_at.is_some() {
+                continue;
+            }
+            if let Some(go) = self.admit(&e) {
+                self.dispatch(&e, go).await;
+            }
+        }
+    }
+
+    /// What a command has to wait for. An id that cannot be read is held as one nothing can finish:
+    /// a dependency nobody can name is not one that can be left out.
+    fn after(payload: &Value) -> Vec<Uuid> {
+        payload["task"]["after"]
+            .as_array()
+            .map(|a| a.iter().map(|v| v.as_str().and_then(|s| s.parse().ok()).unwrap_or(Uuid::nil())).collect())
+            .unwrap_or_default()
+    }
+
+    /// What things waiting here depend on and this site has no record of. Only the platform can say.
+    fn unknown_predecessors(&self, limit: usize) -> Vec<Uuid> {
+        let queued = self.journal.queued(200).unwrap_or_default();
+        let mut wanted: Vec<Uuid> = queued.iter().flat_map(|e| Self::after(&e.command.payload)).filter(|id| !id.is_nil()).collect();
+        wanted.sort();
+        wanted.dedup();
+        wanted.retain(|id| matches!(self.journal.outcome(*id), Ok(None)));
+        wanted.truncate(limit);
+        wanted
+    }
+
+    fn held_text(&self, h: &Held) -> String {
+        match h {
+            Held::Waiting(id) => match self.journal.outcome(*id) {
+                Ok(Some(s)) if s.is_final() => format!("{id} ended {}, so this cannot start", s.as_str()),
+                Ok(None) => format!("Waiting to hear how {id} ended"),
+                _ => format!("Waiting for {id} to finish"),
+            },
+            Held::ZoneClosed(z) => format!("{z} is closed"),
+            Held::StationFull(s) => format!("{s} is full"),
+            Held::WorkInProgressLimit => "At the limit of work in progress".into(),
+            Held::NoResource(why) => format!("Nothing can take it: {why}"),
         }
     }
 
@@ -795,7 +834,7 @@ impl Runtime {
                     station: t["station"].as_str().map(str::to_string),
                     load_kg: t["load_kg"].as_f64().unwrap_or(0.0),
                     energy: t["energy"].as_f64().unwrap_or(0.0),
-                    after: t["after"].as_array().map(|a| a.iter().filter_map(|v| v.as_str()?.parse().ok()).collect()).unwrap_or_default(),
+                    after: Self::after(&e.command.payload),
                 }
             })
             .collect();
@@ -822,27 +861,26 @@ impl Runtime {
                 });
             }
         }
-        // A dependency that is no longer here finished and was reported: only finished work leaves.
-        let mut done: std::collections::BTreeSet<Uuid> = tasks.iter().flat_map(|t| t.after.iter().copied()).collect();
-        for t in &tasks {
-            done.remove(&t.id);
-        }
-        for e in &following {
-            done.remove(&e.command.id);
-        }
+        // Only an ending on record satisfies a dependency, and only Completed, whether the equipment
+        // said so or a person who looked did. Anything else, absence above all, waits.
+        let done = tasks.iter().flat_map(|t| t.after.iter().copied()).filter(|id| matches!(self.journal.outcome(*id), Ok(Some(State::Completed)))).collect();
         schedule::plan(&tasks, &resources, &schedule::Limits { ageing_per_hour: 1.0, done, ..Default::default() }, now)
     }
 
-    async fn dispatch(&self, e: &Entry, device: &SiteDevice) {
+    async fn dispatch(&self, e: &Entry, go: Go) {
         let id = e.command.id;
-        let Some(slot) = self.adapter_for(&device.code) else { return };
-        // Written and flushed first. If this fails, nothing is sent.
-        if let Err(err) = self.journal.intend(id, self.clock.now_ms()) {
-            tracing::error!(command = %id, "cannot record the intent, so it stays unsent: {err}");
-            return;
+        // Written and flushed first. If this fails, or the authority moved since the gate, nothing is
+        // sent, and the next pass says why.
+        match self.journal.intend(id, self.clock.now_ms(), e.command.epoch, &go.binding) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(err) => {
+                tracing::error!(command = %id, "cannot record the intent, so it stays unsent: {err}");
+                return;
+            }
         }
         crash_point("after_intent");
-        let answer = timeout(self.call_limit(), slot.adapter.dispatch(&e.command, device)).await;
+        let answer = timeout(self.call_limit(), go.slot.adapter.dispatch(&e.command, &go.device, go.left)).await;
         crash_point("after_dispatch");
         match answer {
             Ok(Ok(Dispatched::Accepted { external })) => {
@@ -861,18 +899,25 @@ impl Runtime {
 
     /// Follows what is running, and passes on requests to stop.
     pub async fn follow(&self) {
-        let devices = self.devices_by_id();
         for e in self.journal.following().unwrap_or_default() {
             let id = e.command.id;
-            let Some(slot) = devices.get(&e.command.target_id).and_then(|d| self.adapter_for(&d.code)) else { continue };
+            let Some((slot, device)) = self.bound(&e) else {
+                if e.state != State::OutcomeUnknown {
+                    self.establish(
+                        self.report(id, State::OutcomeUnknown, json!({"why": "what this went out on has changed, so nothing here can ask about it"}), None),
+                        None,
+                    );
+                }
+                continue;
+            };
             if e.cancel_requested && self.cancelled.lock().unwrap_or_else(|p| p.into_inner()).insert(id) {
-                let asked = timeout(self.call_limit(), slot.adapter.cancel(&e.command, e.external.as_deref())).await;
+                let asked = timeout(self.call_limit(), slot.adapter.cancel(&e.command, &device, e.external.as_deref())).await;
                 if !matches!(asked, Ok(Ok(()))) {
                     self.cancelled.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
                 }
             }
             let now = self.clock.now_ms();
-            match timeout(self.call_limit(), slot.adapter.observe(&e.command, e.external.as_deref())).await {
+            match timeout(self.call_limit(), slot.adapter.observe(&e.command, &device, e.external.as_deref())).await {
                 Ok(Ok(seen)) => {
                     let _ = self.journal.answered(id, now);
                     match seen {
@@ -939,7 +984,7 @@ impl Runtime {
             facts,
             health: self.health(),
             held: held.clone(),
-            in_doubt: self.journal.unknown().unwrap_or_default().iter().take(500).map(|e| e.command.id).collect(),
+            in_doubt: self.journal.unknown().unwrap_or_default().iter().take(500).map(|e| e.command.id).chain(self.unknown_predecessors(500)).collect(),
             want,
             config_version: self.journal.get("config_version").ok().flatten().unwrap_or_default(),
         };
@@ -958,8 +1003,8 @@ impl Runtime {
                 Ok(full && taken)
             }
             Err(LinkError::Clock(server)) => {
-                self.clock.correct(server);
-                let _ = self.journal.set("clock_offset", &(server.timestamp_millis() - Utc::now().timestamp_millis()).to_string());
+                self.clock.refused(server);
+                self.keep_time(server);
                 Err(LinkError::Clock(server))
             }
             Err(e) => {
@@ -970,9 +1015,9 @@ impl Runtime {
     }
 
     fn absorb(&self, r: SyncResponse, held: &[Uuid], samples_upto: i64) {
+        self.clock.heard(r.server_time);
+        self.keep_time(r.server_time);
         let at = self.clock.now_ms();
-        self.clock.correct(r.server_time);
-        let _ = self.journal.set("clock_offset", &(r.server_time.timestamp_millis() - Utc::now().timestamp_millis()).to_string());
         let _ = self.journal.confirmed(held);
         let _ = self.journal.reports_gone(&r.reports_done);
         for (id, why) in &r.reports_refused {
@@ -1020,9 +1065,9 @@ impl Runtime {
             let _ = self.journal.request_cancel(*id);
         }
         for (id, state) in &r.settled {
-            let _ = self.journal.settled(*id, *state);
+            let _ = self.journal.settled(*id, *state, at);
         }
-        let _ = self.journal.prune();
+        let _ = self.journal.prune(at);
     }
 
     /// Reads the equipment and keeps within the telemetry budget.
@@ -1178,6 +1223,7 @@ impl Runtime {
             "epoch": self.epoch(),
             "lease_until": self.lease_until(),
             "now": self.clock.now(),
+            "clock_sure": self.clock.sure(),
             "boot": self.boot,
             "queued": counts.queued,
             "running": counts.active,
@@ -1295,40 +1341,9 @@ fn backoff(failures: u32, base_secs: u64) -> u64 {
     ms - ms * rand::random_range(0..=20) / 100
 }
 
-fn held_text(h: &Held) -> String {
-    match h {
-        Held::Waiting(id) => format!("Waiting for {id} to finish"),
-        Held::ZoneClosed(z) => format!("{z} is closed"),
-        Held::StationFull(s) => format!("{s} is full"),
-        Held::WorkInProgressLimit => "At the limit of work in progress".into(),
-        Held::NoResource(why) => format!("Nothing can take it: {why}"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
-
-    #[test]
-    fn time_never_goes_backwards() {
-        let ahead = Utc::now().timestamp_millis() + 3_600_000;
-        let clock = Clock::new(ahead, 0);
-        assert!(clock.now_ms() >= ahead, "a clock set back after a reboot cannot revive a deadline");
-        clock.correct(Utc::now() - Duration::hours(2));
-        assert!(clock.now_ms() >= ahead, "nor can a correction");
-    }
-
-    #[test]
-    fn signatures_always_rise() {
-        let clock = Clock::new(0, 0);
-        let mut last = 0;
-        for _ in 0..1000 {
-            let t = clock.signing_ms();
-            assert!(t > last);
-            last = t;
-        }
-    }
 
     #[test]
     fn backoff_grows_stays_bounded_and_spreads() {

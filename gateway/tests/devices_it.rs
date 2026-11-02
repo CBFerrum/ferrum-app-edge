@@ -23,6 +23,9 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+/// How long a dispatch is told it has.
+const LEFT: std::time::Duration = std::time::Duration::from_secs(600);
+
 fn command(operation: &str, payload: Value) -> Command {
     Command {
         id: Uuid::now_v7(),
@@ -241,7 +244,7 @@ async fn nor_can_it_listen_to_another() {
     press.listens("#").await;
     other.listens("v1/devices/me/rpc/request/+").await;
     let c = command("fan.start", json!({}));
-    assert!(matches!(plant.d.dispatch(&c, &site_device("OTHER")).await, Ok(Dispatched::Accepted { .. })));
+    assert!(matches!(plant.d.dispatch(&c, &site_device("OTHER"), LEFT).await, Ok(Dispatched::Accepted { .. })));
     other.hears().await;
     assert!(tokio::time::timeout(Wait::from_millis(300), press.heard.recv()).await.is_err(), "it was refused those");
 }
@@ -251,20 +254,20 @@ async fn a_command_reaches_a_device_and_its_answer_ends_it() {
     let plant = Plant::up(&[token("PRESS-1", PRESS)]).await;
     let c = command("fan.start", json!({"speed": 3}));
     // Not there, so it did not go, and that is safe to try again.
-    assert!(matches!(plant.d.dispatch(&c, &site_device("PRESS-1")).await, Err(Failure::NotSent(_))));
+    assert!(matches!(plant.d.dispatch(&c, &site_device("PRESS-1"), LEFT).await, Err(Failure::NotSent(_))));
     let mut press = with_token(plant.port, PRESS).await;
     assert!(press.up().await);
-    assert!(matches!(plant.d.dispatch(&c, &site_device("PRESS-1")).await, Err(Failure::NotSent(_))), "connected and not listening is the same");
+    assert!(matches!(plant.d.dispatch(&c, &site_device("PRESS-1"), LEFT).await, Err(Failure::NotSent(_))), "connected and not listening is the same");
     press.listens("v1/devices/me/rpc/request/+").await;
-    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("PRESS-1")).await else { panic!("accepted") };
+    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("PRESS-1"), LEFT).await else { panic!("accepted") };
     let (topic, body) = press.hears().await;
     assert_eq!(topic, format!("v1/devices/me/rpc/request/{external}"), "it hears it under its own me");
     assert_eq!(body, json!({"method": "fan.start", "params": {"speed": 3}}));
-    assert!(matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Waiting)), "sent is not done");
+    assert!(matches!(plant.d.observe(&c, "PRESS-1", Some(&external)).await, Ok(Observation::Waiting)), "sent is not done");
     press.says(&format!("v1/devices/me/rpc/response/{external}"), json!({"result": "started"})).await;
     let mut ended = None;
     until("the answer", async || {
-        ended = Some(plant.d.observe(&c, Some(&external)).await.unwrap());
+        ended = Some(plant.d.observe(&c, "PRESS-1", Some(&external)).await.unwrap());
         matches!(ended, Some(Observation::Completed(_)))
     })
     .await;
@@ -278,10 +281,10 @@ async fn a_device_can_say_no() {
     assert!(press.up().await);
     press.listens("v1/devices/me/rpc/request/+").await;
     let c = command("fan.start", json!({}));
-    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("PRESS-1")).await else { panic!("accepted") };
+    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("PRESS-1"), LEFT).await else { panic!("accepted") };
     press.hears().await;
     press.says(&format!("v1/devices/me/rpc/response/{external}"), json!({"error": "interlocked"})).await;
-    until("the refusal", async || matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Failed(_)))).await;
+    until("the refusal", async || matches!(plant.d.observe(&c, "PRESS-1", Some(&external)).await, Ok(Observation::Failed(_)))).await;
 }
 
 #[tokio::test]
@@ -294,9 +297,9 @@ async fn a_setting_reaches_a_device_and_it_can_ask_again() {
     press.listens("v1/devices/me/attributes").await;
     press.listens("v1/devices/me/attributes/response/+").await;
     let c = command("set.limit", json!({"key": "limit", "value": 40}));
-    assert!(matches!(plant.d.dispatch(&c, &site_device("PRESS-1")).await, Ok(Dispatched::Accepted { .. })));
+    assert!(matches!(plant.d.dispatch(&c, &site_device("PRESS-1"), LEFT).await, Ok(Dispatched::Accepted { .. })));
     assert_eq!(press.hears().await, ("v1/devices/me/attributes".to_string(), json!({"limit": 40})));
-    assert!(matches!(plant.d.observe(&c, None).await, Ok(Observation::Completed(_))), "it was told, which is all a setting can say");
+    assert!(matches!(plant.d.observe(&c, "PRESS-1", None).await, Ok(Observation::Completed(_))), "it was told, which is all a setting can say");
     press.says("v1/devices/me/attributes", json!({"firmware": "1.2"})).await;
     plant.reading(|r| is_attribute(r, "PRESS-1", "firmware")).await;
     press.says("v1/devices/me/attributes/request/5", json!({})).await;
@@ -344,7 +347,7 @@ async fn mqtt_five_comes_in_the_same_way() {
     client.publish("v1/devices/me/telemetry", Qos5::AtLeastOnce, false, r#"{"temp": 7}"#).await.unwrap();
     plant.reading(|r| is_metric(r, "PRESS-1", "temp", 7.0)).await;
     let c = command("fan.start", json!({}));
-    until("it to be listening", async || matches!(plant.d.dispatch(&c, &site_device("PRESS-1")).await, Ok(Dispatched::Accepted { .. }))).await;
+    until("it to be listening", async || matches!(plant.d.dispatch(&c, &site_device("PRESS-1"), LEFT).await, Ok(Dispatched::Accepted { .. }))).await;
     let (topic, _) = tokio::time::timeout(Wait::from_secs(5), rx.recv()).await.unwrap().unwrap();
     assert!(topic.starts_with("v1/devices/me/rpc/request/"), "{topic}");
 }
@@ -365,13 +368,13 @@ async fn a_gateway_of_its_own_speaks_for_what_is_behind_it() {
     assert_eq!(plant.d.strangers(), vec!["Pump 3".to_string()], "one nobody knows is for a person to claim");
 
     let c = command("open", json!({"by": 2}));
-    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("Pump 1")).await else { panic!("accepted") };
+    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("Pump 1"), LEFT).await else { panic!("accepted") };
     let (topic, body) = gateway.hears().await;
     assert_eq!(topic, "v1/gateway/rpc");
     assert_eq!(body["device"], json!("Pump 1"));
     assert_eq!(body["data"]["method"], json!("open"));
     gateway.says("v1/gateway/rpc", json!({"device": "Pump 1", "id": external.parse::<u64>().unwrap(), "data": {"success": true}})).await;
-    until("the answer", async || matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Completed(_)))).await;
+    until("the answer", async || matches!(plant.d.observe(&c, "Pump 1", Some(&external)).await, Ok(Observation::Completed(_)))).await;
 }
 
 #[tokio::test]
@@ -534,7 +537,7 @@ async fn over_http_a_device_says_and_hears_the_same_things() {
     let c = command("fan.start", json!({"speed": 3}));
     let mut external = None;
     until("it to be waiting", async || {
-        if let Ok(Dispatched::Accepted { external: e }) = plant.d.dispatch(&c, &site_device("PRESS-1")).await {
+        if let Ok(Dispatched::Accepted { external: e }) = plant.d.dispatch(&c, &site_device("PRESS-1"), LEFT).await {
             external = e;
         }
         external.is_some()
@@ -544,14 +547,14 @@ async fn over_http_a_device_says_and_hears_the_same_things() {
     let id = external.unwrap();
     assert_eq!((call["method"].as_str(), call["params"]["speed"].as_i64(), call["id"].to_string()), (Some("fan.start"), Some(3), id.clone()));
     assert_eq!(post(format!("{http}/{PRESS}/rpc/{id}"), r#"{"result": "ok"}"#).await.unwrap().status(), 200);
-    until("the answer", async || matches!(plant.d.observe(&c, Some(&id)).await, Ok(Observation::Completed(_)))).await;
+    until("the answer", async || matches!(plant.d.observe(&c, "PRESS-1", Some(&id)).await, Ok(Observation::Completed(_)))).await;
 
     let updates = tokio::spawn({
         let (web, url) = (web.clone(), format!("{http}/{PRESS}/attributes/updates?timeout=5000"));
         async move { web.get(url).send().await.unwrap().json::<Value>().await.unwrap() }
     });
     let set = command("set.limit", json!({"value": 9}));
-    until("it to be waiting", async || matches!(plant.d.dispatch(&set, &site_device("PRESS-1")).await, Ok(Dispatched::Accepted { .. }))).await;
+    until("it to be waiting", async || matches!(plant.d.dispatch(&set, &site_device("PRESS-1"), LEFT).await, Ok(Dispatched::Accepted { .. }))).await;
     assert_eq!(updates.await.unwrap(), json!({"limit": 9}));
     // The answer may lose the race with the upload it stopped: either way, it was not taken.
     if let Ok(answer) = web.post(format!("{http}/{PRESS}/telemetry")).body(vec![b'1'; 2 << 20]).send().await {
@@ -664,20 +667,20 @@ async fn over_coap_a_device_can_watch_for_what_is_for_it() {
     let watch = device.request(1, options, b"");
     assert_eq!(device.ask(&watch).await.code, 0x45, "2.05, and it is registered");
     let c = command("fan.start", json!({"speed": 2}));
-    let Ok(Dispatched::Accepted { external: Some(id) }) = plant.d.dispatch(&c, &site_device("PRESS-1")).await else { panic!("accepted") };
+    let Ok(Dispatched::Accepted { external: Some(id) }) = plant.d.dispatch(&c, &site_device("PRESS-1"), LEFT).await else { panic!("accepted") };
     let note = device.hear().await;
     assert_eq!((note.code, &note.token), (0x45, &watch.token));
     let call: Value = serde_json::from_slice(&note.payload).unwrap();
     assert_eq!((call["method"].as_str(), call["id"].to_string()), (Some("fan.start"), id.clone()));
     let answer = device.request(2, coap::path(PRESS, &["rpc", &id]), br#"{"result": "ok"}"#);
     assert_eq!(device.ask(&answer).await.code, 0x44);
-    until("the answer", async || matches!(plant.d.observe(&c, Some(&id)).await, Ok(Observation::Completed(_)))).await;
+    until("the answer", async || matches!(plant.d.observe(&c, "PRESS-1", Some(&id)).await, Ok(Observation::Completed(_)))).await;
 
     // A reset says it has stopped caring, and it goes the same way as a device that left.
     device.say(&Coap { kind: 3, code: 0, id: 1, ..Default::default() }).await;
     let again = command("fan.stop", json!({}));
     tokio::time::sleep(Wait::from_millis(100)).await;
-    assert!(matches!(plant.d.dispatch(&again, &site_device("PRESS-1")).await, Err(Failure::NotSent(_))));
+    assert!(matches!(plant.d.dispatch(&again, &site_device("PRESS-1"), LEFT).await, Err(Failure::NotSent(_))));
     assert!(device.silent().await);
 }
 
@@ -708,7 +711,7 @@ async fn one_device_can_use_any_way_in() {
     options.push((6, vec![]));
     device.ask(&device.request(1, options, b"")).await;
     let c = command("fan.start", json!({}));
-    assert!(matches!(plant.d.dispatch(&c, &site_device("PRESS-1")).await, Ok(Dispatched::Accepted { .. })));
+    assert!(matches!(plant.d.dispatch(&c, &site_device("PRESS-1"), LEFT).await, Ok(Dispatched::Accepted { .. })));
     press.hears().await;
     assert_eq!(device.hear().await.code, 0x45, "both hear it");
 }
@@ -790,7 +793,7 @@ async fn firmware_is_fetched_once_checked_and_handed_over_in_pieces() {
 
     let wrong = command("firmware.update", order(&"0".repeat(64)));
     assert!(
-        matches!(plant.d.dispatch(&wrong, &press_device).await, Err(Failure::NotSent(why)) if why.contains("hash differs")),
+        matches!(plant.d.dispatch(&wrong, &press_device, LEFT).await, Err(Failure::NotSent(why)) if why.contains("hash differs")),
         "what does not match is never offered"
     );
     let web = reqwest::Client::new();
@@ -801,13 +804,13 @@ async fn firmware_is_fetched_once_checked_and_handed_over_in_pieces() {
     assert!(press.up().await);
     press.listens("v1/devices/me/attributes").await;
     let c = command("firmware.update", order(&sha256));
-    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &press_device).await else { panic!("not accepted") };
+    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &press_device, LEFT).await else { panic!("not accepted") };
     let (_, told) = press.hears().await;
     assert_eq!((told["fw_title"].as_str(), told["fw_version"].as_str(), told["fw_size"].as_u64()), (Some("sensor-fw"), Some("2.0"), Some(100_000)));
     assert_eq!((told["fw_checksum"].as_str(), told["fw_checksum_algorithm"].as_str()), (Some(sha256.as_str()), Some("SHA256")));
 
     // A second device, or a second try, costs no download.
-    assert!(matches!(plant.d.dispatch(&command("firmware.update", order(&sha256)), &press_device).await, Ok(Dispatched::Accepted { .. })));
+    assert!(matches!(plant.d.dispatch(&command("firmware.update", order(&sha256)), &press_device, LEFT).await, Ok(Dispatched::Accepted { .. })));
     assert_eq!(asked.load(Ordering::SeqCst), 2, "one for the wrong hash, and one for the right");
     press.hears().await;
 
@@ -835,14 +838,14 @@ async fn firmware_is_fetched_once_checked_and_handed_over_in_pieces() {
     // It is finished when the device says so.
     press.says("v1/devices/me/telemetry", json!({"fw_state": "DOWNLOADING"})).await;
     tokio::time::sleep(Wait::from_millis(100)).await;
-    assert!(matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Waiting)), "fetching it is not having taken it");
+    assert!(matches!(plant.d.observe(&c, "PRESS-1", Some(&external)).await, Ok(Observation::Waiting)), "fetching it is not having taken it");
     press.says("v1/devices/me/telemetry", json!({"fw_state": "UPDATED"})).await;
-    until("the end of it", async || matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Completed(_)))).await;
+    until("the end of it", async || matches!(plant.d.observe(&c, "PRESS-1", Some(&external)).await, Ok(Observation::Completed(_)))).await;
 
     let again = command("firmware.update", order(&sha256));
-    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&again, &press_device).await else { panic!("not accepted") };
+    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&again, &press_device, LEFT).await else { panic!("not accepted") };
     press.says("v1/devices/me/telemetry", json!({"ts": 1, "values": {"fw_state": "FAILED", "fw_error": "no room"}})).await;
-    until("the failure", async || matches!(plant.d.observe(&again, Some(&external)).await, Ok(Observation::Failed(_)))).await;
+    until("the failure", async || matches!(plant.d.observe(&again, "PRESS-1", Some(&external)).await, Ok(Observation::Failed(_)))).await;
 }
 
 #[tokio::test]

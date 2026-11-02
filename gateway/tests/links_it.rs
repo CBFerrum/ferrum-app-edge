@@ -24,6 +24,9 @@ use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
+/// How long a dispatch is told it has.
+const LEFT: std::time::Duration = std::time::Duration::from_secs(600);
+
 fn scratch() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("ferrum-links-{}", Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -46,7 +49,7 @@ fn command(operation: &str) -> Command {
         issued_at: Utc::now(),
         expires_at: Utc::now() + Duration::minutes(10),
         payload: json!({}),
-        payload_hash: String::new(),
+        payload_hash: ferrum_ops_contract::command::payload_hash(&json!({})),
         workflow_id: None,
         step_id: None,
         correlation_id: None,
@@ -90,18 +93,18 @@ async fn a_command_reaches_a_cabinet_once_however_often_it_is_asked() {
     let (url, _rt, dir) = cabinet(&hub).await;
     let peer = Peer::new(&url, hub.clone());
     let c = command("machine.start_job");
-    let first = peer.dispatch(&c, &device("PRESS-9")).await.expect("sent");
+    let first = peer.dispatch(&c, &device("PRESS-9"), LEFT).await.expect("sent");
     assert!(matches!(first, Dispatched::Accepted { .. }), "{first:?}");
     assert_eq!(peer.health(), "connected");
 
     // A lost answer looks like a lost request: the same asking gets the same answer, and no second mission.
-    let again = peer.dispatch(&c, &device("PRESS-9")).await.expect("answered");
+    let again = peer.dispatch(&c, &device("PRESS-9"), LEFT).await.expect("answered");
     assert_eq!(again, first);
     assert_eq!(missions(&dir, c.id), 1, "a retry here would run the mission twice");
 
     let mut done = false;
     for _ in 0..100 {
-        if matches!(peer.observe(&c, None).await.unwrap(), Observation::Completed(_)) {
+        if matches!(peer.observe(&c, "PRESS-9", None).await.unwrap(), Observation::Completed(_)) {
             done = true;
             break;
         }
@@ -109,10 +112,76 @@ async fn a_command_reaches_a_cabinet_once_however_often_it_is_asked() {
     }
     assert!(done, "the far side's answer is the answer");
 
-    assert!(matches!(peer.dispatch(&command("x"), &device("NOT-HERE")).await, Ok(Dispatched::Rejected(why)) if why.contains("NOT-HERE")));
-    assert_eq!(peer.find(&command("x")).await.unwrap(), Some(Observation::NotFound), "it never heard of that, so resending is safe");
+    assert!(matches!(peer.dispatch(&command("x"), &device("NOT-HERE"), LEFT).await, Ok(Dispatched::Rejected(why)) if why.contains("NOT-HERE")));
+    assert_eq!(peer.find(&command("x"), "NOT-HERE").await.unwrap(), Some(Observation::NotFound), "it never heard of that, so resending is safe");
     let readings: Vec<Reading> = peer.read().await.unwrap();
     assert!(readings.iter().all(|r| !matches!(r, Reading::Value { device, .. } if device != "PRESS-9")), "{readings:?}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A server that says one thing to everyone, and counts who asked.
+async fn says(what: String) -> (u16, Arc<std::sync::atomic::AtomicU64>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let asked = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let count = asked.clone();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request).await;
+            let _ = socket.write_all(what.as_bytes()).await;
+        }
+    });
+    (port, asked)
+}
+
+#[tokio::test]
+async fn a_redirect_cannot_take_data_or_an_update_off_the_allow_list() {
+    let ok = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok".to_string();
+    let (outside, reached) = says(ok).await;
+    let (allowed, _) = says(format!("HTTP/1.1 307 Temporary Redirect\r\nlocation: http://localhost:{outside}/in\r\ncontent-length: 0\r\n\r\n")).await;
+    let walled = Sender::new(Limits { allow: vec!["127.0.0.1".into()], ..Default::default() });
+    let export = Export { name: "e".into(), to: format!("http://127.0.0.1:{allowed}/in"), topic: None, only: vec![], sign_with: None };
+    let sent = walled.deliver(&export, &["{}".to_string()], &json!({})).await;
+    assert!(sent.is_err(), "a batch is not delivered by being turned away");
+    assert!(walled.fetch(&format!("http://127.0.0.1:{allowed}/update")).await.is_err());
+    assert_eq!(reached.load(std::sync::atomic::Ordering::SeqCst), 0, "nothing reached a host the site did not allow, not even a request");
+    assert!(walled.fetch(&format!("http://localhost:{outside}/update")).await.is_err_and(|e| e.contains("allow list")), "an update is held to the list too");
+    assert_eq!(reached.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let open = Sender::new(Limits { allow: vec!["127.0.0.1".into(), "localhost".into()], ..Default::default() });
+    assert_eq!(open.fetch(&format!("http://127.0.0.1:{allowed}/update")).await.unwrap(), b"ok", "hops on the list are followed");
+}
+
+#[tokio::test]
+async fn a_box_takes_nothing_with_no_time_left_or_changed_on_the_way() {
+    let hub = SigningKey::from_bytes(&[4; 32]);
+    let (url, _rt, dir) = cabinet(&hub).await;
+    let peer = Peer::new(&url, hub);
+    let late = command("machine.start_job");
+    assert!(
+        matches!(peer.dispatch(&late, &device("PRESS-9"), std::time::Duration::ZERO).await, Ok(Dispatched::Rejected(_))),
+        "the holder's clock says it has none"
+    );
+    let mut changed = command("machine.start_job");
+    changed.payload = json!({"job": 666});
+    assert!(matches!(peer.dispatch(&changed, &device("PRESS-9"), LEFT).await, Ok(Dispatched::Rejected(_))), "not what was authorized");
+    assert_eq!(missions(&dir, late.id) + missions(&dir, changed.id), 0);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn a_box_does_not_speak_for_what_went_out_on_something_else() {
+    let hub = SigningKey::from_bytes(&[5; 32]);
+    let (url, rt, dir) = cabinet(&hub).await;
+    let c = command("machine.start_job");
+    let then = ferrum_site::adapter::Binding { device: "PRESS-9".into(), adapter: "an old press".into(), endpoint: String::new() };
+    rt.journal.peer_begin(c.id, "PRESS-9", &then).unwrap();
+    let peer = Peer::new(&url, hub);
+    assert_eq!(peer.find(&c, "PRESS-9").await.unwrap(), None, "it knows it went out, and cannot say how it went: not the same as never having heard of it");
+    assert!(matches!(peer.observe(&c, "PRESS-9", None).await, Err(Failure::Unknown(_))));
+    assert!(matches!(peer.cancel(&c, "PRESS-9", None).await, Err(Failure::NotSent(_))));
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -122,9 +191,9 @@ async fn a_box_that_stopped_part_way_says_nobody_knows() {
     let (url, rt, dir) = cabinet(&hub).await;
     let c = command("machine.start_job");
     // As if it had started this and died before answering.
-    rt.journal.peer_begin(c.id, "PRESS-9").unwrap();
+    rt.journal.peer_begin(c.id, "PRESS-9", &rt.reach("PRESS-9").unwrap().1).unwrap();
     let peer = Peer::new(&url, hub);
-    assert!(matches!(peer.dispatch(&c, &device("PRESS-9")).await, Err(Failure::Unknown(_))), "it is not sent again on a guess");
+    assert!(matches!(peer.dispatch(&c, &device("PRESS-9"), LEFT).await, Err(Failure::Unknown(_))), "it is not sent again on a guess");
     assert_eq!(missions(&dir, c.id), 0);
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -135,7 +204,7 @@ async fn only_a_trusted_peer_gets_an_answer_and_only_once() {
     let (url, _rt, dir) = cabinet(&hub).await;
     let stranger = Peer::new(&url, SigningKey::from_bytes(&[4; 32]));
     let c = command("machine.start_job");
-    assert!(matches!(stranger.dispatch(&c, &device("PRESS-9")).await, Err(Failure::NotSent(why)) if why.contains("401")));
+    assert!(matches!(stranger.dispatch(&c, &device("PRESS-9"), LEFT).await, Err(Failure::NotSent(why)) if why.contains("401")));
     assert_eq!(missions(&dir, c.id), 0);
 
     // The same signed request twice: the second is a replay.

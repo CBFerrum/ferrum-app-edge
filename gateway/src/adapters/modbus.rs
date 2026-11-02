@@ -14,6 +14,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio_modbus::client::{Context, Reader, Writer, tcp};
 use tokio_modbus::slave::{Slave, SlaveContext};
@@ -111,7 +112,7 @@ pub fn judge(h: &Handshake, status: u16) -> Observation {
 
 #[async_trait]
 impl Adapter for Modbus {
-    async fn dispatch(&self, c: &Command, _device: &SiteDevice) -> Result<Dispatched, Failure> {
+    async fn dispatch(&self, c: &Command, _device: &SiteDevice, _left: Duration) -> Result<Dispatched, Failure> {
         let Some(h) = self.cfg.operations.get(&c.operation) else {
             return Ok(Dispatched::Rejected(format!("{} is not mapped to registers at this site", c.operation)));
         };
@@ -142,13 +143,13 @@ impl Adapter for Modbus {
         }
     }
 
-    async fn observe(&self, c: &Command, _external: Option<&str>) -> Result<Observation, Failure> {
+    async fn observe(&self, c: &Command, _device: &str, _external: Option<&str>) -> Result<Observation, Failure> {
         let Some(h) = self.cfg.operations.get(&c.operation) else { return Ok(Observation::NotFound) };
         let status = self.read_one(h.status_register).await.map_err(Failure::Unknown)?;
         Ok(judge(h, status))
     }
 
-    async fn cancel(&self, _c: &Command, _external: Option<&str>) -> Result<(), Failure> {
+    async fn cancel(&self, _c: &Command, _device: &str, _external: Option<&str>) -> Result<(), Failure> {
         // Stopping a machine belongs to its controller and its operators: asking over Modbus would
         // look like a stop without being one.
         Err(Failure::NotSent("stop this at the machine".into()))

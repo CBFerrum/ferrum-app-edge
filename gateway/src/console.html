@@ -57,6 +57,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     </form>
   </section>
   <section id="work" hidden>
+    <form id="vouch" hidden>
+      <h2>This machine restarted</h2>
+      <p>Nothing has said how long it was off, so nothing new starts until the platform answers. If it cannot, say how you know the time here is right.</p>
+      <label for="vouch-found">How you know</label>
+      <input id="vouch-found" autocomplete="off">
+      <button>The time here is right</button>
+      <p class="error" id="vouch-error" role="alert"></p>
+    </form>
     <h2>Unknown outcomes</h2>
     <p class="empty" id="unknown-empty">Nothing is in doubt.</p>
     <div id="unknown-list"></div>
@@ -108,7 +116,7 @@ const call = async (path, body) => {
 const text = (tag, value, cls) => { const e = document.createElement(tag); e.textContent = value; if (cls) e.className = cls; return e; };
 const button = (label, fn, quiet) => { const b = text('button', label, quiet ? 'quiet' : ''); b.type = 'button'; b.onclick = fn; return b; };
 const plain = v => typeof v === 'string' && /^\d+\.\d+$/.test(v) ? String(Number(v)) : typeof v === 'object' ? JSON.stringify(v) : v;
-const describe = c => { const p = c.payload || {}; return Object.entries(p).filter(([k, v]) => k !== 'task' && k !== 'verify' && v !== null && v !== '').map(([k, v]) => k + ': ' + plain(v)).join(' · ') || 'No details'; };
+const describe = c => { const p = c.payload || {}; return Object.entries(p).filter(([k, v]) => k !== 'task' && k !== 'verify' && k !== 'load' && v !== null && v !== '').map(([k, v]) => k + ': ' + plain(v)).join(' · ') || 'No details'; };
 function unknownItem(c) {
   const box = text('div', '', 'item');
   box.append(text('h3', c.operation), text('p', describe(c)), text('p', 'Nobody can say how this ended. Look at the equipment, then record what you found.'));
@@ -126,8 +134,16 @@ function taskItem(c) {
   const id = 'scan-' + c.id, l = text('label', c.payload && c.payload.verify ? 'Scan to confirm' : 'Scan or note'); l.htmlFor = id;
   const scan = document.createElement('input'); scan.id = id; scan.autocomplete = 'off';
   const error = text('p', '', 'error'); error.setAttribute('role', 'alert');
-  const step = action => async () => { try { await call(`/api/tasks/${c.id}/${action}`, { scan: scan.value, note: scan.value }); refresh(); } catch (e) { error.textContent = e.message; } };
+  const wanted = Object.keys((c.payload && c.payload.load) || {});
+  const fields = wanted.map(name => {
+    const input = document.createElement('input'); input.id = 'load-' + name + '-' + c.id; input.autocomplete = 'off';
+    const label = text('label', 'Scan the ' + name); label.htmlFor = input.id;
+    return { name, input, label };
+  });
+  const scanned = () => Object.fromEntries(fields.map(f => [f.name, f.input.value]));
+  const step = action => async () => { try { await call(`/api/tasks/${c.id}/${action}`, { scan: scan.value, note: scan.value, load: scanned() }); refresh(); } catch (e) { error.textContent = e.message; } };
   if (c.task === 'Waiting') box.append(button('Start', step('start')));
+  fields.forEach(f => box.append(f.label, f.input));
   box.append(l, scan, button('Done', step('done')), button('Could not do it', step('fail'), true), error);
   return box;
 }
@@ -158,6 +174,7 @@ async function refresh() {
     $('link').textContent = s.link_up ? 'Connected to the platform' : 'Working offline';
     $('link').className = 'dot ' + (s.link_up ? 'up' : 'down');
     $('banner').hidden = !s.stopped; $('banner').textContent = s.stopped || '';
+    $('vouch').hidden = s.clock_sure !== false || !s.lease_until;
     $('queued').textContent = s.queued; $('running').textContent = s.running; $('unknown').textContent = s.unknown;
     $('unsent').textContent = s.unsent_reports + s.unsent_facts; $('lease').textContent = left(s.lease_until);
     const links = s.links || [];
@@ -180,6 +197,11 @@ $('pin-form').onsubmit = async e => {
   e.preventDefault();
   try { const r = await call('/api/login', { pin: $('pin').value }); token = r.token; $('who').textContent = r.name; $('pin').value = ''; $('pin-error').textContent = ''; show(); refresh(); }
   catch (err) { $('pin-error').textContent = err.message; }
+};
+$('vouch').onsubmit = async e => {
+  e.preventDefault();
+  try { await call('/api/clock', { found: $('vouch-found').value }); $('vouch-found').value = ''; $('vouch-error').textContent = ''; refresh(); }
+  catch (err) { $('vouch-error').textContent = err.message; }
 };
 $('floor-kind').onchange = () => { const k = $('floor-kind').value; $('floor-report').hidden = k !== 'report'; $('floor-pause').hidden = k !== 'pause'; };
 $('floor-form').onsubmit = async e => {

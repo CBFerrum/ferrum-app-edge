@@ -2,6 +2,7 @@
 //! call returns, what it wrote survives a power cut. A crash can leave any step half done, so each
 //! step here is one transaction and the runtime is written around the gaps between them.
 
+use crate::adapter::Binding;
 use chrono::{DateTime, Utc};
 use ferrum_ops_contract::command::{Report, step};
 use ferrum_ops_contract::sync::{Fact, Operator, SiteDevice};
@@ -56,7 +57,14 @@ create table if not exists notice (seq integer primary key, at integer not null,
 create table if not exists peer_dispatch (id text primary key, device text not null, answer text);
 create table if not exists export_item (seq integer primary key, export text not null, body text not null);
 create index if not exists export_item_export on export_item (export, seq);
+-- How commands ended, after their rows go: what depends on one must not find it gone and call it done.
+create table if not exists outcome (id text primary key, state text not null, at integer not null);
+create index if not exists outcome_at on outcome (at);
 ";
+
+/// How long an ending is kept after its command's row goes. A command lives a week at most, so
+/// nothing still waiting can be waiting for anything older, and the platform can always be asked.
+const KEEP_OUTCOMES_MS: i64 = 8 * 24 * 3_600_000;
 
 pub struct Journal {
     conn: Mutex<Connection>,
@@ -72,6 +80,9 @@ pub struct Entry {
     pub answered_at: Option<i64>,
     pub cancel_requested: bool,
     pub held_reason: Option<String>,
+    /// What it went out on. A journal from before this was kept, or one that cannot be read, has none,
+    /// and then nothing can be asked about it.
+    pub binding: Option<Binding>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -86,16 +97,19 @@ pub struct Counts {
     pub shed: i64,
 }
 
-fn entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<(String, String, Option<String>, Option<i64>, Option<i64>, i64, Option<String>)> {
-    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
+type Row = (String, String, Option<String>, Option<i64>, Option<i64>, i64, Option<String>, Option<String>);
+
+fn entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
+    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?))
 }
 
-const ENTRY: &str = "select body, state, external, intent_at, answered_at, cancel_requested, held_reason from command";
+const ENTRY: &str = "select body, state, external, intent_at, answered_at, cancel_requested, held_reason, binding from command";
 
-fn decode(row: (String, String, Option<String>, Option<i64>, Option<i64>, i64, Option<String>)) -> Result<Entry> {
-    let (body, state, external, intent_at, answered_at, cancel, held_reason) = row;
+fn decode(row: Row) -> Result<Entry> {
+    let (body, state, external, intent_at, answered_at, cancel, held_reason, binding) = row;
     let state = State::parse(&state).ok_or_else(|| Error::Damaged(format!("a command in state {state}")))?;
-    Ok(Entry { command: serde_json::from_str(&body)?, state, external, intent_at, answered_at, cancel_requested: cancel != 0, held_reason })
+    let binding = binding.and_then(|b| serde_json::from_str(&b).ok());
+    Ok(Entry { command: serde_json::from_str(&body)?, state, external, intent_at, answered_at, cancel_requested: cancel != 0, held_reason, binding })
 }
 
 impl Journal {
@@ -109,6 +123,12 @@ impl Journal {
             return Err(Error::Damaged(check));
         }
         conn.execute_batch(SCHEMA)?;
+        for table in ["command", "peer_dispatch"] {
+            let there = conn.prepare(&format!("select 1 from pragma_table_info('{table}') where name = 'binding'"))?.exists([])?;
+            if !there {
+                conn.execute_batch(&format!("alter table {table} add column binding text"))?;
+            }
+        }
         Ok(Journal { conn: Mutex::new(conn) })
     }
 
@@ -192,11 +212,16 @@ impl Journal {
         self.list("state = 'OutcomeUnknown'", 1000)
     }
 
-    /// The intent, durable before the equipment hears of it. After this, a crash can only leave the
-    /// command unknown: it can never be sent twice.
-    pub fn intend(&self, id: Uuid, at: i64) -> Result<()> {
-        self.db().execute("update command set intent_at = ?2 where id = ?1 and state = 'Queued'", params![id.to_string(), at])?;
-        Ok(())
+    /// The intent, durable before the equipment hears of it, with what it is going out on. After this,
+    /// a crash can only leave the command unknown: it can never be sent twice. It is also the last
+    /// word on whether it may go: one statement, so nothing a sync writes can land between looking
+    /// and writing. Says false if something did, and nothing is then sent.
+    pub fn intend(&self, id: Uuid, at: i64, epoch: i64, binding: &Binding) -> Result<bool> {
+        Ok(self.db().execute(
+            "update command set intent_at = ?2, binding = ?3 where id = ?1 and state = 'Queued' and intent_at is null and cancel_requested = 0 \
+             and coalesce((select value from meta where key = 'epoch'), '0') = ?4 and not exists (select 1 from meta where key in ('fenced', 'restored'))",
+            params![id.to_string(), at, serde_json::to_string(binding)?, epoch.to_string()],
+        )? > 0)
     }
 
     /// It definitely did not go out: it can wait for another turn.
@@ -239,20 +264,36 @@ impl Journal {
         Ok(taken)
     }
 
-    /// A person settled this on the platform. Nothing goes back up: it came from there.
-    pub fn settled(&self, id: Uuid, to: State) -> Result<()> {
-        self.db().execute("update command set state = ?2 where id = ?1 and state = 'OutcomeUnknown'", params![id.to_string(), to.as_str()])?;
+    /// The platform says how this ended: a person settled it, or something here waits on it. Nothing
+    /// goes back up: it came from there.
+    pub fn settled(&self, id: Uuid, to: State, at: i64) -> Result<()> {
+        let db = self.db();
+        db.execute("update command set state = ?2 where id = ?1 and state = 'OutcomeUnknown'", params![id.to_string(), to.as_str()])?;
+        db.execute("insert or replace into outcome (id, state, at) values (?1, ?2, ?3)", params![id.to_string(), to.as_str(), at])?;
         Ok(())
+    }
+
+    /// Where a command stands, as far as this site knows, kept past its row. `None` is not an ending:
+    /// it means nobody here can say.
+    pub fn outcome(&self, id: Uuid) -> Result<Option<State>> {
+        let state: Option<String> = self
+            .db()
+            .query_row("select state from command where id = ?1 union all select state from outcome where id = ?1 limit 1", [id.to_string()], |r| r.get(0))
+            .optional()?;
+        Ok(state.as_deref().and_then(State::parse))
     }
 
     /// A peer asks for a command. `None` if this is the first time; otherwise what was answered,
     /// which is `None` if it stopped before it could.
-    pub fn peer_begin(&self, id: Uuid, device: &str) -> Result<Option<Option<String>>> {
+    pub fn peer_begin(&self, id: Uuid, device: &str, binding: &Binding) -> Result<Option<Option<String>>> {
         let mut db = self.db();
         let tx = db.transaction()?;
         let seen: Option<Option<String>> = tx.query_row("select answer from peer_dispatch where id = ?1", [id.to_string()], |r| r.get(0)).optional()?;
         if seen.is_none() {
-            tx.execute("insert into peer_dispatch (id, device) values (?1, ?2)", params![id.to_string(), device])?;
+            tx.execute(
+                "insert into peer_dispatch (id, device, binding) values (?1, ?2, ?3)",
+                params![id.to_string(), device, serde_json::to_string(binding)?],
+            )?;
         }
         tx.commit()?;
         Ok(seen)
@@ -263,8 +304,11 @@ impl Journal {
         Ok(())
     }
 
-    pub fn peer_device(&self, id: Uuid) -> Result<Option<String>> {
-        Ok(self.db().query_row("select device from peer_dispatch where id = ?1", [id.to_string()], |r| r.get(0)).optional()?)
+    /// Which device a peer's command was for, and what it went out on.
+    pub fn peer_device(&self, id: Uuid) -> Result<Option<(String, Option<Binding>)>> {
+        let row: Option<(String, Option<String>)> =
+            self.db().query_row("select device, binding from peer_dispatch where id = ?1", [id.to_string()], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+        Ok(row.map(|(device, binding)| (device, binding.and_then(|b| serde_json::from_str(&b).ok()))))
     }
 
     /// Keeps a measurement for an export, up to `budget` of them. Past that the oldest go, and how
@@ -320,13 +364,17 @@ impl Journal {
         Ok(())
     }
 
-    /// Finished commands the platform has heard about can go.
-    pub fn prune(&self) -> Result<()> {
-        self.db().execute(
-            "delete from command where confirmed = 1 and state in ('Completed', 'Failed', 'Aborted', 'Rejected', 'Expired') \
-             and not exists (select 1 from report where report.command = command.id)",
-            [],
-        )?;
+    /// Finished commands the platform has heard about can go. How each ended stays a while, for what
+    /// depends on it.
+    pub fn prune(&self, now: i64) -> Result<()> {
+        const DONE: &str = "confirmed = 1 and state in ('Completed', 'Failed', 'Aborted', 'Rejected', 'Expired') \
+             and not exists (select 1 from report where report.command = command.id)";
+        let mut db = self.db();
+        let tx = db.transaction()?;
+        tx.execute(&format!("insert or replace into outcome (id, state, at) select id, state, ?1 from command where {DONE}"), [now])?;
+        tx.execute(&format!("delete from command where {DONE}"), [])?;
+        tx.execute("delete from outcome where at < ?1", [now - KEEP_OUTCOMES_MS])?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -472,6 +520,11 @@ impl Journal {
         Ok(())
     }
 
+    pub fn device(&self, id: Uuid) -> Result<Option<SiteDevice>> {
+        let body: Option<String> = self.db().query_row("select body from device where id = ?1", [id.to_string()], |r| r.get(0)).optional()?;
+        Ok(body.map(|b| serde_json::from_str(&b)).transpose()?)
+    }
+
     pub fn devices(&self) -> Result<Vec<SiteDevice>> {
         let db = self.db();
         let mut q = db.prepare("select body from device order by code")?;
@@ -586,6 +639,10 @@ mod tests {
         }
     }
 
+    fn bound() -> Binding {
+        Binding { device: "AMR-1".into(), adapter: "fleet".into(), endpoint: "e".into() }
+    }
+
     fn report(c: &Command, state: State) -> Report {
         Report { report_id: Uuid::now_v7(), command_id: c.id, state, at_source: Utc::now(), epoch: 1, detail: Value::Null, evidence: None }
     }
@@ -640,13 +697,78 @@ mod tests {
         let (j, dir) = journal();
         let c = command();
         j.receive(&c, 1).unwrap();
-        j.intend(c.id, 5).unwrap();
+        j.set("epoch", "1").unwrap();
+        assert!(j.intend(c.id, 5, 1, &bound()).unwrap());
         assert!(j.queued(10).unwrap().is_empty(), "it can never be picked up again");
+        assert_eq!(j.entry(c.id).unwrap().unwrap().binding, Some(bound()), "and it says what it went out on");
         drop(j);
         let reopened = Journal::open(&dir.join("j.db")).unwrap();
         assert_eq!(reopened.in_doubt().unwrap().len(), 1, "a crash leaves it in doubt, not forgotten");
         reopened.withdraw_intent(c.id).unwrap();
         assert_eq!(reopened.queued(10).unwrap().len(), 1, "only an adapter that knows nothing left can put it back");
+    }
+
+    #[test]
+    fn an_intent_is_the_last_word_on_whether_it_may_go() {
+        let (j, _dir) = journal();
+        j.set("epoch", "1").unwrap();
+        let c = command();
+        j.receive(&c, 1).unwrap();
+        assert!(!j.intend(c.id, 5, 2, &bound()).unwrap(), "issued under another authority");
+        j.set("fenced", "1").unwrap();
+        assert!(!j.intend(c.id, 5, 1, &bound()).unwrap(), "fenced since it was planned");
+        j.clear("fenced").unwrap();
+        j.set("restored", "now").unwrap();
+        assert!(!j.intend(c.id, 5, 1, &bound()).unwrap(), "restored since it was planned");
+        j.clear("restored").unwrap();
+        j.request_cancel(c.id).unwrap();
+        assert!(!j.intend(c.id, 5, 1, &bound()).unwrap(), "asked to stop since it was planned");
+        assert!(j.in_doubt().unwrap().is_empty(), "and in none of those is there anything to be in doubt about");
+        let d = command();
+        j.receive(&d, 1).unwrap();
+        assert!(j.intend(d.id, 5, 1, &bound()).unwrap());
+        assert!(!j.intend(d.id, 6, 1, &bound()).unwrap(), "and it goes out once");
+    }
+
+    #[test]
+    fn a_journal_from_before_bindings_opens_and_binds_nothing() {
+        let dir = std::env::temp_dir().join(format!("ferrum-site-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let c = command();
+        {
+            let old = Connection::open(dir.join("j.db")).unwrap();
+            old.execute_batch("create table command (id text primary key, body text not null, state text not null, external text, intent_at integer, answered_at integer, cancel_requested integer not null default 0, confirmed integer not null default 0, held_reason text, received_at integer not null); create table peer_dispatch (id text primary key, device text not null, answer text);").unwrap();
+            old.execute(
+                "insert into command (id, body, state, received_at) values (?1, ?2, 'Accepted', 1)",
+                params![c.id.to_string(), serde_json::to_string(&c).unwrap()],
+            )
+            .unwrap();
+        }
+        let j = Journal::open(&dir.join("j.db")).unwrap();
+        assert_eq!(j.entry(c.id).unwrap().unwrap().binding, None);
+        drop(j);
+        Journal::open(&dir.join("j.db")).expect("and opens again");
+    }
+
+    #[test]
+    fn an_ending_outlives_its_row() {
+        let (j, _dir) = journal();
+        let c = command();
+        j.receive(&c, 1).unwrap();
+        assert_eq!(j.outcome(c.id).unwrap(), Some(State::Queued));
+        let done = report(&c, State::Completed);
+        j.establish(&done, None).unwrap();
+        j.confirmed(&[c.id]).unwrap();
+        j.reports_gone(&[done.report_id]).unwrap();
+        j.prune(1_000).unwrap();
+        assert!(j.entry(c.id).unwrap().is_none(), "the row is gone");
+        assert_eq!(j.outcome(c.id).unwrap(), Some(State::Completed), "and how it ended is not");
+        assert_eq!(j.outcome(Uuid::now_v7()).unwrap(), None, "what was never here is not an ending");
+        j.prune(1_000 + KEEP_OUTCOMES_MS + 1).unwrap();
+        assert_eq!(j.outcome(c.id).unwrap(), None, "not for ever");
+        let heard = Uuid::now_v7();
+        j.settled(heard, State::Failed, 5).unwrap();
+        assert_eq!(j.outcome(heard).unwrap(), Some(State::Failed), "and the platform can say");
     }
 
     #[test]
@@ -682,10 +804,10 @@ mod tests {
         let done = report(&c, State::Completed);
         j.establish(&done, None).unwrap();
         j.confirmed(&[c.id]).unwrap();
-        j.prune().unwrap();
+        j.prune(1).unwrap();
         assert!(j.entry(c.id).unwrap().is_some(), "its report has not gone up yet");
         j.reports_gone(&[done.report_id]).unwrap();
-        j.prune().unwrap();
+        j.prune(1).unwrap();
         assert!(j.entry(c.id).unwrap().is_none());
     }
 

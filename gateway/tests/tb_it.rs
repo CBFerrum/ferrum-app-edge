@@ -23,6 +23,9 @@ use tokio::process::{Child, Command as Process};
 use tokio::time::timeout;
 use uuid::Uuid;
 
+/// How long a dispatch is told it has.
+const LEFT: std::time::Duration = std::time::Duration::from_secs(600);
+
 const PEER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/tb_peer.py");
 const TOKEN: &str = "a-device-token";
 
@@ -168,19 +171,19 @@ async fn thingsboards_device_client_needs_nothing_but_a_new_address() {
     until(&mut lines, "ready").await;
 
     let c = command("fan.start", json!({"speed": 3}));
-    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("PRESS-1")).await else { panic!("accepted") };
+    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("PRESS-1"), LEFT).await else { panic!("accepted") };
     assert_eq!(until(&mut lines, "rpc").await, json!({"method": "fan.start", "params": {"speed": 3}}));
     for _ in 0..400 {
-        if matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Completed(_))) {
+        if matches!(plant.d.observe(&c, "PRESS-1", Some(&external)).await, Ok(Observation::Completed(_))) {
             break;
         }
         tokio::time::sleep(Wait::from_millis(25)).await;
     }
-    let ended = plant.d.observe(&c, Some(&external)).await;
+    let ended = plant.d.observe(&c, "PRESS-1", Some(&external)).await;
     assert!(matches!(&ended, Ok(Observation::Completed(e)) if e["done"] == true), "its answer ends the command: {ended:?}");
 
     let setting = command("set.limit", json!({"key": "limit", "value": 40}));
-    assert!(matches!(plant.d.dispatch(&setting, &site_device("PRESS-1")).await, Ok(Dispatched::Accepted { .. })));
+    assert!(matches!(plant.d.dispatch(&setting, &site_device("PRESS-1"), LEFT).await, Ok(Dispatched::Accepted { .. })));
     assert_eq!(until(&mut lines, "attribute").await, json!({"limit": 40}), "a setting reaches its subscription");
 }
 
@@ -200,7 +203,7 @@ async fn thingsboards_device_client_fetches_firmware_and_it_checks_out() {
     until(&mut lines, "ready").await;
     let order = json!({"title": "sensor-fw", "version": "2.0", "url": url, "sha256": sha256, "size": image.len()});
     let c = command("firmware.update", order);
-    assert!(matches!(plant.d.dispatch(&c, &site_device("PRESS-1")).await, Ok(Dispatched::Accepted { .. })));
+    assert!(matches!(plant.d.dispatch(&c, &site_device("PRESS-1"), LEFT).await, Ok(Dispatched::Accepted { .. })));
     let got = until(&mut lines, "firmware").await;
     assert_eq!(got["bytes"], json!(image.len()), "{got}");
     assert_eq!(got["sha256"], json!(sha256), "the same bytes, by the library's own count");
@@ -221,14 +224,14 @@ async fn thingsboards_gateway_client_too() {
     until(&mut lines, "ready").await;
 
     let c = command("pump.start", json!({}));
-    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("Pump 1")).await else { panic!("accepted") };
+    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("Pump 1"), LEFT).await else { panic!("accepted") };
     let said = until(&mut lines, "rpc").await;
     assert_eq!((said["device"].as_str(), said["data"]["method"].as_str()), (Some("Pump 1"), Some("pump.start")), "{said}");
     for _ in 0..400 {
-        if matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Completed(_))) {
+        if matches!(plant.d.observe(&c, "Pump 1", Some(&external)).await, Ok(Observation::Completed(_))) {
             return;
         }
         tokio::time::sleep(Wait::from_millis(25)).await;
     }
-    panic!("its answer did not end the command: {:?}", plant.d.observe(&c, Some(&external)).await);
+    panic!("its answer did not end the command: {:?}", plant.d.observe(&c, "Pump 1", Some(&external)).await);
 }
