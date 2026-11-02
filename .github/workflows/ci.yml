@@ -62,6 +62,7 @@ jobs:
       FERRUM_TEST_INFLUX: http://localhost:8086
       FERRUM_TEST_CLICKHOUSE: http://localhost:8123
       FERRUM_TEST_AWS: http://localhost:5000
+      FERRUM_TEST_PYTHON: /tmp/clients/bin/python
     steps:
       - uses: actions/checkout@v4
       # Ferrum's Rust, because its server compiles this app. Bump the two together.
@@ -77,6 +78,8 @@ jobs:
           create database ferrum_edge_test owner ferrum;
           create database ferrum_site_test owner ferrum;
           SQL
+      - name: Other people's libraries, to meet ours
+        run: python3 -m venv /tmp/clients && /tmp/clients/bin/pip install --quiet ocpp==2.1.0 websockets
       - name: Wait for the brokers
         run: |
           for port in 4222 5672 15672 9092 8086 8123 5000; do

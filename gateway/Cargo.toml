@@ -57,6 +57,7 @@ uuid = { workspace = true }
 webpki-roots = "1"
 
 [dev-dependencies]
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
 rumqttc = { version = "0.25", default-features = false, features = ["use-rustls"] }
 rumqttd = { version = "0.20", default-features = false }

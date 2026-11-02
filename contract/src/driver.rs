@@ -66,13 +66,15 @@ pub const SCHEMES: &[&str] = &[
     "bacnet",
     "snmp",
     "listen+snmp",
+    "listen+ocpp",
+    "listen+ocpps",
 ];
 
 /// What is read and written a named thing at a time, with `node`.
 const TAGGED: &[&str] = &["opcua", "s7", "enip", "ads", "bacnet", "snmp"];
 
 /// What devices can prove themselves on.
-const DEVICE_SERVERS: [&str; 5] = ["listen+mqtt", "listen+mqtts", "listen+http", "listen+https", "listen+coap"];
+const DEVICE_SERVERS: [&str; 7] = ["listen+mqtt", "listen+mqtts", "listen+http", "listen+https", "listen+coap", "listen+ocpp", "listen+ocpps"];
 
 /// The longest message a site will assemble. A stream that never frames costs this much, not memory.
 pub const MAX_FRAME: usize = 1 << 20;
@@ -141,6 +143,7 @@ pub struct Derive {
 #[serde(rename_all = "lowercase")]
 pub enum Api {
     Device,
+    Ocpp,
 }
 
 /// What a message is written in, when that is not JSON or plain bytes.
@@ -1343,7 +1346,7 @@ pub fn parse(text: &str) -> Result<Compiled, String> {
     if d.name.trim().is_empty() {
         return Err("a definition needs a name".into());
     }
-    if d.firmware && d.api.is_none() {
+    if d.firmware && d.api != Some(Api::Device) {
         return Err("firmware reaches devices through the device API: say api: device".into());
     }
     let scheme_of = match &d.connect {
@@ -1361,8 +1364,11 @@ pub fn parse(text: &str) -> Result<Compiled, String> {
             return Err(format!("also: {other} is not a way for devices to call in"));
         }
     }
-    if matches!(scheme_of, Some("listen+http" | "listen+https" | "listen+coap")) && d.api.is_none() {
+    if matches!(scheme_of, Some("listen+http" | "listen+https" | "listen+coap")) && d.api != Some(Api::Device) {
         return Err("connect: this speaks the device API: say api: device".into());
+    }
+    if matches!(scheme_of, Some("listen+ocpp" | "listen+ocpps")) != (d.api == Some(Api::Ocpp)) {
+        return Err("api: ocpp and connect: listen+ocpp:// go together".into());
     }
     if let Some(s) = scheme_of {
         if d.checksum.is_some() && !matches!(s, "tcp" | "udp" | "serial" | "listen" | "listen+udp") {

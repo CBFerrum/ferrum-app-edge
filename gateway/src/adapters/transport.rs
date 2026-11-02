@@ -302,6 +302,19 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
             }))
         }
         "listen+snmp" => Arc::new(super::snmp::Traps { address: bind.to_string() }),
+        #[cfg(feature = "ws")]
+        "listen+ocpp" | "listen+ocpps" => {
+            let address = bind.split('/').next().unwrap_or(bind).to_string();
+            let tls = if scheme == "listen+ocpps" { Some(acceptor(tls.ok_or("tls: a port needs a cert and a key")?, limits)?) } else { None };
+            Arc::new(super::ocpp::OcppServer {
+                address,
+                open: query(rest, "open").as_deref() == Some("1"),
+                tls,
+                hub: hub.ok_or("nothing here can check who calls")?,
+                stations: Default::default(),
+                transactions: Arc::new(std::sync::atomic::AtomicU32::new(chrono::Utc::now().timestamp() as u32)),
+            })
+        }
         other => return Err(format!("this build cannot open {other}")),
     })
 }
