@@ -42,7 +42,10 @@ impl Tags for Postgres {
             sql.trim_end().trim_end_matches(';')
         );
         let row = timeout(super::tags::ANSWER * 6, self.client.query_one(&wrapped, &[])).await?;
-        let row = row.map_err(|e| if e.is_closed() { Trouble::Lost(e.to_string()) } else { Trouble::Refused(e.to_string()) })?;
+        let row = row.map_err(|e| match e.as_db_error() {
+            Some(said) => Trouble::Refused(said.message().to_string()),
+            None => Trouble::Lost(e.to_string()),
+        })?;
         let text: String = row.get(0);
         serde_json::from_str(&text).map_err(|e| Trouble::Refused(e.to_string()))
     }
