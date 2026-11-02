@@ -284,13 +284,13 @@ impl DocHook for ReportScheduleHook {
     }
 
     async fn validate_change(&self, _hc: &mut HookCtx<'_>, _old: Option<&Doc>, doc: &Doc) -> Result<()> {
-        if !s(doc, "at_time").is_some_and(|t| minutes_of(t).is_some()) {
+        if s(doc, "at_time").is_none_or(|t| minutes_of(t).is_none()) {
             return Err(Error::field("at_time", "times of day are written 08:30"));
         }
         if days_of(s(doc, "days").unwrap_or_default()).is_none() {
             return Err(Error::field("days", "days go from 1, Monday, to 7"));
         }
-        if !doc.get("recipients").and_then(Value::as_array).is_some_and(|r| !r.is_empty()) {
+        if doc.get("recipients").and_then(Value::as_array).is_none_or(Vec::is_empty) {
             return Err(Error::field("recipients", "say who it goes to"));
         }
         if s(doc, "report") == Some("edge_readings") && (s(doc, "device").is_none() || s(doc, "metric").is_none()) {

@@ -29,7 +29,7 @@ the detail of what each thing was tried against.
 | Bulk import from CSV, with tokens | ThingsBoard PE, Hono | **Built** | |
 | LwM2M server | ThingsBoard, Hono | **Verified** | Against Eclipse Leshan's client, plain and over DTLS by pre-shared key, whose identity has to be the name it registers under, by plain text values. **No bootstrap, no TLV or SenML writes** |
 | SNMP v1, v2c and v3, traps and informs | ThingsBoard, EdgeX | **Verified** | Against PySNMP: v3 with SHA-1 and AES, and SHA-256. Traps are v1 and v2c |
-| OCPP 1.6-J and 2.0.1 | ThingsBoard Gateway, OpenRemote | **Verified** | 1.6 against the Python `ocpp` library; 2.0.1 against frames written here. Security profiles 0 to 2. **No certificates (profile 3), no smart charging** |
+| OCPP 1.6-J and 2.0.1 | ThingsBoard Gateway, OpenRemote | **Verified** | 1.6 against the Python `ocpp` library, including a charging profile held to OCPP's own schema; 2.0.1 against frames written here. Security profiles 0 to 3. Smart charging is a command like any other: nothing here works out a schedule |
 | Modbus TCP and RTU | Everyone | **Verified** | TCP against pymodbus, in CI: typed reads, and writes read back. RTU against a pseudo-terminal only |
 | OPC UA client: watch, read, write, call, encryption, users, browse | Ignition, Kura, Azure IoT Operations | **Verified** | Against async-opcua's server |
 | OPC UA events and history | Ignition | **Verified** | Against asyncua: events with their ids, and a node's history from where this last got to. Acknowledging a condition is a `call` to its `i=9111`, which no server has answered yet |

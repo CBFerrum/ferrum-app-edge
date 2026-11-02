@@ -10,6 +10,7 @@
 - A workspace's allowance of measurements a day: past it, gateways hold readings until there is room.
 - CoAP and LwM2M over DTLS, by pre-shared key, so they can leave a private network: `listen+coaps` and
   `listen+lwm2ms`. Met Eclipse Leshan's client.
+- OCPP security profile 3: a charger known by its certificate. Charging profiles go as commands.
 - ThingsBoard's own Python client works against a gateway unchanged, in CI, for devices and gateways.
   It found a real fault: its firmware subscription did not match the chunks, so a download hung.
 - Modbus TCP against pymodbus, and Sparkplug payloads against Eclipse Tahu's definitions, in CI.
