@@ -63,6 +63,7 @@ jobs:
       FERRUM_TEST_CLICKHOUSE: http://localhost:8123
       FERRUM_TEST_AWS: http://localhost:5000
       FERRUM_TEST_PYTHON: /tmp/clients/bin/python
+      FERRUM_TEST_LESHAN: /tmp/leshan.jar
     steps:
       - uses: actions/checkout@v4
       # Ferrum's Rust, because its server compiles this app. Bump the two together.
@@ -79,7 +80,9 @@ jobs:
           create database ferrum_site_test owner ferrum;
           SQL
       - name: Other people's libraries, to meet ours
-        run: python3 -m venv /tmp/clients && /tmp/clients/bin/pip install --quiet ocpp==2.1.0 websockets
+        run: |
+          python3 -m venv /tmp/clients && /tmp/clients/bin/pip install --quiet ocpp==2.1.0 websockets
+          curl -sSfL -o /tmp/leshan.jar https://repo1.maven.org/maven2/org/eclipse/leshan/leshan-demo-client/2.0.0-M16/leshan-demo-client-2.0.0-M16-jar-with-dependencies.jar
       - name: Wait for the brokers
         run: |
           for port in 4222 5672 15672 9092 8086 8123 5000; do

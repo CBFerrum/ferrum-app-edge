@@ -290,6 +290,10 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
             let (host, port) = super::tags::host_port(rest, 5683);
             Arc::new(CoapClient::new(format!("{host}:{port}"), subscribe))
         }
+        "nats" => Arc::new(super::nats::Nats::new(rest, subscribe)),
+        "file" => Arc::new(super::files::Folder::new(rest)),
+        "ftp" => Arc::new(super::files::Ftp::new(rest)),
+        "listen+lwm2m" => Arc::new(super::lwm2m::Lwm2m::new(bind.to_string(), subscribe, hub.ok_or("nothing here can check who calls")?)),
         "knx" => Arc::new(super::knx::Knx::new(rest, subscribe)),
         "iec104" => Arc::new(super::iec104::Iec104::new(rest)),
         "s7" | "enip" | "ads" | "bacnet" | "snmp" | "mbus" => {
