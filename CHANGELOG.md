@@ -14,6 +14,8 @@ and physical exceptions. **Nothing here has met physical equipment.**
 - **Stopping one vehicle's order stops one vehicle.** `cancelOrder` went to every vehicle on an adapter,
   and it stops whatever a vehicle is doing. It now goes to the vehicle that has the order, once that
   vehicle says so. Over MQTT a cancel goes to the device's own topic, not to `all`.
+- **A failure never says what an address held.** An HTTP failure quoted its URL, which can hold a
+  `{secret.x}`, and a failure's reason goes to the platform. Secrets stay on the site again.
 - **Time is the platform's, carried forward by a clock nothing here can set.** Setting the wall clock
   either way changes nothing, a suspended machine has been away, and a process restart loses nothing.
   After a reboot nobody can say how long it was off, so no new work starts until the platform answers

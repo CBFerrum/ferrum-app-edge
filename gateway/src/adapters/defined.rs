@@ -185,7 +185,7 @@ async fn fetched(limits: &Limits, payload: &Value) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let client =
         reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10)).redirect(limits.redirects()).build().map_err(|e| e.to_string())?;
-    let mut response = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let mut response = client.get(url).send().await.map_err(|e| e.without_url().to_string())?;
     if !response.status().is_success() {
         return Err(format!("{url} answered {}", response.status()));
     }
@@ -193,7 +193,7 @@ async fn fetched(limits: &Limits, payload: &Value) -> Result<PathBuf, String> {
     let mut file = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;
     let (mut hash, mut size) = (Sha256::new(), 0u64);
     let outcome = async {
-        while let Some(piece) = response.chunk().await.map_err(|e| e.to_string())? {
+        while let Some(piece) = response.chunk().await.map_err(|e| e.without_url().to_string())? {
             size += piece.len() as u64;
             if size > MAX_FIRMWARE {
                 return Err("that is more firmware than a device should need".to_string());
