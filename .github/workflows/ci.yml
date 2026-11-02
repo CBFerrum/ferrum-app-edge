@@ -16,8 +16,9 @@ on:
 permissions:
   contents: read
 
+# The two lanes keep apart: a release run calling this must not cancel the plain run of one commit.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ inputs.frozen && 'frozen' || 'forward' }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
