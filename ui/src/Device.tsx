@@ -9,6 +9,7 @@ import { refusal, relativeTime } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { type Attribute, desire, device, deviceRecord, newToken, sendCommand } from "./data";
 import { Acknowledge } from "./Alarms";
+import { History } from "./History";
 import { Tabs } from "./Tabs";
 
 const shown = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
@@ -201,6 +202,7 @@ export function DevicePage() {
           </dl>
         )}
       </section>
+      <History id={id} code={record.data?.device_code ?? id} metrics={metrics.map((m) => m.metric)} />
       <section className="card card-pad stack" aria-label="Attributes">
         <h2 className="edge-section">What it says about itself</h2>
         {d.attributes.length === 0 ? (

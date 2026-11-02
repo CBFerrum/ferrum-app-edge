@@ -2,6 +2,7 @@
 //! working on their own.
 //!
 //! * [`config`]: what each gateway should be, worked out from the records;
+//! * [`data`]: numbers over time, and what a dashboard shows;
 //! * [`facts`]: what gateways report, arriving when the link allows;
 //! * [`site`]: the HTTP endpoints;
 //! * [`templates`]: definitions to start from.
@@ -10,6 +11,7 @@
 //! and looked after. Rules raise alarms and move nothing: anything physical goes through the ledger.
 
 pub mod config;
+pub mod data;
 pub mod facts;
 pub mod site;
 pub mod templates;
@@ -38,6 +40,7 @@ pub fn register(h: &mut HookRegistry) {
     h.register("DeviceDefinition", Arc::new(DefinitionHook));
     h.register("EdgeRule", Arc::new(RuleHook));
     h.register("EdgeFlow", Arc::new(FlowHook));
+    h.register("EdgeDashboard", Arc::new(BoardHook));
     h.add_event_sink(Arc::new(Facts));
     h.add_site("edge", Arc::new(site::EdgeSite));
 }
@@ -45,6 +48,23 @@ pub fn register(h: &mut HookRegistry) {
 /// This app's reports.
 pub fn reports() -> Vec<Arc<dyn ReportSource>> {
     vec![]
+}
+
+/// A dashboard is checked when it is saved, so that nothing is left for a person looking at it to find.
+struct BoardHook;
+
+#[async_trait]
+impl DocHook for BoardHook {
+    fn name(&self) -> &'static str {
+        "edge.dashboard"
+    }
+
+    async fn validate_change(&self, _hc: &mut HookCtx<'_>, _old: Option<&Doc>, doc: &Doc) -> Result<()> {
+        match s(doc, "body") {
+            Some(body) => data::check(body).map(drop).map_err(|why| Error::field("body", why)),
+            None => Ok(()),
+        }
+    }
 }
 
 /// A definition is checked when it is saved, with its reason, so a mistake is a person's to fix at a

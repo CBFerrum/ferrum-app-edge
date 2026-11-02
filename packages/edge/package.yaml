@@ -10,7 +10,7 @@ modules:
     label: IoT Edge
     icon: factory
     order: 61
-    items: [DeviceDefinition, EdgeRule, EdgeFlow, EdgeAlarm, EdgeExport, EdgeRelease]
+    items: [DeviceDefinition, EdgeRule, EdgeFlow, EdgeAlarm, EdgeExport, EdgeRelease, EdgeDashboard]
 
 overlays:
   - entity: Device
@@ -31,6 +31,7 @@ roles:
       - {entity: EdgeAlarm, read: true}
       - {entity: EdgeExport, read: true}
       - {entity: EdgeRelease, read: true}
+      - {entity: EdgeDashboard, read: true}
       - {entity: Device, read: true}
       - {entity: Site, read: true}
   - name: Edge Engineer
@@ -42,6 +43,7 @@ roles:
       - {entity: EdgeAlarm, read: true, export: true}
       - {entity: EdgeExport, read: true, write: true, create: true, delete: true}
       - {entity: EdgeRelease, read: true, write: true, create: true}
+      - {entity: EdgeDashboard, read: true, write: true, create: true, delete: true, export: true, import: true}
       - {entity: Device, read: true, write: true, create: true, export: true, import: true}
       - {entity: DeviceProfile, read: true}
       - {entity: Site, read: true}
@@ -55,5 +57,6 @@ roles:
       - {entity: EdgeRule, read: true}
       - {entity: EdgeAlarm, read: true}
       - {entity: EdgeExport, read: true}
+      - {entity: EdgeDashboard, read: true}
       - {entity: Device, read: true}
       - {entity: Site, read: true}

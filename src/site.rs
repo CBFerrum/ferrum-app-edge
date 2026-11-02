@@ -11,6 +11,10 @@
 //! | `POST /flows/{id}/simulate` | Edge Engineer | `{script, until?}`: the same for what is saved, which is what lets it go for review |
 //! | `GET /devices` | Edge Viewer | `?q=`: what is reached, by what and from where |
 //! | `GET /devices/{id}` | Edge Viewer | attributes, newest values, open alarms, recent events |
+//! | `GET /devices/{id}/history` | Edge Viewer | `?metrics=a,b&from=&to=&points=`: samples for a short period, rollups for a long one |
+//! | `POST /boards/data` | Edge Viewer | `{body, vars?, last_secs?}`: what each widget of a dashboard shows |
+//! | `POST /boards/{id}/share` | Edge Engineer | a link for anyone, shown once, replacing the one before |
+//! | `DELETE /boards/{id}/share` | Edge Engineer | no link any more |
 //! | `GET /alarms` | Edge Viewer | `?all=1` for those cleared too: newest first |
 //! | `PUT /devices/{id}/desired` | Edge Engineer | `{key, value}`: asks for an attribute through the ledger |
 //! | `POST /devices/{id}/token` | Edge Engineer | a token for a device that talks to us directly, shown once |
@@ -24,6 +28,7 @@
 //! |---|---|---|
 //! | `POST /config` | a gateway, signed | [`ConfigRequest`]: what it should be, if that changed |
 //! | `POST /ingest` | a device, by token | `{values, state?, attributes?, at?}` |
+//! | `GET /shared/{token}` | anyone with the link | what a shared dashboard shows, and nothing it does not |
 
 use crate::config;
 use async_trait::async_trait;
@@ -39,7 +44,7 @@ use ferrum_ops::contract::{Fact, Measurement};
 use ferrum_ops::identity::{self, Refused};
 use ferrum_ops::telemetry;
 use rand::RngCore;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -314,23 +319,64 @@ async fn alarm_list(k: &Kernel, ctx: &Ctx, all: bool) -> Result<Value> {
 
 /// Robots and what they last said. A position may be a metric or an attribute, whichever suited the
 /// definition, so anything a definition can read can be drawn.
-async fn robots(k: &Kernel, ctx: &Ctx) -> Result<Value> {
+/// A link to a dashboard for people with no account. Only its hash is kept, so the link is shown once,
+/// and a new one ends the old one.
+async fn share(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
+    let mut raw = [0u8; 24];
+    rand::rng().fill_bytes(&mut raw);
+    let token = hex::encode(raw);
+    set_share(k, ctx, id, Some(&token_hash(&token))).await?;
+    Ok(json!({"token": token}))
+}
+
+async fn set_share(k: &Kernel, ctx: &Ctx, id: Uuid, hash: Option<&str>) -> Result<()> {
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    let rows: Value = sqlx::query_scalar(
-        "select coalesce(jsonb_agg(jsonb_build_object('id', d.id, 'code', d.device_code, 'name', d.device_name, 'lifecycle', d.lifecycle, 'site', s.site_name, \
-           'metrics', (select coalesce(jsonb_object_agg(l.metric, jsonb_build_object('value', l.last_value, 'at', l.last_time)), '{}') from ( \
-              select distinct on (r.metric) r.metric, r.last_value, r.last_time from op_rollup_minute r where r.tenant_id = d.tenant_id and r.device_id = d.id and r.last_time is not null order by r.metric, r.minute desc) l), \
-           'attributes', (select coalesce(jsonb_object_agg(a.key, a.value), '{}') from edge_attribute a where a.tenant_id = d.tenant_id and a.device_id = d.id), \
-           'state', (select e.state from op_equipment_event e where e.tenant_id = d.tenant_id and e.device_id = d.id order by e.at desc limit 1), \
-           'running', (select count(*) from op_command c where c.tenant_id = d.tenant_id and c.target_id = d.id and c.state in ('Accepted', 'Executing'))) order by d.device_code), '[]') \
-         from e_device d left join e_site s on s.tenant_id = d.tenant_id and s.id = d.site \
-         where d.tenant_id = $1 and d.kind = 'Robot' and d.lifecycle <> 'Retired'",
+    let done = sqlx::query(
+        "update e_edge_dashboard set shared_hash = $3, shared_at = case when $3::text is null then null else now() end where tenant_id = $1 and id = $2",
     )
     .bind(ctx.tenant)
-    .fetch_one(&mut *tx)
-    .await?;
+    .bind(id)
+    .bind(hash)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if done == 0 {
+        return Err(Error::NotFound("dashboard".into()));
+    }
+    audit::record(&mut tx, ctx, "EdgeDashboard", id, if hash.is_some() { "edge.board_shared" } else { "edge.board_unshared" }, None, json!({})).await?;
     tx.commit().await?;
-    Ok(json!({"robots": rows}))
+    Ok(())
+}
+
+/// What a shared dashboard shows. The link is the whole of the visitor's right: it reads what the
+/// saved layout reads, the controls are left out, and nothing in the request changes either.
+async fn shared(k: &Kernel, req: &SiteRequest, token: &str) -> Result<SiteResponse> {
+    let mut tx = k.db.tenant_tx(req.tenant).await?;
+    let row: Option<(String, Option<String>)> = sqlx::query_as("select dashboard_name, body from e_edge_dashboard where tenant_id = $1 and shared_hash = $2")
+        .bind(req.tenant)
+        .bind(token_hash(token))
+        .fetch_optional(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    let Some((name, Some(body))) = row else { return Ok(SiteResponse::json(404, &json!({"error": "this link does not lead anywhere"}))) };
+    let mut board = crate::data::check(&body).map_err(Error::invalid)?;
+    if let Some(widgets) = board["widgets"].as_array_mut() {
+        widgets.retain(|w| !crate::data::CONTROLS.contains(&w["type"].as_str().unwrap_or_default()));
+    }
+    let ctx = Ctx::system(req.tenant, k.registry.schema(req.tenant).await?);
+    let plan = crate::data::plan(&board, &Map::new(), board["last_secs"].as_i64().unwrap_or(3600));
+    let data = crate::data::board(k, &ctx, &plan).await?;
+    Ok(ok(json!({"name": name, "board": board, "data": data})))
+}
+
+async fn history(k: &Kernel, ctx: &Ctx, id: Uuid, req: &SiteRequest) -> Result<Value> {
+    let text = |key: &str| req.query.get(key).and_then(Value::as_str);
+    let when = |key: &str, default: DateTime<Utc>| text(key).map_or(Ok(default), |t| t.parse().map_err(|_| Error::field(key, "that is not a time")));
+    let to = when("to", Utc::now())?;
+    let from = when("from", to - chrono::Duration::hours(1))?;
+    let metrics: Vec<String> = text("metrics").unwrap_or_default().split(',').map(str::trim).filter(|m| !m.is_empty()).map(str::to_string).collect();
+    let points = text("points").and_then(|p| p.parse().ok()).unwrap_or(300);
+    crate::data::history(k, ctx, id, &metrics, from, to, points).await
 }
 
 async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteResponse> {
@@ -370,6 +416,26 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
             may(ctx, READ)?;
             device(k, ctx, uuid(id)?).await?
         }
+        ("GET", ["devices", id, "history"]) => {
+            may(ctx, READ)?;
+            history(k, ctx, uuid(id)?, req).await?
+        }
+        ("POST", ["boards", "data"]) => {
+            may(ctx, READ)?;
+            let b = body(req)?;
+            let board = crate::data::check(b["body"].as_str().unwrap_or_default()).map_err(|why| Error::field("body", why))?;
+            let plan = crate::data::plan(&board, b["vars"].as_object().unwrap_or(&Map::new()), b["last_secs"].as_i64().unwrap_or(3600));
+            crate::data::board(k, ctx, &plan).await?
+        }
+        ("POST", ["boards", id, "share"]) => {
+            may(ctx, ENGINEER)?;
+            share(k, ctx, uuid(id)?).await?
+        }
+        ("DELETE", ["boards", id, "share"]) => {
+            may(ctx, ENGINEER)?;
+            set_share(k, ctx, uuid(id)?, None).await?;
+            json!({"shared": false})
+        }
         ("PUT", ["devices", id, "desired"]) => {
             may(ctx, ENGINEER)?;
             let b = body(req)?;
@@ -391,7 +457,7 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
         }
         ("GET", ["robots"]) => {
             may(ctx, READ)?;
-            robots(k, ctx).await?
+            json!({"robots": crate::data::robots(k, ctx).await?})
         }
         _ => return Err(Error::NotFound("route".into())),
     };
@@ -554,9 +620,14 @@ impl Site for EdgeSite {
         if let Some(ctx) = req.user.clone() {
             return signed_in(k, &ctx, &req).await;
         }
-        match (req.method.as_str(), req.path.trim_matches('/')) {
+        let path = req.path.trim_matches('/').to_string();
+        match (req.method.as_str(), path.as_str()) {
             ("POST", "config") => gateway_config(k, &req).await,
             ("POST", "ingest") => ingest(k, &req).await,
+            ("GET", other) => match other.strip_prefix("shared/") {
+                Some(token) => shared(k, &req, token).await,
+                None => Err(Error::NotFound("route".into())),
+            },
             _ => Err(Error::NotFound("route".into())),
         }
     }

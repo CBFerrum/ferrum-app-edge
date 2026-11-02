@@ -18,6 +18,9 @@ contributes:
     - {id: edge, route: edge, title: IoT Edge, description: "Devices, gateways, alarms and robots", icon: factory, color: "#0369a1", roles: [Edge Engineer, Edge Reviewer, Edge Viewer]}
   shell.open:
     - {id: edge, package: edge, path: "edge/e/{entity}/{id}", list: "edge/e/{entity}"}
+  shell.public:
+    - {id: shared, path: edge/shared, title: Dashboard}
   shell.create:
     - {id: definition, label: Device definition, path: edge/definitions, entity: DeviceDefinition}
     - {id: flow, label: Flow, path: edge/flows, entity: EdgeFlow}
+    - {id: dashboard, label: Dashboard, path: edge/dashboards, entity: EdgeDashboard}

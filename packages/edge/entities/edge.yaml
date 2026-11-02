@@ -130,3 +130,19 @@
     - {name: site, type: link, to: Site, in_list: true, description: "Every site, if empty"}
     - {name: notes, type: text}
   list: {columns: [release_version, status, percent, site, expires_at], sort: release_version desc}
+
+- name: EdgeDashboard
+  label: Edge Dashboard
+  label_plural: Edge Dashboards
+  kind: master
+  module: edge
+  title_field: dashboard_name
+  search_fields: [dashboard_name]
+  description: Widgets over live values, laid out on a grid. It can be shared by a link that shows what it shows and changes nothing.
+  fields:
+    - {name: dashboard_name, type: data, required: true, unique: true, in_list: true, max_length: 120}
+    - {name: description, type: text, in_list: true}
+    - {name: body, type: code, label: Layout, description: "What was laid out, as JSON"}
+    - {name: shared_hash, type: data, read_only: true, no_copy: true, hidden: true}
+    - {name: shared_at, type: datetime, read_only: true, no_copy: true, in_list: true, label: Shared Since}
+  list: {columns: [dashboard_name, description, shared_at], sort: dashboard_name asc}
