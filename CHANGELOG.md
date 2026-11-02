@@ -8,6 +8,9 @@
 - Reports by the clock, by email, as CSV or PDF.
 - Pages hear on the platform's socket that readings landed, and ask again at once.
 - A workspace's allowance of measurements a day: past it, gateways hold readings until there is room.
+- ThingsBoard's own Python client works against a gateway unchanged, in CI, for devices and gateways.
+  It found a real fault: its firmware subscription did not match the chunks, so a download hung.
+- Modbus TCP against pymodbus, and Sparkplug payloads against Eclipse Tahu's definitions, in CI.
 - A gateway as an OPC UA server, by an export to `listen+opcua://`: each device a folder, each metric a
   variable, read only, with a login over encryption if a secret is named.
 - OPC UA history with `history:`, and events carrying `EventId` and `ConditionId`, met against asyncua.

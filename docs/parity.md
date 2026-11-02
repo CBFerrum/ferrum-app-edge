@@ -19,10 +19,10 @@ the detail of what each thing was tried against.
 | Capability | Who has it | Status | Notes |
 |---|---|---|---|
 | Device described as data | ThingsBoard profiles, EdgeX, OpenRemote | **Verified** | Definitions, tried on a sample, reviewed, published to gateways |
-| Device API over MQTT 3.1, 3.1.1, 5 | ThingsBoard | **Verified** | ThingsBoard's own topics, against Paho and rumqttc |
+| Device API over MQTT 3.1, 3.1.1, 5 | ThingsBoard | **Verified** | ThingsBoard's own topics, against Paho, rumqttc and ThingsBoard's own Python client, unchanged, in CI |
 | Device API over HTTP | ThingsBoard | **Verified** | ThingsBoard's paths, against curl |
 | Device API over CoAP, with Observe and blocks | ThingsBoard | **Verified** | Against aiocoap. **No DTLS** |
-| Gateway API for devices behind a device | ThingsBoard | **Built** | `v1/gateway/*`, against rumqttc |
+| Gateway API for devices behind a device | ThingsBoard | **Verified** | `v1/gateway/*`, against rumqttc and ThingsBoard's own gateway client, unchanged, in CI |
 | Access tokens, basic MQTT credentials, X.509 | ThingsBoard, Hono | **Verified** | Only hashes reach a gateway |
 | Device provisioning by a shared key | ThingsBoard | **Verified** | It adds a device that reports, and takes no command until commissioned |
 | Claiming by a device's secret | ThingsBoard | **Built** | |
@@ -30,7 +30,7 @@ the detail of what each thing was tried against.
 | LwM2M server | ThingsBoard, Hono | **Verified** | Against Eclipse Leshan's client, by plain text values. **No DTLS, no bootstrap, no TLV or SenML writes** |
 | SNMP v1, v2c and v3, traps and informs | ThingsBoard, EdgeX | **Verified** | Against PySNMP: v3 with SHA-1 and AES, and SHA-256. Traps are v1 and v2c |
 | OCPP 1.6-J and 2.0.1 | ThingsBoard Gateway, OpenRemote | **Verified** | 1.6 against the Python `ocpp` library; 2.0.1 against frames written here. Security profiles 0 to 2. **No certificates (profile 3), no smart charging** |
-| Modbus TCP and RTU | Everyone | **Built** | Against a stand-in and a pseudo-terminal |
+| Modbus TCP and RTU | Everyone | **Verified** | TCP against pymodbus, in CI: typed reads, and writes read back. RTU against a pseudo-terminal only |
 | OPC UA client: watch, read, write, call, encryption, users, browse | Ignition, Kura, Azure IoT Operations | **Verified** | Against async-opcua's server |
 | OPC UA events and history | Ignition | **Verified** | Against asyncua: events with their ids, and a node's history from where this last got to. Acknowledging a condition is a `call` to its `i=9111`, which no server has answered yet |
 | OPC UA server | Ignition, Kura | **Verified** | As an export, read only, against asyncua's client; with encryption, a login and certificates a person trusts, against async-opcua's. **No history**, and a variable appears with its first reading |
@@ -48,8 +48,8 @@ the detail of what each thing was tried against.
 | LoRaWAN, Zigbee | ThingsBoard, OpenRemote | **External** | ChirpStack and Zigbee2MQTT over MQTT, with templates |
 | Sigfox, NB-IoT platforms, other clouds as sources | ThingsBoard PE integrations | **Partly** | By webhook or MQTT, as any other source. No ready-made decoders |
 | CoAP client, with Observe and blocks | Hono | **Verified** | Against aiocoap |
-| Sparkplug B primary host | Ignition, HiveMQ | **Built** | STATE, sequence checks, rebirth, births and deaths, over rumqttd |
-| Sparkplug B edge node | Ignition Edge, Kura | **Built** | As an export, over rumqttd. No other Sparkplug software has met either yet. **No datasets or templates** |
+| Sparkplug B primary host | Ignition, HiveMQ | **Built** | STATE, sequence checks, rebirth, births and deaths, over rumqttd. Eclipse Tahu's own definitions read and write the same payloads, in CI. No other host or node has met it |
+| Sparkplug B edge node | Ignition Edge, Kura | **Built** | As an export, over rumqttd, with the same check of its payloads. **No datasets or templates** |
 | MTConnect | Ignition modules | **Built** | Current and the sample stream, against a stand-in |
 | SQL as a source | ThingsBoard Gateway (ODBC) | **Verified** | PostgreSQL and SQLite, read only. Others, by an external driver |
 | FTP and a watched folder | ThingsBoard Gateway | **Verified** | FTP against pyftpdlib |
@@ -122,7 +122,7 @@ the detail of what each thing was tried against.
 
 | Capability | Who has it | Status | Notes |
 |---|---|---|---|
-| Firmware for devices, in rollouts | ThingsBoard, Hono | **Verified** | Paho fetched 50 KB in chunks on real binaries, and a rollout finished |
+| Firmware for devices, in rollouts | ThingsBoard, Hono | **Verified** | ThingsBoard's own client fetched and checked 50 KB in chunks, in CI, which found a fault: chunks went unheard by its subscription. Paho did on real binaries, and a rollout finished |
 | Software update of the gateway itself | Kura, Greengrass | **Built** | Signed releases, staged |
 | Bulk commands and settings | ThingsBoard PE | **Verified** | Each through the ledger |
 | Scheduler | ThingsBoard PE | **Built** | As automation, under an envelope |

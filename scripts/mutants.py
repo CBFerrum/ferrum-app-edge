@@ -39,6 +39,7 @@ TIMEOUT = 600
 
 # name, file, text to replace, what breaks it, test
 MUTANTS = [
+    ("firmware-unheard-by-thingsboards-client", "contract/src/device_api.rs", 'if filter.starts_with(FIRMWARE_ANSWER) { "v2/fw/response/#" } else { filter }', "filter", CONTRACT),
     ("customer-sees-anothers-device", "src/portal.rs", "where d.tenant_id = $1 and d.id = $2 and d.edge_customer = any($3) and d.lifecycle <> 'Retired'", "where d.tenant_id = $1 and d.id = $2 and cardinality($3::uuid[]) >= 0", PORTAL),
     ("customer-sees-every-device", "src/portal.rs", "where d.tenant_id = $1 and d.edge_customer = any($2) and d.lifecycle <> 'Retired') r", "where d.tenant_id = $1 and cardinality($2::uuid[]) >= 0 and d.lifecycle <> 'Retired') r", PORTAL),
     ("customer-sees-anothers-dashboard", "src/portal.rs", "and id = $2 and customer = any($3)", "and id = $2 and cardinality($3::uuid[]) >= 0", PORTAL),
