@@ -292,6 +292,7 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
             let (host, port) = super::tags::host_port(rest, 5683);
             Arc::new(CoapClient::new(format!("{host}:{port}"), subscribe))
         }
+        "mtconnect" | "mtconnects" => Arc::new(super::mtconnect::Mtconnect::new(scheme, rest)),
         "nats" => Arc::new(super::nats::Nats::new(rest, subscribe)),
         "file" => Arc::new(super::files::Folder::new(rest)),
         "ftp" => Arc::new(super::files::Ftp::new(rest)),

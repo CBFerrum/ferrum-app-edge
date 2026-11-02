@@ -10,11 +10,12 @@
 use crate::adapter::Failure;
 use crate::adapters::transport::{Limits, Message, Out, Transport};
 use async_trait::async_trait;
-use opcua::client::{Client, ClientBuilder, DataChangeCallback, IdentityToken, Session};
+use opcua::client::{Client, ClientBuilder, IdentityToken, Session, SubscriptionCallbacks};
 use opcua::crypto::SecurityPolicy;
 use opcua::types::{
-    AttributeId, CallMethodRequest, DataValue, MessageSecurityMode, MonitoredItemCreateRequest, NodeId, ReadValueId, StatusCode, TimestampsToReturn, UAString,
-    UserTokenPolicy, Variant, VariantScalarTypeId, WriteValue,
+    AttributeId, BrowseDescription, BrowseDirection, BrowseResultMask, CallMethodRequest, DataValue, EventFilter, ExtensionObject, MessageSecurityMode,
+    MonitoredItemCreateRequest, MonitoringMode, MonitoringParameters, NodeId, ObjectTypeId, QualifiedName, ReadValueId, ReferenceTypeId,
+    SimpleAttributeOperand, StatusCode, TimestampsToReturn, UAString, UserTokenPolicy, Variant, VariantScalarTypeId, WriteValue,
 };
 use serde_json::{Value, json};
 use std::str::FromStr;
@@ -24,6 +25,35 @@ use tokio::sync::{Mutex, mpsc};
 
 /// Longest a request gets before what became of it is unknown.
 const ANSWER: Duration = Duration::from_secs(10);
+/// `browse:i=85` reads what is under a node, for finding what a server has.
+const BROWSE: &str = "browse:";
+/// `events:i=2253` in `subscribe` watches a node's events, which arrive under the same name.
+const EVENTS: &str = "events:";
+/// What is asked of each event: every event has these.
+const EVENT_FIELDS: [&str; 5] = ["EventType", "SourceName", "Time", "Message", "Severity"];
+
+/// What to watch: a node's value, or its events.
+fn item(node: &str) -> Option<MonitoredItemCreateRequest> {
+    let Some(events) = node.strip_prefix(EVENTS) else { return NodeId::from_str(node).ok().map(MonitoredItemCreateRequest::from) };
+    let select = |name: &str| SimpleAttributeOperand {
+        type_definition_id: ObjectTypeId::BaseEventType.into(),
+        browse_path: Some(vec![QualifiedName::new(0, name)]),
+        attribute_id: AttributeId::Value as u32,
+        index_range: Default::default(),
+    };
+    let filter = EventFilter { select_clauses: Some(EVENT_FIELDS.iter().map(|name| select(name)).collect()), where_clause: Default::default() };
+    Some(MonitoredItemCreateRequest {
+        item_to_monitor: ReadValueId { node_id: NodeId::from_str(events).ok()?, attribute_id: AttributeId::EventNotifier as u32, ..Default::default() },
+        monitoring_mode: MonitoringMode::Reporting,
+        requested_parameters: MonitoringParameters {
+            sampling_interval: 0.0,
+            filter: ExtensionObject::from_message(filter),
+            queue_size: 100,
+            discard_oldest: true,
+            ..Default::default()
+        },
+    })
+}
 
 pub struct Opcua {
     url: String,
@@ -198,19 +228,25 @@ impl Transport for Opcua {
             return Err("the server would not start a session".into());
         }
         let watch = tx.clone();
-        let callback = DataChangeCallback::new(move |value, item| {
-            let node = item.item_to_monitor().node_id.to_string();
-            if let Some(m) = message(&node, &value) {
-                // A burst costs samples, never memory.
-                let _ = watch.try_send(m);
-            }
-        });
+        let events = tx.clone();
+        let callback = SubscriptionCallbacks::new(
+            |_| {},
+            move |value, item| {
+                let node = item.item_to_monitor().node_id.to_string();
+                if let Some(m) = message(&node, &value) {
+                    // A burst costs samples, never memory.
+                    let _ = watch.try_send(m);
+                }
+            },
+            move |fields, item| {
+                let topic = format!("{EVENTS}{}", item.item_to_monitor().node_id);
+                let said: Vec<Value> = fields.iter().flatten().map(json_of).collect();
+                let body = EVENT_FIELDS.iter().zip(said).map(|(name, value)| ((*name).to_string(), value)).collect::<serde_json::Map<_, _>>();
+                let _ = events.try_send(Message { topic, body: Value::Object(body).to_string().into_bytes(), status: None, from: None });
+            },
+        );
         let subscription = session.create_subscription(self.interval, 30, 10, 0, 0, true, callback).await.map_err(|e| e.to_string())?;
-        let items = self
-            .nodes
-            .iter()
-            .map(|n| NodeId::from_str(n).map(MonitoredItemCreateRequest::from).map_err(|_| format!("{n} is not a node id")))
-            .collect::<Result<Vec<_>, _>>()?;
+        let items = self.nodes.iter().map(|n| item(n).ok_or_else(|| format!("{n} is not a node id"))).collect::<Result<Vec<_>, _>>()?;
         if !items.is_empty() {
             let made = session.create_monitored_items(subscription, TimestampsToReturn::Both, items).await.map_err(|e| e.to_string())?;
             let refused: Vec<String> =
@@ -240,6 +276,26 @@ impl Transport for Opcua {
         let session = self.session().await?;
         let read = |node: NodeId| ReadValueId { node_id: node, attribute_id: AttributeId::Value as u32, ..Default::default() };
         match out {
+            Out::Node { node, value: None } if node.starts_with(BROWSE) => {
+                let id = node_of(&node[BROWSE.len()..])?;
+                let request = BrowseDescription {
+                    node_id: id,
+                    browse_direction: BrowseDirection::Forward,
+                    reference_type_id: ReferenceTypeId::HierarchicalReferences.into(),
+                    include_subtypes: true,
+                    node_class_mask: 0,
+                    result_mask: BrowseResultMask::All as u32,
+                };
+                let answer = tokio::time::timeout(ANSWER, session.browse(&[request], 0, None)).await;
+                let results = answer.map_err(|_| Failure::NotSent("it did not answer".into()))?.map_err(|e| Failure::NotSent(e.to_string()))?;
+                let children: Vec<Value> = results
+                    .iter()
+                    .flat_map(|r| r.references.iter().flatten())
+                    .map(|c| json!({"node": c.node_id.node_id.to_string(), "name": c.browse_name.name.as_ref(), "label": c.display_name.text.as_ref(), "class": format!("{:?}", c.node_class)}))
+                    .collect();
+                let body = json!({"value": children}).to_string().into_bytes();
+                Ok(Some(Message { topic: node, body, status: None, from: None }))
+            }
             Out::Node { node, value: None } => {
                 let id = node_of(&node)?;
                 let answer = tokio::time::timeout(ANSWER, session.read(&[read(id)], TimestampsToReturn::Both, 0.0)).await;
