@@ -209,6 +209,8 @@ async fn a_served_login_wants_a_password_and_a_client_someone_trusted() {
 
     let secure = |password: &str| format!("opcua://{bind}/?security=Basic256Sha256&mode=SignAndEncrypt&user=reader&password={password}");
     assert!(reach(&secure("s3cret"), &limits).await.is_err(), "that server has not said it trusts this client");
+    let kept = std::fs::read_dir(server.join("opcua-server/rejected")).unwrap().count();
+    assert_eq!(kept, 1, "it is kept back for a person to look at");
     trust(&server.join("opcua-server"));
     assert!(reach(&secure("s3cret"), &limits).await.is_err(), "and this client has not said it trusts that server");
     trust(&client.join("opcua"));

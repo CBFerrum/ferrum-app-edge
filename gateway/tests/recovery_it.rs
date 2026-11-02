@@ -385,7 +385,11 @@ async fn past_an_allowance_readings_wait_and_nothing_else_does(w: &World) {
     let c = issue(&ws, ws.robot, "warehouse.move", json!({"tote": "T-481"}), 60).await;
     reaches(&ws, c, "Completed", 15).await;
     assert_eq!(stored().await, 0, "a command went through, and no reading did");
-    until("readings to wait at the gateway", 10, async || site.journal().samples(10).is_ok_and(|(s, _)| !s.is_empty())).await;
+    let oldest = async || site.journal().samples(1).ok().and_then(|(s, _)| s.first().map(|m| (m.boot, m.seq)));
+    until("readings to wait at the gateway", 10, async || oldest().await.is_some()).await;
+    let first = oldest().await;
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert_eq!(oldest().await, first, "an exchange or two later it is still here: nothing was taken, and nothing thrown away");
     allowance(1_000_000).await;
     until("readings to arrive", 15, async || stored().await > 0).await;
 }

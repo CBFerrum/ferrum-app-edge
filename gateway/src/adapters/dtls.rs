@@ -12,8 +12,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc};
 use tokio::time::timeout;
 use webrtc_dtls::cipher_suite::CipherSuiteId;
 use webrtc_dtls::config::Config;
@@ -25,6 +24,7 @@ const HANDSHAKE: Duration = Duration::from_secs(15);
 /// A session nothing has crossed for this long is forgotten, and the device shakes hands again.
 const IDLE: Duration = Duration::from_secs(3600);
 const MAX_SESSIONS: usize = 10_000;
+const MAX_HANDSHAKES: usize = 256;
 const MAX_DATAGRAM: usize = 2048;
 const WAITING: usize = 256;
 
@@ -38,7 +38,7 @@ pub enum Wire {
 pub struct Secured {
     sessions: Arc<Mutex<HashMap<SocketAddr, Session>>>,
     arrived: tokio::sync::Mutex<mpsc::Receiver<(Vec<u8>, SocketAddr)>>,
-    accepting: JoinHandle<()>,
+    closing: Arc<Notify>,
 }
 
 struct Session {
@@ -48,7 +48,7 @@ struct Session {
 
 impl Drop for Secured {
     fn drop(&mut self) {
-        self.accepting.abort();
+        self.closing.notify_one();
     }
 }
 
@@ -77,9 +77,11 @@ async fn serve(
     hub: Arc<Hub>,
     sessions: Arc<Mutex<HashMap<SocketAddr, Session>>>,
     tx: mpsc::Sender<(Vec<u8>, SocketAddr)>,
+    turn: OwnedSemaphorePermit,
 ) {
     let identity = Arc::new(Mutex::new(String::new()));
     let shaken = timeout(HANDSHAKE, DTLSConn::new(conn, config(hub, identity.clone()), false, None)).await;
+    drop(turn);
     let conn = match shaken {
         Ok(Ok(conn)) => Arc::new(conn),
         Ok(Err(e)) => {
@@ -116,12 +118,28 @@ impl Wire {
         let (tx, rx) = mpsc::channel(WAITING);
         let sessions: Arc<Mutex<HashMap<SocketAddr, Session>>> = Arc::default();
         let held = sessions.clone();
-        let accepting = tokio::spawn(async move {
-            while let Ok((conn, peer)) = listener.accept().await {
-                tokio::spawn(serve(conn, peer, hub.clone(), held.clone(), tx.clone()));
+        let closing = Arc::new(Notify::new());
+        let closed = closing.clone();
+        let shaking = Arc::new(Semaphore::new(MAX_HANDSHAKES));
+        tokio::spawn(async move {
+            loop {
+                let accepted = tokio::select! {
+                    () = closed.notified() => break,
+                    got = listener.accept() => got,
+                };
+                let Ok((conn, peer)) = accepted else { break };
+                // A datagram costs a sender nothing, so what it can start here is limited.
+                let Ok(turn) = shaking.clone().try_acquire_owned() else { continue };
+                tokio::spawn(serve(conn, peer, hub.clone(), held.clone(), tx.clone(), turn));
+            }
+            // The port stays bound until this is said, and a new version of a definition wants it.
+            let _ = listener.close().await;
+            let open: Vec<Arc<DTLSConn>> = locked(&held).drain().map(|(_, session)| session.conn).collect();
+            for conn in open {
+                let _ = conn.close().await;
             }
         });
-        Ok(Wire::Secured(Arc::new(Secured { sessions, arrived: tokio::sync::Mutex::new(rx), accepting })))
+        Ok(Wire::Secured(Arc::new(Secured { sessions, arrived: tokio::sync::Mutex::new(rx), closing })))
     }
 
     pub async fn recv_from(&self, buffer: &mut [u8]) -> io::Result<(usize, SocketAddr)> {

@@ -114,3 +114,21 @@ async fn the_plain_protocol_gets_no_answer_on_an_encrypted_port() {
     assert!(timeout(Duration::from_millis(500), socket.recv(&mut buffer)).await.is_err(), "not a word");
     assert!(d.read().await.unwrap().iter().all(|r| !matches!(r, Reading::Value { metric, .. } if metric == "plain")));
 }
+
+#[tokio::test]
+async fn a_new_version_takes_over_the_port() {
+    let (d, port) = plant().await;
+    shake(port, "PRESS-1", the_key(), CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8).await.expect("it shook hands");
+    let bind = format!("127.0.0.1:{port}");
+    let definitions = BTreeMap::from([("devices".to_string(), format!("name: devices\nconnect: listen+coaps://{bind}\napi: device\nheaders: {{x: y}}\n"))]);
+    let credentials = Credentials { token: Some(hash(TOKEN.as_bytes())), ..Default::default() };
+    let link = DeviceLink { code: "PRESS-1".into(), definition: "devices".into(), credentials, ..Default::default() };
+    assert_eq!(d.apply(&definitions, &[link]), Vec::<String>::new());
+    for _ in 0..200 {
+        if d.links().iter().all(|l| l.up) && shake(port, "PRESS-1", the_key(), CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8).await.is_ok() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("the port was not free again: {:?}", d.links());
+}
