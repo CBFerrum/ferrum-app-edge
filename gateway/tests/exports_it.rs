@@ -159,7 +159,7 @@ async fn influx_stores_measurements() {
     let host = base.trim_start_matches("http://");
     let e = export(&format!("influx://{host}/?org=ferrum&bucket=readings"), None, Some("token"));
     sender().deliver(&e, &readings(3), &json!({"token": "ferrum-test-token"})).await.expect("written");
-    let flux = r#"from(bucket:"readings") |> range(start: 2026-11-02T00:00:00Z) |> filter(fn: (r) => r._measurement == "temp.c") |> count()"#;
+    let flux = r#"from(bucket:"readings") |> range(start: 2026-11-01T00:00:00Z, stop: 2036-01-01T00:00:00Z) |> filter(fn: (r) => r._measurement == "temp.c") |> count()"#;
     let answer = reqwest::Client::new()
         .post(format!("{base}/api/v2/query?org=ferrum"))
         .header("authorization", "Token ferrum-test-token")

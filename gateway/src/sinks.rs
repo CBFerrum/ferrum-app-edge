@@ -191,7 +191,7 @@ pub async fn amqp(url: &Url, key: &str, bodies: &[String], secret: Option<&str>)
     tuned.extend(0u16.to_be_bytes());
     a.send(METHOD, 0, &tuned).await?;
     let mut open = method(10, 40);
-    short(&mut open, url.path().trim_start_matches('/').split('/').next().filter(|v| !v.is_empty()).unwrap_or("/"));
+    short(&mut open, &decoded(url.path().trim_start_matches('/').split('/').next().filter(|v| !v.is_empty()).unwrap_or("/")));
     short(&mut open, "");
     open.push(0);
     a.send(METHOD, 0, &open).await?;
@@ -355,6 +355,25 @@ fn keys(secret: Option<&str>) -> Result<(&str, &str), String> {
 
 fn region_of(url: &Url) -> Result<String, String> {
     query(url, "region").or_else(|| url.host_str()?.split('.').nth(1).map(str::to_string)).ok_or_else(|| "say ?region=".into())
+}
+
+/// A part of an address with its escapes undone: a vhost is often `%2F`.
+fn decoded(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let (mut out, mut i) = (Vec::with_capacity(bytes.len()), 0);
+    while i < bytes.len() {
+        match bytes.get(i + 1..i + 3).filter(|_| bytes[i] == b'%').and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok()) {
+            Some(byte) => {
+                out.push(byte);
+                i += 3;
+            }
+            None => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn encoded(text: &str) -> String {
@@ -719,6 +738,13 @@ pub use kafka::Kafka;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_escape_in_an_address_is_undone() {
+        assert_eq!(decoded("%2F"), "/");
+        assert_eq!(decoded("plant"), "plant");
+        assert_eq!(decoded("a%2"), "a%2", "half an escape is not one");
+    }
 
     #[test]
     fn names_become_a_subject() {
