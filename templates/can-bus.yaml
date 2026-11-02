@@ -1,0 +1,6 @@
+# about: CAN frames through an external driver: each an event, and a command to send one.
+# group: Devices
+# drivers/can_bridge.py goes in the site's drivers_dir. It needs python-can, and has run on its virtual
+# bus only.
+name: can-bus
+connect: process://can_bridge.py socketcan can0 VEHICLE-1

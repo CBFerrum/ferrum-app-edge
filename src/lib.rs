@@ -13,7 +13,8 @@
 //! * [`reports`]: availability, alarms and readings on paper;
 //! * [`schedules`]: asking devices for something by the clock;
 //! * [`site`]: the HTTP endpoints;
-//! * [`templates`]: definitions to start from.
+//! * [`templates`]: definitions to start from;
+//! * [`twins`]: a device as a twin, a Thing Description and an Asset Administration Shell.
 //!
 //! Commands, identity, telemetry and authority are Operations'. This adds how devices are described
 //! and looked after. Rules raise alarms and move nothing: anything physical goes through the ledger.
@@ -31,6 +32,7 @@ pub mod reports;
 pub mod schedules;
 pub mod site;
 pub mod templates;
+pub mod twins;
 
 use async_trait::async_trait;
 use ferrum_domain::reports::ReportSource;

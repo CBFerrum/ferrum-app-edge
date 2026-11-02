@@ -1,0 +1,8 @@
+# about: A historian or a results database, read by a query now and then.
+# group: Files
+# Rows arrive under the query's own text, one at a time with each. It only reads. Other databases, by
+# an external driver.
+name: sql-source
+connect: postgres://reader:{secret.db}@historian/plant
+tags:
+  - {node: "select line, sum(pieces) as pieces from output where day = current_date group by line", every: 5m, each: $.value, device: "{each.line}", metric: pieces.today, json: $.pieces}

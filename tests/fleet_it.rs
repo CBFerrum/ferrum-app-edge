@@ -193,6 +193,19 @@ async fn scenario() {
     assert!(run_report("edge_readings", &[]).await.is_err(), "it has to know which");
     assert!(run_report("nothing", &[]).await.is_err());
 
+    // ───── as others describe a device ─────
+    let twin = t.get(&viewer, &format!("/devices/{press1}/twin"), json!({})).await.unwrap();
+    assert_eq!(twin["attributes"]["limit"]["desired"], 80);
+    assert_eq!(twin["attributes"]["limit"]["in_step"], false, "it has been asked, and has not said so yet");
+    assert_eq!(twin["operations"], json!(["fan.start", "set.limit"]));
+    let td = t.get(&viewer, &format!("/devices/{press1}/td"), json!({})).await.unwrap();
+    assert_eq!(td["@context"][0], "https://www.w3.org/2022/wot/td/v1.1");
+    assert!(td["properties"]["limit"]["forms"].is_array(), "{td}");
+    assert!(td["actions"]["fan.start"]["forms"][0]["href"].is_string());
+    let shell = t.get(&viewer, &format!("/devices/{press1}/aas"), json!({})).await.unwrap();
+    assert_eq!(shell["assetAdministrationShells"][0]["idShort"], "PRESS_1");
+    assert_eq!(shell["submodels"][0]["idShort"], "OperationalData");
+
     // ───── how it stands ─────
     let now = Utc::now();
     telemetry::ensure_partitions(&t.k, now).await.unwrap();
