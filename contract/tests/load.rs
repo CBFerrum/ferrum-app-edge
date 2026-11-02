@@ -1,5 +1,5 @@
 //! How fast the two hot paths go, for `docs/compatibility.md`. Run on purpose, in release:
-//! `cargo test --release -p ferrum-ops-contract --test load -- --ignored --nocapture`.
+//! `cargo test --release -p ferrum-edge-contract --test load -- --ignored --nocapture`.
 //! This is decoding and deciding alone, on whatever machine runs it. It says what these two cost,
 //! not what a gateway sustains: that depends on its disk and its network, and is not measured here.
 

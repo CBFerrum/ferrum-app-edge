@@ -1,4 +1,4 @@
-// What a flow is, as the canvas sees it. The node kinds mirror `ferrum_ops_contract::flow`, which is
+// What a flow is, as the canvas sees it. The node kinds mirror `ferrum_edge_contract::flow`, which is
 // what decides whether a flow is any good: this only helps a person draw one.
 
 export interface FlowNode {
