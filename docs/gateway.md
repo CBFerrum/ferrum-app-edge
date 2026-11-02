@@ -119,6 +119,18 @@ with nothing running, checks the file against the signed hash, keeps the old bin
 and restarts. A new build that keeps dying before it has spoken to the platform is put back, and that
 version is refused from then on.
 
+To make one, tag this repository `v0.3.0`: CI builds `ferrum-site` for 64-bit Intel and ARM Linux and
+attaches them to a GitHub release, with their hashes. CI holds no key, because a release is a person's to
+sign:
+
+```
+ferrum-site release-key > release.key     # once: public goes in update_keys, secret stays off every gateway
+ferrum-site sign --key secret.txt --version 0.3.0 --url https://…/ferrum-site --file ferrum-site --days 90
+```
+
+`sign` prints the version, hash, signature and expiry for the Edge Release. Keep the secret half on a
+machine that is not a gateway, in a file holding only it.
+
 **Robot, PLC and safety firmware stay with their makers' procedures**; nothing here touches them.
 
 ## Boxes in cabinets

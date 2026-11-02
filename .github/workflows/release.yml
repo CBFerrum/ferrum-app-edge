@@ -1,0 +1,47 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, arch: x86_64}
+          - {runner: ubuntu-24.04-arm, arch: aarch64}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check the tag says what the code says
+        run: |
+          version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          test "${GITHUB_REF_NAME}" = "v${version}"
+      - run: cargo build --release --locked -p ferrum-site --bin ferrum-site
+      - name: Name it for what it runs on
+        run: |
+          mkdir out
+          cp target/release/ferrum-site "out/ferrum-site-${{ matrix.arch }}-linux"
+          (cd out && sha256sum "ferrum-site-${{ matrix.arch }}-linux" > "ferrum-site-${{ matrix.arch }}-linux.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ferrum-site-${{ matrix.arch }}
+          path: out/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: out
+      - name: Publish the files, unsigned. A person signs each with `ferrum-site sign`, and no key is here.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" out/* --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --notes "See CHANGELOG.md. Sign before rolling out."

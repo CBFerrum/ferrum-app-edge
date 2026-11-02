@@ -203,6 +203,28 @@ async fn scenario() {
     assert!(td["properties"]["limit"]["forms"].is_array(), "{td}");
     assert!(td["actions"]["fan.start"]["forms"][0]["href"].is_string());
     let shell = t.get(&viewer, &format!("/devices/{press1}/aas"), json!({})).await.unwrap();
+    // The same as a repository, by the ids AAS Part 2 puts in a path.
+    use base64::Engine;
+    let encoded = |id: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(id);
+    let by_path = t.get(&viewer, &format!("/aas/shells/{}", encoded(shell["assetAdministrationShells"][0]["id"].as_str().unwrap())), json!({})).await.unwrap();
+    assert_eq!(by_path, shell["assetAdministrationShells"][0]);
+    let submodel = t.get(&viewer, &format!("/aas/submodels/{}", encoded(shell["submodels"][0]["id"].as_str().unwrap())), json!({})).await.unwrap();
+    assert_eq!(submodel, shell["submodels"][0]);
+    let shells = t.get(&viewer, "/aas/shells", json!({})).await.unwrap();
+    assert!(shells["result"].as_array().unwrap().iter().any(|s| s["id"] == by_path["id"]));
+
+    // What a scanner saw, for whoever keeps an EPCIS repository.
+    t.fact(
+        north,
+        "edge.event",
+        Utc::now(),
+        json!({"device": press1, "name": "scan", "value": {"epc": "urn:epc:id:sgtin:0614141.107346.2018", "bizStep": "shipping"}}),
+    )
+    .await;
+    let document = t.get(&viewer, "/epcis/events", json!({})).await.unwrap();
+    assert_eq!(document["type"], "EPCISDocument");
+    assert_eq!(document["epcisBody"]["eventList"].as_array().unwrap().len(), 1, "only events that name an EPC: {document}");
+    assert_eq!(document["epcisBody"]["eventList"][0]["bizStep"], "shipping");
     assert_eq!(shell["assetAdministrationShells"][0]["idShort"], "PRESS_1");
     assert_eq!(shell["submodels"][0]["idShort"], "OperationalData");
 

@@ -14,6 +14,7 @@ use ed25519_dalek::SigningKey;
 use ferrum_site::config::Config;
 use ferrum_site::journal::Journal;
 use ferrum_site::{console, link, peer, relay, runtime::Runtime};
+use rand::RngCore;
 use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -147,6 +148,29 @@ fn restore(cfg: Config, from: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// A new pair for signing releases: the public half goes in `update_keys`, and the other stays with
+/// whoever signs, off every gateway.
+fn release_key() {
+    let mut secret = [0u8; 32];
+    rand::rng().fill_bytes(&mut secret);
+    let key = SigningKey::from_bytes(&secret);
+    println!("public {}", hex::encode(key.verifying_key().to_bytes()));
+    println!("secret {}", hex::encode(secret));
+}
+
+/// `sign --key file --version 0.3.0 --url https://… --file ferrum-site --days 90` says what to put in
+/// an Edge Release.
+fn sign_release(args: &[String]) -> Result<(), String> {
+    let needed = |name: &str| arg(args, name).ok_or_else(|| format!("{name} is required"));
+    let secret = std::fs::read_to_string(needed("--key")?).map_err(|e| format!("the key: {e}"))?;
+    let file = std::fs::read(needed("--file")?).map_err(|e| format!("the file: {e}"))?;
+    let days: i64 = arg(args, "--days").unwrap_or_else(|| "90".to_string()).parse().map_err(|_| "--days is a number")?;
+    let expires_at = chrono::Utc::now() + chrono::Duration::days(days);
+    let release = ferrum_site::update::sign(&secret, &needed("--version")?, &needed("--url")?, &file, expires_at)?;
+    println!("{}", serde_json::to_string_pretty(&release).map_err(|e| e.to_string())?);
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into())).init();
@@ -176,8 +200,13 @@ async fn main() {
             Err(e) => Err(e),
         },
         Some("key") => load(&args).and_then(|cfg| key_of(&cfg)).map(|key| println!("{}", hex::encode(key.verifying_key().to_bytes()))),
+        Some("release-key") => {
+            release_key();
+            Ok(())
+        }
+        Some("sign") => sign_release(&args),
         Some("check") => load(&args).and_then(|cfg| Journal::open(&cfg.journal_path()).map(|_| println!("ok")).map_err(|e| e.to_string())),
-        _ => Err("use run, enroll, backup, restore, check, relay or key".into()),
+        _ => Err("use run, enroll, backup, restore, check, relay, key, release-key or sign".into()),
     };
     if let Err(e) = outcome {
         eprintln!("ferrum-site: {e}");
