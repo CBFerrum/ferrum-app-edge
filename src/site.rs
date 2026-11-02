@@ -21,6 +21,8 @@
 //! | `GET /devices/{id}/connection` | Edge Viewer | how it connects: addresses and which proofs it has, and no secrets |
 //! | `POST /devices/{id}/credentials` | Edge Engineer | `{kind: token}`, `{kind: password, client_id?, username?}` or `{kind: certificate, certificate}`: a secret is shown once |
 //! | `DELETE /devices/{id}/credentials` | Edge Engineer | `?kind=`: one way of proving who it is, or all of them |
+//! | `POST /definitions/{id}/provisioning` | Edge Engineer | a key and secret with which devices of this definition add themselves; the secret is shown once |
+//! | `DELETE /definitions/{id}/provisioning` | Edge Engineer | no more of that |
 //! | `POST /strangers/claim` | Edge Engineer | `{gateway, code, name?, definition?}`: a device heard on a shared connection becomes a record |
 //! | `POST /alarms/{id}/acknowledge` | Edge Engineer | `{note?}` |
 //! | `GET /robots` | Edge Viewer | robots, where each is and what it is doing |
@@ -320,6 +322,27 @@ async fn revoke(k: &Kernel, ctx: &Ctx, id: Uuid, kind: Option<&str>) -> Result<V
     Ok(json!({"revoked": true}))
 }
 
+/// Lets devices of a definition add themselves, with a key and secret every one of them holds, or
+/// stops that. The secret is shown once.
+async fn allow_joining(k: &Kernel, ctx: &Ctx, id: Uuid, allow: bool) -> Result<Value> {
+    let (key, secret) = (allow.then(new_secret), allow.then(new_secret));
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let done = sqlx::query("update e_device_definition set provision_key = $3, provision_hash = $4 where tenant_id = $1 and id = $2")
+        .bind(ctx.tenant)
+        .bind(id)
+        .bind(&key)
+        .bind(secret.as_deref().map(token_hash))
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if done == 0 {
+        return Err(Error::NotFound("definition".into()));
+    }
+    audit::record(&mut tx, ctx, "DeviceDefinition", id, if allow { "edge.joining_allowed" } else { "edge.joining_stopped" }, None, json!({})).await?;
+    tx.commit().await?;
+    Ok(json!({"key": key, "secret": secret}))
+}
+
 /// How a device connects, for a person setting one up. No secret is in here.
 async fn connection(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
@@ -563,6 +586,14 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
         ("POST", ["devices", id, "token"]) => {
             may(ctx, ENGINEER)?;
             new_token(k, ctx, uuid(id)?).await?
+        }
+        ("POST", ["definitions", id, "provisioning"]) => {
+            may(ctx, ENGINEER)?;
+            allow_joining(k, ctx, uuid(id)?, true).await?
+        }
+        ("DELETE", ["definitions", id, "provisioning"]) => {
+            may(ctx, ENGINEER)?;
+            allow_joining(k, ctx, uuid(id)?, false).await?
         }
         ("GET", ["devices", id, "connection"]) => {
             may(ctx, READ)?;

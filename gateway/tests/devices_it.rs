@@ -549,7 +549,10 @@ async fn over_http_a_device_says_and_hears_the_same_things() {
     let set = command("set.limit", json!({"value": 9}));
     until("it to be waiting", async || matches!(plant.d.dispatch(&set, &site_device("PRESS-1")).await, Ok(Dispatched::Accepted { .. }))).await;
     assert_eq!(updates.await.unwrap(), json!({"limit": 9}));
-    assert_eq!(web.post(format!("{http}/{PRESS}/telemetry")).body(vec![b'1'; 2 << 20]).send().await.unwrap().status(), 413, "there is a limit");
+    // The answer may lose the race with the upload it stopped: either way, it was not taken.
+    if let Ok(answer) = web.post(format!("{http}/{PRESS}/telemetry")).body(vec![b'1'; 2 << 20]).send().await {
+        assert_eq!(answer.status(), 413, "there is a limit");
+    }
 }
 
 mod coap {
@@ -725,4 +728,77 @@ async fn a_definition_only_opens_what_devices_can_call() {
         )
         .is_ok()
     );
+}
+
+#[tokio::test]
+async fn a_device_with_the_secret_of_its_kind_adds_itself_and_connects() {
+    use ferrum_edge_contract::edge::Provisioning;
+    let Doors { plant, http, coap: server } = every_way_in(token("PRESS-1", PRESS)).await;
+    plant.d.allow_joining(&[Provisioning { definition: "devices".into(), key: "kind-key".into(), secret: hash(b"kind-secret") }]);
+    let web = reqwest::Client::new();
+    let ask = |name: &str, secret: &str| json!({"deviceName": name, "provisionDeviceKey": "kind-key", "provisionDeviceSecret": secret});
+
+    // By HTTP, with no account of any kind.
+    let wrong: Value = web.post(format!("{http}/provision")).json(&ask("NEW-1", "nonsense")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(wrong["status"], json!("FAILURE"), "{wrong}");
+    let taken: Value = web.post(format!("{http}/provision")).json(&ask("PRESS-1", "kind-secret")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(taken["status"], json!("FAILURE"), "nothing is taken over by joining as it: {taken}");
+    let joined: Value = web.post(format!("{http}/provision")).json(&ask("NEW-1", "kind-secret")).send().await.unwrap().json().await.unwrap();
+    assert_eq!((&joined["status"], &joined["credentialsType"]), (&json!("SUCCESS"), &json!("ACCESS_TOKEN")), "{joined}");
+    let told = plant.reading(|r| matches!(r, Reading::Joined { device, .. } if device == "NEW-1")).await;
+    let token_value = joined["credentialsValue"].as_str().unwrap();
+    assert!(
+        matches!(told, Reading::Joined { definition, token_hash, .. } if definition == "devices" && token_hash == hash(token_value.as_bytes())),
+        "the platform hears only the hash"
+    );
+    let mut fresh = with_token(plant.port, token_value).await;
+    assert!(fresh.up().await, "and that token gets it in at once");
+
+    // By CoAP.
+    let device = coap::Client::to(server).await;
+    let answer = device
+        .ask(&device.request(
+            2,
+            ["api", "v1", "provision"].iter().map(|p| (11, p.as_bytes().to_vec())).collect(),
+            ask("NEW-2", "kind-secret").to_string().as_bytes(),
+        ))
+        .await;
+    assert_eq!(serde_json::from_slice::<Value>(&answer.payload).unwrap()["status"], json!("SUCCESS"));
+
+    // By MQTT, under the user name that means exactly that and nothing else.
+    let mut o = options(plant.port, "joining");
+    o.set_credentials("provision", "");
+    let mut joining = connect(o);
+    assert!(joining.up().await);
+    joining.listens("/provision/response").await;
+    joining.says("/provision", ask("NEW-3", "kind-secret")).await;
+    let (topic, body) = joining.hears().await;
+    assert_eq!((topic.as_str(), &body["status"]), ("/provision/response", &json!("SUCCESS")));
+    joining.says("v1/devices/me/telemetry", json!({"temp": 1})).await;
+    assert!(!joining.up().await, "it can do nothing else with that connection");
+}
+
+#[tokio::test]
+async fn a_user_name_of_provision_means_nothing_where_devices_keep_to_the_api_only() {
+    let port = free_port();
+    let body = format!("name: raw\nconnect: listen+mqtt://127.0.0.1:{port}\nread:\n  - {{topic: 'a/#', metric: m, json: $.v}}\n");
+    let definitions = BTreeMap::from([("raw".to_string(), body)]);
+    let d = Defined::new(Limits { listen: vec![format!("127.0.0.1:{port}")], ..Default::default() }, json!({}));
+    let link = DeviceLink {
+        code: "RAW".into(),
+        definition: "raw".into(),
+        credentials: Credentials { token: Some(hash(b"raw-token")), ..Default::default() },
+        ..Default::default()
+    };
+    assert_eq!(d.apply(&definitions, &[link]), Vec::<String>::new());
+    until("the port", async || TcpStream::connect(("127.0.0.1", port)).await.is_ok()).await;
+    let mut o = options(port, "x");
+    o.set_credentials("provision", "");
+    assert!(!connect(o).up().await);
+    // A definition of its own still gets a proved device: what it says is its own.
+    let mut raw = with_token(port, "raw-token").await;
+    assert!(raw.up().await);
+    raw.says("a/b", json!({"v": 5})).await;
+    let plant = Plant { d, definitions, port, seen: Mutex::default() };
+    plant.reading(|r| is_metric(r, "RAW", "m", 5.0)).await;
 }

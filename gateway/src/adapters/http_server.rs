@@ -65,8 +65,14 @@ async fn handle(State(s): State<Served>, req: Request) -> Response {
     let path = head.uri.path().trim_matches('/').to_string();
     let parts: Vec<&str> = path.split('/').collect();
     let ["api", "v1", token, rest @ ..] = parts.as_slice() else { return StatusCode::NOT_FOUND.into_response() };
-    let Some(device) = s.hub.who(&Proof { username: Some(token), ..Default::default() }) else { return StatusCode::UNAUTHORIZED.into_response() };
+    let joining = *token == "provision" && rest.is_empty() && head.method == Method::POST;
+    let device = s.hub.who(&Proof { username: Some(token), ..Default::default() });
+    // Who a caller is comes first, so that a stranger cannot make this read a megabyte for nothing.
+    if device.is_none() && !joining {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
     let Ok(body): Result<Bytes, _> = axum::body::to_bytes(body, MAX_BODY).await else { return StatusCode::PAYLOAD_TOO_LARGE.into_response() };
+    let Some(device) = device else { return json_of(StatusCode::OK, &s.hub.joining(&s.tx, &body).await) };
     let q = head.uri.query();
     let say = async |topic: &str, body: Vec<u8>| -> Response {
         if s.hub.said(&s.tx, &device, topic, body).await { StatusCode::OK.into_response() } else { StatusCode::SERVICE_UNAVAILABLE.into_response() }

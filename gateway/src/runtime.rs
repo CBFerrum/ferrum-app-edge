@@ -119,6 +119,8 @@ pub struct Runtime {
     last_state: Mutex<HashMap<String, String>>,
     last_attribute: Mutex<HashMap<(Uuid, String), Value>>,
     defined: Arc<Defined>,
+    /// This gateway's device record, once the platform has said.
+    gateway: Mutex<Option<Uuid>>,
     rules: Mutex<Rules>,
     flows: Mutex<Vec<RunningFlow>>,
     flows_saved: AtomicI64,
@@ -195,6 +197,7 @@ impl Runtime {
             last_state: Mutex::default(),
             last_attribute: Mutex::default(),
             defined,
+            gateway: Mutex::new(None),
             rules: Mutex::default(),
             flows: Mutex::default(),
             flows_saved: AtomicI64::new(0),
@@ -242,6 +245,8 @@ impl Runtime {
             }
         }
         let mut problems = self.defined.apply(&definitions, &devices);
+        self.defined.allow_joining(&managed.provisioning);
+        *self.gateway.lock().unwrap_or_else(|e| e.into_inner()) = managed.gateway;
         problems.extend(self.start_flows(managed.flows));
         for p in &problems {
             tracing::warn!("{p}");
@@ -1030,6 +1035,11 @@ impl Runtime {
                     let _ = self.journal.add_fact(&fact);
                     self.feed(&flow::Input { device, attribute: Some(key), value, ..Default::default() }, devices, batch);
                 }
+            }
+            Reading::Joined { device, definition, token_hash } => {
+                let gateway = *self.gateway.lock().unwrap_or_else(|e| e.into_inner());
+                let body = json!({"code": device, "definition": definition, "token_hash": token_hash, "gateway": gateway});
+                let _ = self.journal.add_fact(&Fact { fact_id: Uuid::now_v7(), kind: "edge.joined".into(), at_source: self.clock.now(), actor: None, body });
             }
             Reading::Event { device, name, value } => {
                 let Some(d) = devices.get(&device) else { return };

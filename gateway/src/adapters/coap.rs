@@ -345,6 +345,11 @@ impl Served {
 
     async fn answer(&self, peer: SocketAddr, m: &Coap) -> Coap {
         let path = m.path();
+        if path == ["api", "v1", "provision"] && m.code == POST {
+            let mut answer = m.answer(CONTENT, self.hub.joining(&self.tx, &m.payload).await.to_string().into_bytes());
+            answer.options.push((CONTENT_FORMAT, uint(50)));
+            return answer;
+        }
         let ["api", "v1", token, rest @ ..] = path.as_slice() else { return m.answer(NOT_FOUND, Vec::new()) };
         let Some(device) = self.hub.who(&Proof { username: Some(token), ..Default::default() }) else { return m.answer(UNAUTHORIZED, Vec::new()) };
         let body = match m.option(BLOCK1) {
