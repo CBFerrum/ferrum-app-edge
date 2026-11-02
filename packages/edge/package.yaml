@@ -1,5 +1,5 @@
 package: edge
-version: 0.3.0
+version: 0.3.1
 label: IoT Edge
 description: Device definitions, edge rules and flows, alarms, exports and releases
 depends: [ops]
