@@ -233,7 +233,7 @@ export function DevicePage() {
     <div className="edge-page">
       <Tabs />
       <div className="edge-bar">
-        <Link className="btn btn-default" to={`/e/Device/${id}`}>
+        <Link className="btn btn-md" to={`/e/Device/${id}`}>
           Open the record
         </Link>
         {operations.length ? (

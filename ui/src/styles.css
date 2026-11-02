@@ -693,7 +693,7 @@ a.edge-row-main:hover strong {
 }
 
 /* Dashboards */
-.edge-board {
+.edge-tiles {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
 }
@@ -994,7 +994,7 @@ a.edge-row-main:hover strong {
 }
 
 @media (max-width: 720px) {
-  .edge-board {
+  .edge-tiles {
     display: flex;
     flex-direction: column;
   }
@@ -1078,4 +1078,9 @@ a.edge-row-main:hover strong {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+.edge-rows-left th,
+.edge-rows-left td {
+  text-align: left;
 }

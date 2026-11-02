@@ -554,7 +554,7 @@ export function FlowEditor() {
   const locked = doc?.status !== "Draft" || !writable;
   const { dialog } = useUnsavedGuard(dirty);
   const settled = useDebounced(text, 500);
-  const check = useQuery({ queryKey: ["edge", "flow-check", settled], queryFn: () => tryFlow(settled), enabled: flow.nodes.length > 0, staleTime: Infinity });
+  const check = useQuery({ queryKey: ["edge", "flow-check", settled], queryFn: () => tryFlow(settled), enabled: flow.nodes.length > 0 && settled === text, staleTime: Infinity });
   const [watched, setWatched] = useState<string | null>(null);
   const passed = useMemo(() => new Set(watched ? [watched] : (chosen?.trace.map((t) => t.node) ?? [])), [chosen, watched]);
 
@@ -844,7 +844,7 @@ function Watching({ doc, writable, chosen, choose }: { doc: FlowDoc; writable: b
       </p>
       {seen.length ? (
         <div className="edge-scroll">
-          <table className="edge-table">
+          <table className="edge-table edge-rows-left">
             <thead>
               <tr>
                 <th>When</th>
