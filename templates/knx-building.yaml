@@ -1,0 +1,18 @@
+# about: A KNX installation through a tunnelling interface: group addresses, as the bus says them.
+# group: Buildings
+# Addresses are examples, and the type says what each holds: it is not in the protocol.
+name: knx-building
+connect: knx://interface:3671
+subscribe:
+  - 1/2/3:dpt9
+  - 1/2/4:dpt1
+read:
+  - {topic: 1/2/3, metric: temp.c, json: $.value, unit: C}
+  - {topic: 1/2/4, state: true, json: $.value, map: {"true": "On", "false": "Off"}}
+poll:
+  - {every: 5m, node: "1/2/3:dpt9"}
+commands:
+  light.switch:
+    node: "1/2/5:dpt1"
+    send: "{payload.on}"
+    once: true

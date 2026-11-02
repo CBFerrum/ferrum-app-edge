@@ -38,6 +38,15 @@ async fn main() {
             tokio::time::sleep(Duration::from_secs(secs)).await;
             continue;
         }
+        if matches!(step.as_str(), "get" | "put" | "post" | "delete") {
+            let path = steps.next().expect("which path").clone();
+            let body = (step != "get" && step != "delete").then(|| steps.next().expect("what body").clone().into_bytes());
+            match link.send(Out::Http { method: step.to_uppercase(), path: path.clone(), body, headers: vec![] }).await {
+                Ok(Some(m)) => println!("{path} = {} bytes: {}", m.body.len(), String::from_utf8_lossy(&m.body).chars().take(80).collect::<String>()),
+                other => println!("{path}: {other:?}"),
+            }
+            continue;
+        }
         if step == "publish" {
             let topic = steps.next().expect("which topic").clone();
             let body = steps.next().expect("what body").clone().into_bytes();

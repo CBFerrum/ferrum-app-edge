@@ -7,7 +7,7 @@
 //! and a port to listen on only if `listen` names it. See [`Limits`].
 
 use crate::adapter::Failure;
-use crate::adapters::coap::CoapServer;
+use crate::adapters::coap::{CoapClient, CoapServer};
 use crate::adapters::http_server::HttpServer;
 use crate::adapters::hub::Hub;
 use crate::adapters::mqtt_server::MqttServer;
@@ -286,7 +286,13 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
         }),
         #[cfg(feature = "opcua")]
         "opcua" => Arc::new(super::opcua::Opcua::new(rest, subscribe, limits)?),
-        "s7" | "enip" | "ads" | "bacnet" | "snmp" => {
+        "coap" => {
+            let (host, port) = super::tags::host_port(rest, 5683);
+            Arc::new(CoapClient::new(format!("{host}:{port}"), subscribe))
+        }
+        "knx" => Arc::new(super::knx::Knx::new(rest, subscribe)),
+        "iec104" => Arc::new(super::iec104::Iec104::new(rest)),
+        "s7" | "enip" | "ads" | "bacnet" | "snmp" | "mbus" => {
             let (scheme, rest) = (scheme.to_string(), rest.to_string());
             Arc::new(super::tags::Tagged::new(move || {
                 let (scheme, rest) = (scheme.clone(), rest.clone());
@@ -296,6 +302,7 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
                         "enip" => super::enip::Enip::connect(&rest).await,
                         "ads" => super::ads::Ads::connect(&rest).await,
                         "bacnet" => super::bacnet::Bacnet::connect(&rest).await,
+                        "mbus" => super::mbus::Mbus::connect(&rest).await,
                         _ => super::snmp::Snmp::connect(&rest).await,
                     }
                 })
