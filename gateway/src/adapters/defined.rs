@@ -1,4 +1,4 @@
-//! Equipment reached by a definition (`ferrum_ops_contract::driver`): one engine, any protocol it
+//! Equipment reached by a definition (`ferrum_edge_contract::driver`): one engine, any protocol it
 //! can describe. Each distinct address is one [`Link`], which stays connected, polls, and turns what
 //! arrives into readings. Several devices can share a link, as they share a broker.
 //!
@@ -12,8 +12,8 @@ use crate::adapter::{Adapter, Dispatched, Failure, Observation, Reading};
 use crate::adapters::transport::{self, Limits, Message, Out, Transport};
 use async_trait::async_trait;
 use chrono::Utc;
-use ferrum_ops_contract::driver::{self, Compiled, Decoded, Ending, Format, Memory, Step, render, render_json};
-use ferrum_ops_contract::edge::DeviceLink;
+use ferrum_edge_contract::driver::{self, Compiled, Decoded, Ending, Format, Memory, Step, render, render_json};
+use ferrum_edge_contract::edge::DeviceLink;
 use ferrum_ops_contract::telemetry::Class;
 use ferrum_ops_contract::{Command, sync::SiteDevice};
 use serde::Serialize;
@@ -132,7 +132,7 @@ fn outgoing(step: &Step, vars: &Value, expires: Option<u32>) -> Result<Out, Stri
         });
     }
     let body = match (&step.send, &step.hex) {
-        (Some(b), _) if step.format == Some(Format::Sparkplug) => ferrum_ops_contract::sparkplug::encode(&render_json(b, vars)?)?,
+        (Some(b), _) if step.format == Some(Format::Sparkplug) => ferrum_edge_contract::sparkplug::encode(&render_json(b, vars)?)?,
         (Some(b), _) => body_of(b, vars)?,
         (None, Some(h)) => hex::decode(render(h, vars)?.replace(' ', "")).map_err(|e| e.to_string())?,
         (None, None) => Vec::new(),

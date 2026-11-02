@@ -8,7 +8,7 @@
 //!   bad one costs a little time and cannot hang a gateway.
 //! * It cannot move anything. The strongest thing a flow can do is ask for a command, which goes
 //!   through the same ledger as a person's: commissioned operations, authority, approval or an
-//!   automation envelope. Safety functions do not belong here (`docs/edge-flows.md`).
+//!   automation envelope. Safety functions do not belong here (`docs/flows.md`).
 //!
 //! Pure: this checks and evaluates. The same code simulates a flow on the platform and runs it at
 //! the site, so what a reviewer saw is what runs.

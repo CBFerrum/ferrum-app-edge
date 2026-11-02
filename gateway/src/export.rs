@@ -5,7 +5,7 @@
 
 use crate::adapter::Failure;
 use crate::adapters::transport::{self, Limits, Message, Out, Transport};
-use ferrum_ops_contract::edge::Export;
+use ferrum_edge_contract::edge::Export;
 use hmac::{Hmac, Mac};
 use serde_json::Value;
 use sha2::Sha256;

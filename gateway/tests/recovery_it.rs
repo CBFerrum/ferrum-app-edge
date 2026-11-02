@@ -85,11 +85,11 @@ async fn world() -> World {
     sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
     let mut packages = ferrum_domain::packages().unwrap();
     packages.extend(ferrum_ops::packages().unwrap());
-    packages.extend(ferrum_edge::packages().unwrap());
+    packages.extend(ferrum_app_edge::packages().unwrap());
     let mut hooks = HookRegistry::default();
     ferrum_domain::register(&mut hooks);
     hooks.scoped(&["ops".to_string()], ferrum_ops::register);
-    hooks.scoped(&["edge".to_string()], ferrum_edge::register);
+    hooks.scoped(&["edge".to_string()], ferrum_app_edge::register);
     let k = Kernel::boot(db, Catalog::from_packages(packages).unwrap(), hooks, KernelSettings::default(), None).await.expect("boot");
     let p = Arc::new(Platform { k, down: AtomicBool::new(false) });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

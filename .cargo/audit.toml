@@ -1,0 +1,16 @@
+# Advisories reviewed and accepted. Each has its owner, reasoning and review date in
+# docs/advisories.yaml, which CI checks against this list. Re-check when dependencies change.
+[advisories]
+ignore = [
+  # rsa and crypto-bigint come with the platform's crates, which this app builds on, through
+  # jsonwebtoken's RSA/ECDSA support. A gateway links neither: it depends on the contracts alone.
+  "RUSTSEC-2023-0071",
+  "RUSTSEC-2026-0387",
+  # rustls-webpki 0.102 arrives through rumqttc, which uses only its error type. Certificates are
+  # checked by rustls, through the current rustls-webpki.
+  "RUSTSEC-2026-0049",
+  "RUSTSEC-2026-0098",
+  "RUSTSEC-2026-0099",
+  "RUSTSEC-2026-0104",
+  "RUSTSEC-2026-0382",
+]

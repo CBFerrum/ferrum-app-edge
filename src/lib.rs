@@ -1,4 +1,4 @@
-//! IoT Edge (docs/plan/edge.md): equipment reached by definitions, through gateways that keep
+//! IoT Edge (Ferrum docs/plan/edge.md): equipment reached by definitions, through gateways that keep
 //! working on their own.
 //!
 //! * [`config`]: what each gateway should be, worked out from the records;
@@ -58,7 +58,7 @@ impl DocHook for DefinitionHook {
     }
 
     async fn validate_change(&self, _hc: &mut HookCtx<'_>, _old: Option<&Doc>, doc: &Doc) -> Result<()> {
-        ferrum_ops::contract::driver::parse(s(doc, "body").unwrap_or_default()).map(drop).map_err(|why| Error::field("body", why))
+        ferrum_edge_contract::driver::parse(s(doc, "body").unwrap_or_default()).map(drop).map_err(|why| Error::field("body", why))
     }
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, _params: &Value) -> Result<Option<Value>> {
@@ -68,7 +68,7 @@ impl DocHook for DefinitionHook {
         let record = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let body = s(doc, "body").unwrap_or_default();
         let revision = doc.get("revision").and_then(Value::as_i64).unwrap_or(0) + 1;
-        ferrum_ops::contract::driver::parse(body).map_err(|why| Error::field("body", why))?;
+        ferrum_edge_contract::driver::parse(body).map_err(|why| Error::field("body", why))?;
         let mut values = Doc::new();
         values.insert("published_body".into(), json!(body));
         values.insert("revision".into(), json!(revision));
@@ -152,7 +152,7 @@ impl DocHook for FlowHook {
         let body = s(doc, "body").unwrap_or_default().to_string();
         let me = hc.ctx.email.clone();
         let now = chrono::Utc::now().to_rfc3339();
-        let parsed = |body: &str| ferrum_ops::contract::flow::parse(body).map_err(|why| Error::field("body", why));
+        let parsed = |body: &str| ferrum_edge_contract::flow::parse(body).map_err(|why| Error::field("body", why));
         let mut values = Doc::new();
         match name {
             "submit_for_review" => {

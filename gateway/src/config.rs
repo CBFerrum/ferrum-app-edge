@@ -1,7 +1,7 @@
 //! A site's own configuration: what only the site knows, such as addresses on its own network and
 //! their secrets. What each device may be asked comes from the platform.
 
-use ferrum_ops_contract::edge::DeviceLink;
+use ferrum_edge_contract::edge::DeviceLink;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

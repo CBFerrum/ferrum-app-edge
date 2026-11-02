@@ -1,4 +1,4 @@
-# A site with a simulated fleet, for rehearsal. See docs/site-runtime.md.
+# A site with a simulated fleet, for rehearsal. See docs/gateway.md.
 server: https://erp.example.com
 tenant: your-workspace
 state_dir: /var/lib/ferrum-site

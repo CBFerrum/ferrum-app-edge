@@ -4,7 +4,7 @@
 //! device is a few lines of YAML, reviewed and versioned like any record, and the platform can check
 //! one and try it on a sample with no device attached. What cannot be said this way (a vendor's SDK,
 //! a protocol with a session of its own) runs as a process of its own and speaks JSON lines
-//! (`docs/edge-definitions.md`).
+//! (`docs/definitions.md`).
 //!
 //! ```yaml
 //! name: acme-scale

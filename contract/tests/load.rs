@@ -1,11 +1,11 @@
-//! How fast the two hot paths go, for `docs/limits.md`. Run on purpose, in release:
+//! How fast the two hot paths go, for `docs/compatibility.md`. Run on purpose, in release:
 //! `cargo test --release -p ferrum-ops-contract --test load -- --ignored --nocapture`.
 //! This is decoding and deciding alone, on whatever machine runs it. It says what these two cost,
 //! not what a gateway sustains: that depends on its disk and its network, and is not measured here.
 
 use chrono::{TimeDelta, Utc};
-use ferrum_ops_contract::driver::{self, Memory};
-use ferrum_ops_contract::{flow, sparkplug};
+use ferrum_edge_contract::driver::{self, Memory};
+use ferrum_edge_contract::{flow, sparkplug};
 use serde_json::json;
 use std::time::{Duration, Instant};
 

@@ -2,8 +2,8 @@
 //! content, so an unchanged configuration costs one short answer.
 
 use chrono::{DateTime, Utc};
+use ferrum_edge_contract::edge::{Comparison, DeviceLink, EdgeConfig, Export, FlowSpec, Release, Rule};
 use ferrum_kernel::{Result, Tx};
-use ferrum_ops::contract::edge::{Comparison, DeviceLink, EdgeConfig, Export, FlowSpec, Release, Rule};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;

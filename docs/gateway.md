@@ -8,7 +8,8 @@ simulator first.
 
 ## Install
 
-Build or take `ferrum-site` for the gateway, then:
+Build `ferrum-site` from this repository for the gateway's architecture (`cargo build --release --locked -p
+ferrum-site`, with `--no-default-features` and the features you want to leave protocols out), then:
 
 ```bash
 sudo useradd --system --home /var/lib/ferrum-site --create-home ferrum-site
@@ -16,8 +17,8 @@ sudo install -d -o ferrum-site -m 0750 /var/lib/ferrum-site/bin
 sudo install -o ferrum-site -m 0755 ferrum-site /var/lib/ferrum-site/bin/
 sudo ln -sf /var/lib/ferrum-site/bin/ferrum-site /usr/local/bin/ferrum-site
 sudo install -d -o ferrum-site -m 0750 /etc/ferrum-site
-sudo install -m 0640 -g ferrum-site deploy/site/site.yaml /etc/ferrum-site/
-sudo install -m 0644 deploy/site/ferrum-site.service /etc/systemd/system/
+sudo install -m 0640 -g ferrum-site deploy/site.yaml /etc/ferrum-site/
+sudo install -m 0644 deploy/ferrum-site.service /etc/systemd/system/
 ```
 
 Edit `site.yaml`. Keep `state_dir` on storage that survives power loss and is encrypted at rest: it
@@ -146,7 +147,7 @@ budget runs out.
 
 ## A broker on site
 
-`deploy/site/mosquitto.conf` is a starting point for Mosquitto beside the runtime, for equipment that
+`deploy/mosquitto.conf` is a starting point for Mosquitto beside the runtime, for equipment that
 publishes to the gateway itself. It runs as its own process, so a fault in either leaves the other
-standing. `deploy/site/docker-compose.yml` runs an anonymous, local one for rehearsing. A real one
+standing. `deploy/docker-compose.yml` runs an anonymous, local one for rehearsing. A real one
 needs TLS, users and access lists.

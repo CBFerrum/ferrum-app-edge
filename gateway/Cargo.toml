@@ -4,6 +4,7 @@ description = "The site runtime: keeps physical work going next to the equipment
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 default-run = "ferrum-site"
 
 [lib]
@@ -23,7 +24,8 @@ opcua = ["dep:async-opcua"]
 failpoints = []
 
 [dependencies]
-ferrum-ops-contract = { path = "../ops-contract" }
+ferrum-ops-contract = { workspace = true }
+ferrum-edge-contract = { workspace = true }
 async-opcua = { version = "0.19", optional = true, default-features = false, features = ["client"] }
 async-trait = { workspace = true }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
@@ -52,11 +54,11 @@ uuid = { workspace = true }
 [dev-dependencies]
 rumqttd = { version = "0.20", default-features = false }
 async-opcua = { version = "0.19", default-features = false, features = ["client", "server"] }
-ferrum-domain = { path = "../domain" }
-ferrum-edge = { path = "../edge" }
-ferrum-kernel = { path = "../kernel" }
-ferrum-meta = { path = "../meta" }
-ferrum-ops = { path = "../ops" }
+ferrum-app-edge = { path = ".." }
+ferrum-domain = { workspace = true }
+ferrum-kernel = { workspace = true }
+ferrum-meta = { workspace = true }
+ferrum-ops = { workspace = true }
 sqlx = { workspace = true }
 
 [lints]

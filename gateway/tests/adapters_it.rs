@@ -4,8 +4,8 @@
 //! adapter speaks the protocol, not that any vendor's device agrees (docs/compatibility.md).
 
 use chrono::{Duration, Utc};
+use ferrum_edge_contract::edge::DeviceLink;
 use ferrum_ops_contract::Command;
-use ferrum_ops_contract::edge::DeviceLink;
 use ferrum_ops_contract::sync::SiteDevice;
 use ferrum_site::adapter::{Adapter, Dispatched, Failure, Observation, Reading};
 use ferrum_site::adapters::defined::Defined;

@@ -25,7 +25,7 @@ earned per device model and firmware. None is held yet.
 | Cancellation | Immediate | The person is told | A request on its topic, confirmed only by a status | `cancelOrder`, confirmed only by state | Refused. Stop it at the machine: a stop over Modbus would look like one without being one |
 | Retry | Never automatic | Never automatic | Never automatic | Never automatic | Never automatic |
 | After a crash | Asks the file, or with `cannot_find` it cannot ask | The task is still there | Cannot ask. The outcome is unknown until a status arrives | Cannot ask. Unknown until `state` names the order | Cannot ask. Unknown until the status register says |
-| Tested by | `crates/site/tests/recovery_it.rs`, killing the real binary | The same | `crates/site/tests/adapters_it.rs`, real sockets against a stand-in broker | The same, against a stand-in broker | The same, against a stand-in controller |
+| Tested by | `gateway/tests/recovery_it.rs`, killing the real binary | The same | `gateway/tests/adapters_it.rs`, real sockets against a stand-in broker | The same, against a stand-in broker | The same, against a stand-in controller |
 | Not tested | | | Any real broker under load, TLS, reconnect storms | Any vehicle, any master control, any vendor simulator | Any controller, any gateway, word order on real devices |
 | Excluded | Nothing physical happens | | Sparkplug B, which a definition reads | Interaction with a vehicle's own safety; instant actions beyond cancel | Generating controller logic. Coils and registers not named |
 | Maintainer | Ferrum | Ferrum | Ferrum | Ferrum | Ferrum |
@@ -33,16 +33,16 @@ earned per device model and firmware. None is held yet.
 
 ## Definitions
 
-A definition is an adapter written as data ([guide](edge-definitions.md)), so its promises are one
+A definition is an adapter written as data ([guide](definitions.md)), so its promises are one
 engine's, and what varies is the transport underneath. All of these are *Customer validation
-required* per device model, and the templates in `crates/edge/templates` are starts, not support.
+required* per device model, and the templates in `templates` are starts, not support.
 
 | Transport | Tried against | Not tried |
 |---|---|---|
-| TCP, UDP, serial, HTTP, WebSocket | Real sockets and a pseudo-terminal, with stand-ins (`crates/site/tests/adapters_it.rs`) | Real serial hardware, RS-485 timing, any vendor's device |
+| TCP, UDP, serial, HTTP, WebSocket | Real sockets and a pseudo-terminal, with stand-ins (`gateway/tests/adapters_it.rs`) | Real serial hardware, RS-485 timing, any vendor's device |
 | MQTT 5 | rumqttd 0.20 and a stand-in. TLS is not exercised | Mosquitto, EMQX, HiveMQ, reconnect storms, MQTT 3.1.1 brokers |
 | Modbus TCP and RTU | A stand-in controller, and a stand-in on a pseudo-terminal with two units | Any PLC, a real RS-485 bus, CRC errors on the line |
-| OPC UA | async-opcua 0.19's own server: None, and Basic256Sha256 with SignAndEncrypt, users, and server trust by certificate (`crates/site/tests/protocols_it.rs`) | Any commercial server, a certified stack, certificates issued by a plant authority |
+| OPC UA | async-opcua 0.19's own server: None, and Basic256Sha256 with SignAndEncrypt, users, and server trust by certificate (`gateway/tests/protocols_it.rs`) | Any commercial server, a certified stack, certificates issued by a plant authority |
 | Sparkplug B | Payloads from this repository's own encoder, checked against a hand-worked byte sequence | Any real edge node or host. It is not a primary host |
 | MTConnect | A document shaped like an agent's | A real agent or machine tool |
 | Listeners and webhooks | Real sockets | Load, and devices that reconnect abruptly |
@@ -57,7 +57,7 @@ required* per device model, and the templates in `crates/edge/templates` are sta
 | MiR | Public knowledge of its REST API | No robot. No copy of the vendor's documentation was read |
 | Universal Robots dashboard | The driver's documentation of the dashboard client | No arm |
 
-Measured on an Apple M1 Pro, in release, with `crates/ops-contract/tests/load.rs`: decoding alone,
+Measured on an Apple M1 Pro, in release, with `contract/tests/load.rs`: decoding alone,
 369,000 JSON messages a second with three values each, 1,040,000 Modbus reads, 12,000 Sparkplug
 messages of twenty metrics, and 269,000 readings a second through a five-step flow. That is what those
 two steps cost. **What a gateway sustains is not measured**: it depends on its disk and network.

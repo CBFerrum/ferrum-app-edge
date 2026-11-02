@@ -1,16 +1,61 @@
+# IoT Edge (Ferrum docs/plan/edge.md): the app the platform compiles in (this crate: its manifest,
+# interface, packages and endpoints), the gateway that runs on location (gateway/, `ferrum-site`),
+# and what those two share with no I/O (contract/). The platform's crates come from Ferrum's main.
+[workspace]
+resolver = "3"
+members = [".", "contract", "gateway"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/CBFerrum/ferrum-app-edge"
+
+[workspace.dependencies]
+ferrum-kernel = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-meta = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-domain = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-calc = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-ops = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-ops-contract = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-edge-contract = { path = "contract" }
+rust_decimal = { version = "1.43", features = ["serde-with-str", "maths"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+sha2 = "0.10"
+hex = "0.4"
+uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
+tokio = { version = "1.45", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+tracing = "0.1"
+async-trait = "0.1"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "uuid", "chrono", "rust_decimal", "json", "migrate", "macros"] }
+
+[workspace.lints.clippy]
+# Deliberate patterns shared with the platform: sqlx row tuples, index-based maths, engine entry points.
+type_complexity = "allow"
+too_many_arguments = "allow"
+needless_range_loop = "allow"
+large_enum_variant = "allow"
+
 [package]
-name = "ferrum-edge"
+name = "ferrum-app-edge"
 description = "IoT Edge: devices described instead of programmed, gateways and their configuration, alarms, reported state and robots"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 build = "build.rs"
 
 [dependencies]
-ferrum-kernel = { path = "../kernel" }
-ferrum-meta = { path = "../meta" }
-ferrum-domain = { path = "../domain" }
-ferrum-ops = { path = "../ops" }
+ferrum-kernel = { workspace = true }
+ferrum-meta = { workspace = true }
+ferrum-domain = { workspace = true }
+ferrum-ops = { workspace = true }
+ferrum-edge-contract = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
@@ -28,3 +73,15 @@ tokio = { workspace = true }
 
 [lints]
 workspace = true
+
+[profile.dev]
+# Keep target/ small and builds fast; line tables are enough for backtraces.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = "debuginfo"

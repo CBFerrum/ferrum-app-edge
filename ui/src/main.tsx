@@ -1,4 +1,4 @@
-// IoT Edge's own interface at /edge/ (docs/plan/edge.md): gateways and what they reach, devices,
+// IoT Edge's own interface at /edge/ (Ferrum docs/plan/edge.md): gateways and what they reach, devices,
 // alarms, robots, definitions and flows, with the rest in the records frame's lists and forms.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
