@@ -1,0 +1,8 @@
+# about: Readings from a Kafka topic, keeping its place across restarts.
+# group: Messaging
+name: kafka-source
+connect: kafka://bus:9092
+subscribe:
+  - plant.press.temp
+read:
+  - {topic: plant.press.temp, metric: temp.c, json: $, unit: C}

@@ -623,9 +623,9 @@ commands:
     assert!(matches!(d.observe(&once, None).await.unwrap(), Observation::Completed(e) if e["proved"].as_str().unwrap().contains("nothing beyond")));
 
     // That closed the connection: it comes back by itself, and readings with it.
+    until("the reconnection", async || *served.lock().unwrap() >= 2).await;
     d.read().await.unwrap();
     reading(&d, |r| is_metric(r, "weight.kg", 12.5)).await;
-    assert!(*served.lock().unwrap() >= 2, "reconnected");
     let health = d.links();
     assert_eq!((health.len(), health[0].definition.as_str()), (1, "scale"));
     assert!(health[0].reconnects >= 1, "{health:?}");

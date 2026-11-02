@@ -81,7 +81,7 @@ jobs:
           SQL
       - name: Other people's libraries, to meet ours
         run: |
-          python3 -m venv /tmp/clients && /tmp/clients/bin/pip install --quiet ocpp==2.1.0 websockets
+          python3 -m venv /tmp/clients && /tmp/clients/bin/pip install --quiet ocpp==2.1.0 websockets asyncua==2.1.0
           curl -sSfL -o /tmp/leshan.jar https://repo1.maven.org/maven2/org/eclipse/leshan/leshan-demo-client/2.0.0-M16/leshan-demo-client-2.0.0-M16-jar-with-dependencies.jar
       - name: Wait for the brokers
         run: |

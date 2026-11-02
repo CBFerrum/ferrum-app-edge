@@ -4,6 +4,8 @@
 //! a receiver that cares uses `device`, `metric` and `at` as the key.
 
 use crate::adapter::Failure;
+#[cfg(feature = "opcua")]
+use crate::adapters::opcua_server::Published;
 use crate::adapters::transport::{self, Limits, Message, Out, Transport};
 use crate::sinks::{self, EdgeNode};
 use chrono::Utc;
@@ -42,6 +44,8 @@ pub struct Sender {
     http: reqwest::Client,
     brokers: Mutex<HashMap<String, Arc<dyn Transport>>>,
     edge_nodes: Mutex<HashMap<String, (Arc<dyn Transport>, Arc<EdgeNode>)>>,
+    #[cfg(feature = "opcua")]
+    servers: Mutex<HashMap<String, Arc<Published>>>,
     #[cfg(feature = "kafka")]
     kafka: sinks::Kafka,
     limits: Limits,
@@ -106,6 +110,31 @@ impl Sender {
         Ok((broker, node))
     }
 
+    /// A gateway as an OPC UA server, kept for as long as an export names it.
+    #[cfg(feature = "opcua")]
+    fn published(&self, url: &Url, secret: Option<&str>) -> Result<Arc<Published>, String> {
+        let bind = format!("{}:{}", url.host_str().unwrap_or_default(), url.port().unwrap_or(4840));
+        if !self.limits.listen.contains(&bind) {
+            return Err(format!("{bind} is not in this site's listen list"));
+        }
+        let mut servers = self.servers.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(found) = servers.get(url.as_str()) {
+            let Some(why) = found.ended() else { return Ok(found.clone()) };
+            servers.remove(url.as_str());
+            return Err(why);
+        }
+        let pki = self.limits.tls_dir.clone().unwrap_or_default().join("opcua-server");
+        let server = Arc::new(Published::start(url, secret, pki)?);
+        servers.insert(url.to_string(), server.clone());
+        Ok(server)
+    }
+
+    /// A port stays open only while an export says so.
+    #[cfg(feature = "opcua")]
+    pub fn keep_servers(&self, exports: &[Export]) {
+        self.servers.lock().unwrap_or_else(|e| e.into_inner()).retain(|to, _| exports.iter().any(|e| Url::parse(&e.to).is_ok_and(|u| u.as_str() == to)));
+    }
+
     /// A release's file.
     pub async fn fetch(&self, url: &str) -> Result<Vec<u8>, String> {
         let response = self.http.get(url).timeout(Duration::from_secs(600)).send().await.map_err(|e| e.to_string())?;
@@ -117,7 +146,8 @@ impl Sender {
 
     /// Delivers a batch of JSON measurements. Anything but a clear yes leaves it queued.
     pub async fn deliver(&self, export: &Export, bodies: &[String], secrets: &Value) -> Result<(), String> {
-        if !self.limits.reaches(&export.to) {
+        // A listener is the listen list's to allow, and nothing goes anywhere from it.
+        if !export.to.starts_with("listen+") && !self.limits.reaches(&export.to) {
             return Err(format!("{} is not in this site's allow list", export.to));
         }
         let secret = match &export.sign_with {
@@ -142,6 +172,11 @@ impl Sender {
             "sparkplug" | "sparkplugs" => {
                 let (broker, node) = self.edge_node(&url)?;
                 return node.send(broker.as_ref(), bodies).await;
+            }
+            #[cfg(feature = "opcua")]
+            "listen+opcua" => {
+                self.published(&url, secret)?.update(bodies);
+                return Ok(());
             }
             _ => {}
         }
