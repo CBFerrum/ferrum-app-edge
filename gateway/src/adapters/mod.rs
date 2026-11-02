@@ -7,6 +7,7 @@ pub mod coap;
 pub mod defined;
 pub mod dlms;
 pub mod dnp3;
+pub mod dtls;
 pub mod enip;
 pub mod files;
 pub mod http_server;

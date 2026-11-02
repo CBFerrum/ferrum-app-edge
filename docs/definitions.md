@@ -48,6 +48,7 @@ start and not a promise: none has been tried on the equipment it names ([compati
 | `dlms://meter:4059?client=16&server=1` | DLMS/COSEM electricity meters through the wrapper. `node` is an OBIS code, `1.0.1.8.0.255`, or `class:obis:attribute`. A Register comes back scaled. `&password=` logs in with low security. It only reads |
 | `coap://sensor:5683` | A device that serves CoAP. `get`, `put`, `post`, `delete`, and `subscribe` to watch with Observe |
 | `listen+lwm2m://0.0.0.0:5683` | LwM2M devices register here. `subscribe` lists what to watch on each |
+| `listen+lwm2ms://0.0.0.0:5684`, and `listen+coaps://0.0.0.0:5684` with `api: device` | LwM2M and the device API over DTLS by pre-shared key. The identity is the device's code and the key the SHA-256 of its access token, as bytes, so nothing new has to be given out. An LwM2M device has to register under the identity it proved. Use these for anything off a private network. Certificates over DTLS are not here |
 | `listen+ocpp://0.0.0.0:9000/ocpp?open=1`, `listen+ocpps://…` | EV chargers, with `api: ocpp`. `open=1` lets a charger with no token in |
 | `mtconnect://agent:5000?interval=1000` | An MTConnect agent: everything, then its sample stream |
 | `nats://bus:4222` | NATS subjects in `subscribe` |
