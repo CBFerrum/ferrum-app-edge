@@ -4,18 +4,24 @@ advisories:
   - id: RUSTSEC-2023-0071
     crate: rsa
     owner: Chinmoy Bhuyan
-    reason: Marvin timing attack, no fixed version; arrives through jsonwebtoken's RSA support, which loco-rs enables.
+    reason: Marvin timing attack, no fixed version. It arrives through jsonwebtoken's RSA support with the platform's crates, and in the gateway through async-opcua.
     applicability: >-
-      Session tokens are HS256. RSA keys are used only to verify OIDC ID tokens, where timing does
-      not reveal a private key because Ferrum holds none. No private-key operation runs.
+      The app runs inside the server, which holds no RSA private key (Ferrum's own record). A gateway
+      is different. With a definition on OPC UA with security on, it makes an RSA key of its own and
+      uses it when a secure channel opens, so private-key operations do run and the timing leak is
+      real there. Using it takes something on the equipment network that a gateway connects to,
+      answering a great many handshakes and timing them closely, and what it could win is that one
+      gateway's OPC UA key. With security off, or built without the `opcua` feature, there is no
+      key. OPC UA belongs on a segmented network, and docs/definitions.md says so.
+      This reading needs confirming by someone other than the author of this entry.
     review_by: 2027-02-01
-    resolved_when: jsonwebtoken or loco-rs drops the rsa crate, or a fixed rsa is released.
+    resolved_when: A fixed rsa is released and async-opcua takes it, or async-opcua stops using the rsa crate.
   - id: RUSTSEC-2026-0387
     crate: crypto-bigint
     owner: Chinmoy Bhuyan
-    reason: Timing variability; arrives the same way as rsa.
+    reason: Timing variability; arrives with the platform's crates, through jsonwebtoken. A gateway does not link it.
     applicability: >-
-      Reached only through the verification paths above; no secret value passes through it.
+      Reached only through the server's verification paths, where no secret value passes through it.
       This reading needs confirming by someone other than the author of this entry.
     review_by: 2027-02-01
     resolved_when: jsonwebtoken or loco-rs upgrade.
