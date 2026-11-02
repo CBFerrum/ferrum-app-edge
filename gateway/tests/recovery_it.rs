@@ -364,6 +364,30 @@ async fn scenario() {
     people_at_the_console(&w).await;
     a_restore_is_not_believed(&w).await;
     a_gateway_is_told_what_to_be_and_carries_on_alone(&w).await;
+    past_an_allowance_readings_wait_and_nothing_else_does(&w).await;
+}
+
+async fn past_an_allowance_readings_wait_and_nothing_else_does(w: &World) {
+    let ws = workspace(w, "allowance").await;
+    let allowance = async |n: i64| {
+        let mut tx = ws.k.db.system_tenant_tx(ws.tenant).await.unwrap();
+        sqlx::query("update tenant set quotas = $2 where id = $1").bind(ws.tenant).bind(json!({"measurements_per_day": n})).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+    };
+    let stored = async || {
+        let mut tx = ws.k.db.tenant_tx(ws.tenant).await.unwrap();
+        let n: i64 = sqlx::query_scalar("select count(*) from op_measurement").fetch_one(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        n
+    };
+    allowance(0).await;
+    let site = running(w, &ws, "").await;
+    let c = issue(&ws, ws.robot, "warehouse.move", json!({"tote": "T-481"}), 60).await;
+    reaches(&ws, c, "Completed", 15).await;
+    assert_eq!(stored().await, 0, "a command went through, and no reading did");
+    until("readings to wait at the gateway", 10, async || site.journal().samples(10).is_ok_and(|(s, _)| !s.is_empty())).await;
+    allowance(1_000_000).await;
+    until("readings to arrive", 15, async || stored().await > 0).await;
 }
 
 async fn a_mission_runs_and_the_platform_hears(w: &World) {
