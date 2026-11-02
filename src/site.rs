@@ -54,6 +54,8 @@
 //! |---|---|---|
 //! | `POST /config` | a gateway, signed | [`ConfigRequest`]: what it should be, if that changed |
 //! | `POST /ingest` | a device, by token | `{values, state?, attributes?, at?}` |
+//! | `GET /aas/shells`, `/aas/shells/{id}`, `/aas/submodels/{id}` | Edge Viewer | AAS Part 2's repository, reading only |
+//! | `GET /epcis/events?from=&to=` | Edge Viewer | What scanners saw, as a GS1 EPCIS 2.0 document |
 //! | `GET /shared/{token}` | anyone with the link | what a shared dashboard shows, and nothing it does not |
 
 use crate::{config, fleet};
@@ -610,6 +612,16 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
         ("GET", ["devices", id, "aas"]) => {
             may(ctx, READ)?;
             crate::twins::administration_shell(k, ctx, uuid(id)?).await?
+        }
+        ("GET", ["aas", rest @ ..]) => {
+            may(ctx, READ)?;
+            crate::twins::repository(k, ctx, rest).await?
+        }
+        ("GET", ["epcis", "events"]) => {
+            may(ctx, READ)?;
+            let when = |key: &str| req.query.get(key).and_then(Value::as_str).and_then(|t| t.parse::<DateTime<Utc>>().ok());
+            let to = when("to").unwrap_or_else(Utc::now);
+            crate::twins::epcis(k, ctx, when("from").unwrap_or(to - chrono::Duration::days(1)), to).await?
         }
         ("GET", ["devices", id, "availability"]) => {
             may(ctx, READ)?;

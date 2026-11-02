@@ -11,6 +11,8 @@
 - CoAP and LwM2M over DTLS, by pre-shared key, so they can leave a private network: `listen+coaps` and
   `listen+lwm2ms`. Met Eclipse Leshan's client.
 - OCPP security profile 3: a charger known by its certificate. Charging profiles go as commands.
+- AAS Part 2's repository, reading only, and what scanners saw as a GS1 EPCIS 2.0 document.
+- `ferrum-site release-key` and `sign`, and a workflow that builds the gateway on a tag.
 - ThingsBoard's own Python client works against a gateway unchanged, in CI, for devices and gateways.
   It found a real fault: its firmware subscription did not match the chunks, so a download hung.
 - Modbus TCP against pymodbus, and Sparkplug payloads against Eclipse Tahu's definitions, in CI.

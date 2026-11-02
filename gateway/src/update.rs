@@ -6,7 +6,7 @@
 //! This is the gateway's own software. Robot, PLC and safety firmware stay with their makers.
 
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use ferrum_edge_contract::edge::{Release, newer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -80,6 +80,19 @@ pub fn at_start(exe: &Path, pending: Option<Pending>, running: &str) -> Result<O
     Err(p.version)
 }
 
+/// A release signed with a key that stays off every gateway. A release is a person's to sign, on
+/// a machine of their choosing: CI builds the file and holds no key.
+pub fn sign(secret: &str, version: &str, url: &str, file: &[u8], expires_at: DateTime<Utc>) -> Result<Release, String> {
+    let secret: [u8; 32] = hex::decode(secret.trim()).ok().and_then(|b| b.try_into().ok()).ok_or("that is not a key: make one with release-key")?;
+    if !version.split('.').all(|p| p.parse::<u64>().is_ok()) {
+        return Err(format!("{version} is not a version: use dotted numbers"));
+    }
+    let mut release =
+        Release { version: version.to_string(), url: url.to_string(), sha256: hex::encode(Sha256::digest(file)), signature: String::new(), expires_at };
+    release.signature = hex::encode(SigningKey::from_bytes(&secret).sign(&release.message()).to_bytes());
+    Ok(release)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,6 +109,18 @@ mod tests {
         };
         r.signature = hex::encode(key.sign(&r.message()).to_bytes());
         r
+    }
+
+    #[test]
+    fn what_this_signs_a_gateway_takes() {
+        let key = SigningKey::from_bytes(&[9; 32]);
+        let keys = vec![hex::encode(key.verifying_key().to_bytes())];
+        let now = Utc::now();
+        let r = sign(&hex::encode([9u8; 32]), "0.2.0", "https://x/fw", b"the file", now + Duration::hours(1)).unwrap();
+        assert_eq!(r.sha256, hex::encode(Sha256::digest(b"the file")));
+        assert!(judge(&r, "0.1.0", &keys, now, None).is_ok());
+        assert!(sign("nonsense", "0.2.0", "u", b"", now).is_err());
+        assert!(sign(&hex::encode([9u8; 32]), "two", "u", b"", now).is_err(), "a version a gateway could never compare");
     }
 
     #[test]

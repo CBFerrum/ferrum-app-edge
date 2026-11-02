@@ -123,7 +123,7 @@ the detail of what each thing was tried against.
 | Capability | Who has it | Status | Notes |
 |---|---|---|---|
 | Firmware for devices, in rollouts | ThingsBoard, Hono | **Verified** | ThingsBoard's own client fetched and checked 50 KB in chunks, in CI, which found a fault: chunks went unheard by its subscription. Paho did on real binaries, and a rollout finished |
-| Software update of the gateway itself | Kura, Greengrass | **Built** | Signed releases, staged |
+| Software update of the gateway itself | Kura, Greengrass | **Built** | Signed releases, staged, and built for Intel and ARM on a tag. A person signs: CI holds no key |
 | Bulk commands and settings | ThingsBoard PE | **Verified** | Each through the ledger |
 | Scheduler | ThingsBoard PE | **Built** | As automation, under an envelope |
 | Solution bundles | ThingsBoard PE | **Verified** | They arrive as drafts |
@@ -150,9 +150,9 @@ the detail of what each thing was tried against.
 | Capability | Who has it | Status | Notes |
 |---|---|---|---|
 | Reported and desired state | Ditto, ThingsBoard | **Verified** | |
-| W3C Thing Description | Ditto | **Built** | Written from the records. Not checked against a validator |
-| Asset Administration Shell | BaSyx | **Verified** | The output validates against the official JSON schema. **Export only**: no AAS server |
-| EPCIS | GS1 | **No** | Not a concern of this app today |
+| W3C Thing Description | Ditto | **Verified** | Written from the records. Output of a running plant validates against the published TD 1.1 schema, with no errors |
+| Asset Administration Shell | BaSyx | **Verified** | The output validates against the official JSON schema, and AAS Part 2's repository is served, reading only: shells and submodels. Nothing can be written, and no AAS client has met it |
+| EPCIS | GS1 | **Verified** | What scanners saw, as an EPCIS 2.0 document of object events, valid against GS1's own schema. **No repository, no capture interface**: it is for one that does that |
 
 ## Brokers
 
