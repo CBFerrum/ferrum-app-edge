@@ -7,7 +7,7 @@ use axum::body::Bytes;
 use axum::http::{HeaderMap, Uri};
 use chrono::Utc;
 use ferrum_edge_contract::edge::Export;
-use ferrum_site::adapters::transport::{self, Limits};
+use ferrum_site::adapters::transport::{self, Limits, Out};
 use ferrum_site::export::Sender;
 use ferrum_site::sinks::{self, Aws};
 use serde_json::{Value, json};
@@ -122,6 +122,102 @@ async fn amqp_is_confirmed_by_the_broker() {
     let nowhere = export(&format!("amqp://guest@{host}/%2F?exchange=no-such-exchange"), Some("x"), Some("password"));
     let refused = sender().deliver(&nowhere, &readings(1), &json!({"password": "guest"})).await;
     assert!(refused.unwrap_err().contains("no-such-exchange"), "and it says why");
+}
+
+#[cfg(feature = "opcua")]
+#[tokio::test]
+async fn a_gateway_serves_its_readings_over_opc_ua_and_takes_no_writes() {
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let bind = format!("127.0.0.1:{port}");
+    let dir = std::env::temp_dir().join(format!("ferrum-opcua-{}", Uuid::now_v7().simple()));
+    let e = export(&format!("listen+opcua://{bind}"), None, None);
+    assert!(Sender::new(Limits::default()).deliver(&e, &readings(1), &json!({})).await.is_err(), "a port is the site's to open");
+
+    let sender = Sender::new(Limits { listen: vec![bind.clone()], tls_dir: Some(dir.clone()), ..Default::default() });
+    sender.deliver(&e, &readings(2), &json!({})).await.expect("served");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let limits = Limits { tls_dir: Some(dir.clone()), ..Default::default() };
+    let client = transport::open(&format!("opcua://{bind}/"), transport::Options::default(), &limits).unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let (ready, mut up) = tokio::sync::mpsc::channel(1);
+    let runner = client.clone();
+    tokio::spawn(async move { runner.run(tx, ready).await });
+    tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    tokio::time::timeout(Duration::from_secs(10), up.recv()).await.expect("it connected");
+    let node = "ns=2;s=PRESS-1/temp.c";
+    let read = async |node: &str| {
+        let m = client.send(Out::Node { node: node.into(), value: None }).await.expect("read").expect("a value");
+        serde_json::from_slice::<Value>(&m.body).unwrap()
+    };
+    let said = read(node).await;
+    assert_eq!(said["value"], json!(1.5), "the latest: {said}");
+    assert!(said["time"].is_string(), "{said}");
+
+    let refused = client.send(Out::Node { node: node.into(), value: Some(json!(9.0)) }).await;
+    assert!(refused.is_err(), "nothing is written through here: {refused:?}");
+    assert_eq!(read(node).await["value"], json!(1.5));
+
+    let found = client.send(Out::Node { node: "browse:i=85".into(), value: None }).await.expect("browsed").expect("an answer");
+    assert!(String::from_utf8_lossy(&found.body).contains("PRESS-1"), "a device is a folder");
+
+    sender.keep_servers(&[]);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(tokio::net::TcpStream::connect(&bind).await.is_err(), "the port closes when no export names it");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Connects, or says why not.
+#[cfg(feature = "opcua")]
+async fn reach(address: &str, limits: &Limits) -> Result<std::sync::Arc<dyn transport::Transport>, String> {
+    let link = transport::open(address, transport::Options::default(), limits)?;
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let (ready, mut up) = tokio::sync::mpsc::channel(1);
+    let runner = link.clone();
+    tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let run = tokio::spawn(async move { runner.run(tx, ready).await });
+    tokio::select! {
+        Some(()) = up.recv() => Ok(link),
+        ended = run => Err(format!("{ended:?}")),
+    }
+}
+
+#[cfg(feature = "opcua")]
+fn trust(store: &std::path::Path) {
+    for file in std::fs::read_dir(store.join("rejected")).expect("something was kept back").flatten() {
+        std::fs::rename(file.path(), store.join("trusted").join(file.file_name())).unwrap();
+    }
+}
+
+#[cfg(feature = "opcua")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_served_login_wants_a_password_and_a_client_someone_trusted() {
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let bind = format!("127.0.0.1:{port}");
+    let dir = std::env::temp_dir().join(format!("ferrum-opcua-{}", Uuid::now_v7().simple()));
+    let (server, client) = (dir.join("server"), dir.join("client"));
+    std::fs::create_dir_all(&client).unwrap();
+    let e = export(&format!("listen+opcua://reader@{bind}"), None, Some("reading"));
+    let sender = Sender::new(Limits { listen: vec![bind.clone()], tls_dir: Some(server.clone()), ..Default::default() });
+    let secrets = json!({"reading": "s3cret"});
+    sender.deliver(&e, &readings(2), &secrets).await.expect("served");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let limits = Limits { tls_dir: Some(client.clone()), ..Default::default() };
+    let open = format!("opcua://{bind}/");
+    assert!(reach(&open, &limits).await.is_err(), "there is no way in without encryption");
+
+    let secure = |password: &str| format!("opcua://{bind}/?security=Basic256Sha256&mode=SignAndEncrypt&user=reader&password={password}");
+    assert!(reach(&secure("s3cret"), &limits).await.is_err(), "that server has not said it trusts this client");
+    trust(&server.join("opcua-server"));
+    assert!(reach(&secure("s3cret"), &limits).await.is_err(), "and this client has not said it trusts that server");
+    trust(&client.join("opcua"));
+    assert!(reach(&secure("wrong"), &limits).await.is_err(), "a wrong password gets nowhere, trusted or not");
+    let link = reach(&secure("s3cret"), &limits).await.expect("each trusts the other now, and the password is right");
+    let m = link.send(Out::Node { node: "ns=2;s=PRESS-1/temp.c".into(), value: None }).await.expect("read").expect("a value");
+    assert_eq!(serde_json::from_slice::<Value>(&m.body).unwrap()["value"], json!(1.5));
+    assert!(link.send(Out::Node { node: "ns=2;s=PRESS-1/temp.c".into(), value: Some(json!(9.0)) }).await.is_err(), "a login reads, and no more");
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[tokio::test]

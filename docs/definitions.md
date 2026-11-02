@@ -189,7 +189,7 @@ The name under `commands` is the operation a device is commissioned for. A step 
 | HTTP | `get`, `post`, `put`, `patch` or `delete: /path`, with `send` as the body |
 | MQTT | `topic: t`, `send:`, `retain: true`, `format: sparkplug` |
 | Modbus | `read: holding`, `at`, `count`, `write: [{at, value}]`, `unit` |
-| OPC UA | `node: id` to read it, with `send` to write it, and `call: method` to call |
+| OPC UA | `node: id` to read it, with `send` to write it, and `call: method` to call. `node: history:ns=2;s=x` reads what a server's historian holds since this last asked, an hour back the first time, as `{value: [{value, time}]}` |
 
 Text with `{placeholders}` is filled in: `command`, `device`, `id` (the equipment's name for the
 work), `now`, `now_ms`, `seq`, `payload.x`, `settings.x` and `secret.x`. A placeholder with nothing

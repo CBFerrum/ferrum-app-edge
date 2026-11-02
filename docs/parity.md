@@ -32,8 +32,8 @@ the detail of what each thing was tried against.
 | OCPP 1.6-J and 2.0.1 | ThingsBoard Gateway, OpenRemote | **Verified** | 1.6 against the Python `ocpp` library; 2.0.1 against frames written here. Security profiles 0 to 2. **No certificates (profile 3), no smart charging** |
 | Modbus TCP and RTU | Everyone | **Built** | Against a stand-in and a pseudo-terminal |
 | OPC UA client: watch, read, write, call, encryption, users, browse | Ignition, Kura, Azure IoT Operations | **Verified** | Against async-opcua's server |
-| OPC UA events | Ignition | **Partly** | Subscribed with `events:`, and nothing has raised one yet. **No history read, no alarms and conditions acknowledgement** |
-| OPC UA server | Ignition, Kura | **No** | A gateway does not offer its data as a server. Sparkplug and MQTT do that job today |
+| OPC UA events and history | Ignition | **Verified** | Against asyncua: events with their ids, and a node's history from where this last got to. Acknowledging a condition is a `call` to its `i=9111`, which no server has answered yet |
+| OPC UA server | Ignition, Kura | **Verified** | As an export, read only, against asyncua's client; with encryption, a login and certificates a person trusts, against async-opcua's. **No history**, and a variable appears with its first reading |
 | Siemens S7 | PLC4X, Ignition, ThingsBoard Gateway | **Verified** | Against python-snap7's server. Its emulation of bit writes differs, so a bit write has only met the standard's description |
 | EtherNet/IP, Logix tags | PLC4X, Ignition | **Verified** | Against cpppo, direct and routed. **No I/O connections, by design** |
 | TwinCAT ADS | PLC4X, Ignition | **Verified** | Against pyads's test server, by symbol |

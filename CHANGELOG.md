@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A gateway as an OPC UA server, by an export to `listen+opcua://`: each device a folder, each metric a
+  variable, read only, with a login over encryption if a secret is named.
+- OPC UA history with `history:`, and events carrying `EventId` and `ConditionId`, met against asyncua.
 - DNP3 as a master over TCP: integrity polls, events and unsolicited responses, and commands selected
   and then operated. It has met opendnp3's outstation.
 - DLMS/COSEM meters by OBIS code, over the wrapper, read only.

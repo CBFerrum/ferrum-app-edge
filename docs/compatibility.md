@@ -44,6 +44,7 @@ required* per device model, and the templates in `templates` are starts, not sup
 | Device API | Eclipse Paho 2.1 and 1.6 (MQTT 3.1.1), rumqttc v4 and v5, curl, aiocoap 0.4.17 | Any device's firmware, ThingsBoard's own SDKs |
 | Modbus TCP and RTU | A stand-in controller, and a stand-in on a pseudo-terminal with two units | Any PLC, a real RS-485 bus, CRC errors on the line |
 | OPC UA | async-opcua 0.19's own server: None, and Basic256Sha256 with SignAndEncrypt, users, server trust by certificate, and browsing (`gateway/tests/protocols_it.rs`) | Any commercial server. Events have not been raised by anything |
+| OPC UA, the other way | asyncua 2.1, in CI: as a client of a gateway's server, browsing, reading, subscribing and refused a write; as a server, its events and its history. A server's login, encryption and certificates against async-opcua's client. Two faults it found here are fixed: a select clause it could not read, and a device clock running ahead holding a value back | Any SCADA or historian. Acknowledging a condition has met no server |
 | Siemens S7 | python-snap7 3.3's server: reads of every type, writes, strings, a missing block, and on real binaries through a gateway. Its server treats a bit write as a byte, so bits have not met a faithful peer | Any PLC |
 | EtherNet/IP | cpppo 5.2: read, write, arrays, direct and through a slot | Any Logix controller |
 | TwinCAT ADS | pyads 3.6's test server: symbols, read, write | Any TwinCAT runtime, routes |
@@ -90,7 +91,6 @@ two steps cost. **What a gateway sustains is not measured**: it depends on its d
 |---|---|
 | DNP3, DLMS/COSEM, PROFINET, EtherCAT, CANopen as such | Not built. An external driver is the way, and PROFINET and EtherCAT belong to a controller anyway |
 | LwM2M over DTLS, CoAP over DTLS | Not built, so those stay on private networks |
-| OPC UA history, alarms and conditions, a server of our own | Not built |
 | ROS 2 by DDS directly | Through rosbridge. A vendor-qualified adapter as a process of its own is the rule |
 | EPCIS | Not built |
 | ThingsBoard, Siemens, Rockwell, AVEVA, Ignition, Dematic, Blue Yonder, Manhattan | Coexist and integrate per contract. There is no universal adapter and none is claimed |
