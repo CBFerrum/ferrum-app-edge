@@ -89,7 +89,7 @@ two steps cost. **What a gateway sustains is not measured**: it depends on its d
 
 | What | Why, and what it would take |
 |---|---|
-| DNP3, DLMS/COSEM, PROFINET, EtherCAT, CANopen as such | Not built. An external driver is the way, and PROFINET and EtherCAT belong to a controller anyway |
+| PROFINET, EtherCAT, CANopen as such | Not built. An external driver is the way, and PROFINET and EtherCAT belong to a controller anyway |
 | LwM2M over DTLS, CoAP over DTLS | Not built, so those stay on private networks |
 | ROS 2 by DDS directly | Through rosbridge. A vendor-qualified adapter as a process of its own is the rule |
 | EPCIS | Not built |
