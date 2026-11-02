@@ -1,0 +1,8 @@
+# about: Heat, water and gas meters over M-Bus, through a TCP bridge. The node is a primary address.
+# group: Energy
+name: mbus-meters
+connect: mbus://bridge:9000
+poll:
+  - {every: 15m, node: "5"}
+read:
+  - {topic: "5", each: $.value, metric: "{each.key}", json: $.value}

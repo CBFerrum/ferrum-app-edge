@@ -68,10 +68,14 @@ pub const SCHEMES: &[&str] = &[
     "listen+snmp",
     "listen+ocpp",
     "listen+ocpps",
+    "knx",
+    "iec104",
+    "mbus",
+    "coap",
 ];
 
 /// What is read and written a named thing at a time, with `node`.
-const TAGGED: &[&str] = &["opcua", "s7", "enip", "ads", "bacnet", "snmp"];
+const TAGGED: &[&str] = &["opcua", "s7", "enip", "ads", "bacnet", "snmp", "knx", "iec104", "mbus"];
 
 /// What devices can prove themselves on.
 const DEVICE_SERVERS: [&str; 7] = ["listen+mqtt", "listen+mqtts", "listen+http", "listen+https", "listen+coap", "listen+ocpp", "listen+ocpps"];
@@ -1236,7 +1240,7 @@ fn check_step(what: &str, step: &Step, scheme: Option<&str>) -> Result<(), Strin
         return Err(format!("{what}: read is holding, input, coil or discrete"));
     }
     let Some(scheme) = scheme else { return Ok(()) };
-    let http = matches!(scheme, "http" | "https");
+    let http = matches!(scheme, "http" | "https" | "coap");
     let modbus = matches!(scheme, "modbus+tcp" | "modbus+rtu");
     let opcua = scheme == "opcua";
     let tagged = TAGGED.contains(&scheme);

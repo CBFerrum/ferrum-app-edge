@@ -14,9 +14,10 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 const CON: u8 = 0;
 const NON: u8 = 1;
@@ -43,6 +44,7 @@ const OBSERVE: u16 = 6;
 const URI_PATH: u16 = 11;
 const CONTENT_FORMAT: u16 = 12;
 const URI_QUERY: u16 = 15;
+const BLOCK2: u16 = 23;
 const BLOCK1: u16 = 27;
 
 /// What arrives in one datagram, at most. RFC 7252 asks for no more than this.
@@ -308,6 +310,121 @@ fn watch(
         }
         hub.close(session);
     });
+}
+
+/// A device that serves CoAP itself, for a gateway to ask: `coap://sensor:5683`. A `get`, `post`, `put`
+/// or `delete` asks once, with what an unreliable network asks for, and each path in `subscribe` is
+/// watched with Observe, as long as the device goes on sending.
+pub struct CoapClient {
+    pub address: String,
+    pub watch: Vec<String>,
+    socket: Mutex<Option<Arc<UdpSocket>>>,
+    waiting: Arc<Mutex<HashMap<Vec<u8>, oneshot::Sender<Coap>>>>,
+    next: AtomicU16,
+}
+
+impl CoapClient {
+    pub fn new(address: String, watch: &[String]) -> CoapClient {
+        CoapClient { address, watch: watch.to_vec(), socket: Mutex::new(None), waiting: Arc::default(), next: AtomicU16::new(rand::random()) }
+    }
+
+    fn request(&self, code: u8, path: &str, extra: Vec<(u16, Vec<u8>)>, payload: Vec<u8>) -> Coap {
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        let (path, query) = path.split_once('?').unwrap_or((path, ""));
+        let mut options = extra;
+        options.extend(path.split('/').filter(|p| !p.is_empty()).map(|p| (URI_PATH, p.as_bytes().to_vec())));
+        options.extend(query.split('&').filter(|q| !q.is_empty()).map(|q| (URI_QUERY, q.as_bytes().to_vec())));
+        options.sort_by_key(|(number, _)| *number);
+        Coap { kind: CON, code, id, token: id.to_be_bytes().to_vec(), options, payload }
+    }
+
+    /// Sends and waits, sending again as RFC 7252 has it, because UDP loses things.
+    async fn ask(&self, request: Coap) -> Result<Coap, String> {
+        let socket = self.socket.lock().await.clone().ok_or("not connected")?;
+        let (answered, mut answer) = oneshot::channel();
+        self.waiting.lock().await.insert(request.token.clone(), answered);
+        let mut patience = Duration::from_secs(2);
+        for _ in 0..4 {
+            socket.send(&request.to_bytes()).await.map_err(|e| e.to_string())?;
+            match tokio::time::timeout(patience, &mut answer).await {
+                Ok(Ok(reply)) => return Ok(reply),
+                Ok(Err(_)) => break,
+                Err(_) => patience *= 2,
+            }
+        }
+        self.waiting.lock().await.remove(&request.token);
+        Err("it did not answer".into())
+    }
+}
+
+#[async_trait]
+impl Transport for CoapClient {
+    async fn run(&self, tx: mpsc::Sender<Message>, ready: mpsc::Sender<()>) -> Result<(), String> {
+        let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await.map_err(|e| e.to_string())?);
+        socket.connect(&self.address).await.map_err(|e| format!("{}: {e}", self.address))?;
+        *self.socket.lock().await = Some(socket.clone());
+        let mut watched: HashMap<Vec<u8>, String> = HashMap::new();
+        for path in &self.watch {
+            let request = self.request(GET, path, vec![(OBSERVE, Vec::new())], Vec::new());
+            watched.insert(request.token.clone(), path.clone());
+            socket.send(&request.to_bytes()).await.map_err(|e| e.to_string())?;
+        }
+        let _ = ready.send(()).await;
+        let mut buffer = vec![0u8; MAX_DATAGRAM];
+        loop {
+            let n = tokio::select! {
+                () = tx.closed() => return Ok(()),
+                got = socket.recv(&mut buffer) => got.map_err(|e| e.to_string())?,
+            };
+            let Some(m) = Coap::parse(&buffer[..n]) else { continue };
+            // An empty acknowledgement says the answer is coming apart.
+            if m.kind == ACK && m.code == 0 {
+                continue;
+            }
+            if m.kind == CON {
+                let ack = Coap { kind: ACK, code: 0, id: m.id, ..Default::default() };
+                let _ = socket.send(&ack.to_bytes()).await;
+            }
+            if let Some(path) = watched.get(&m.token) {
+                let message = Message { topic: path.clone(), body: m.payload, status: None, from: None };
+                if tx.send(message).await.is_err() {
+                    return Ok(());
+                }
+            } else if let Some(waiting) = self.waiting.lock().await.remove(&m.token) {
+                let _ = waiting.send(m);
+            }
+        }
+    }
+
+    async fn send(&self, out: Out) -> Result<Option<Message>, Failure> {
+        let Out::Http { method, path, body, .. } = out else { return Err(Failure::NotSent("CoAP takes get, post, put and delete".into())) };
+        let code = match method.as_str() {
+            "GET" => GET,
+            "POST" => POST,
+            "PUT" => PUT,
+            "DELETE" => 4,
+            other => return Err(Failure::NotSent(format!("CoAP has no {other}"))),
+        };
+        let sent = code != GET;
+        let mut payload = Vec::new();
+        let mut number = 0u32;
+        // Something too long for a datagram comes a block at a time (RFC 7959).
+        loop {
+            let extra = if number > 0 { vec![(BLOCK2, uint(number << 4 | 6))] } else { Vec::new() };
+            let request = self.request(code, &path, extra, body.clone().unwrap_or_default());
+            let reply = self.ask(request).await.map_err(|e| if sent { Failure::Unknown(e) } else { Failure::NotSent(e) })?;
+            if reply.code >= 0x80 {
+                return Err(Failure::NotSent(format!("{path}: it answered {}.{:02}", reply.code >> 5, reply.code & 0x1f)));
+            }
+            let more = reply.option(BLOCK2).and_then(|b| b.last()).is_some_and(|last| last & 0x08 != 0);
+            payload.extend(reply.payload);
+            if !more || payload.len() > MAX_BODY {
+                break;
+            }
+            number += 1;
+        }
+        Ok(Some(Message { topic: path, body: payload, status: None, from: None }))
+    }
 }
 
 struct Served {

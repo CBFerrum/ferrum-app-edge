@@ -7,6 +7,7 @@ pub mod device_api;
 pub mod driver;
 pub mod edge;
 pub mod flow;
+pub mod mbus;
 pub mod ocpp;
 pub mod sparkplug;
 pub mod tags;
