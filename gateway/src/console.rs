@@ -15,7 +15,7 @@ use ferrum_ops_contract::sync::Operator;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -146,6 +146,43 @@ async fn work(State(app): State<App>, headers: HeaderMap) -> Response {
     let unknown: Vec<Value> = app.rt.journal.unknown().unwrap_or_default().iter().map(|e| show(e, None)).collect();
     let queued: Vec<Value> = app.rt.journal.queued(100).unwrap_or_default().iter().map(|e| show(e, None)).collect();
     axum::Json(json!({"tasks": tasks, "unknown": unknown, "queued": queued})).into_response()
+}
+
+/// What was read lately, for someone at the box with no platform in reach. It lives in memory: what
+/// is kept for good is at the platform, and a restart here loses nothing that matters.
+#[derive(Default)]
+pub struct Recent {
+    series: HashMap<(String, String), VecDeque<(i64, f64)>>,
+}
+
+impl Recent {
+    const SERIES: usize = 200;
+    const POINTS: usize = 120;
+
+    pub fn heard(&mut self, device: &str, metric: &str, at_ms: i64, value: f64) {
+        let key = (device.to_string(), metric.to_string());
+        if !self.series.contains_key(&key) && self.series.len() >= Self::SERIES {
+            return;
+        }
+        let points = self.series.entry(key).or_default();
+        if points.len() >= Self::POINTS {
+            points.pop_front();
+        }
+        points.push_back((at_ms, value));
+    }
+
+    pub fn shown(&self) -> Vec<Value> {
+        let mut rows: Vec<_> = self.series.iter().collect();
+        rows.sort_by(|a, b| a.0.cmp(b.0));
+        rows.into_iter().map(|((device, metric), points)| json!({"device": device, "metric": metric, "points": points})).collect()
+    }
+}
+
+async fn readings(State(app): State<App>, headers: HeaderMap) -> Response {
+    if let Err(r) = app.needs(&headers, None) {
+        return r;
+    }
+    axum::Json(json!({"series": app.rt.recent.lock().unwrap_or_else(|e| e.into_inner()).shown()})).into_response()
 }
 
 #[derive(Deserialize, Default)]
@@ -287,6 +324,7 @@ pub fn router(rt: Arc<Runtime>) -> Router {
         .route("/metrics", get(metrics))
         .route("/api/login", post(login))
         .route("/api/work", get(work))
+        .route("/api/readings", get(readings))
         .route("/api/tasks/{id}/{action}", post(task_step))
         .route("/api/floor", post(floor_report))
         .route("/api/commands/{id}/settle", post(settle))
@@ -297,6 +335,22 @@ pub fn router(rt: Arc<Runtime>) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_was_read_lately_stays_small() {
+        let mut r = Recent::default();
+        for i in 0..500 {
+            r.heard("PRESS", "temp", i, i as f64);
+        }
+        for i in 0..500 {
+            r.heard(&format!("D{i}"), "temp", 0, 0.0);
+        }
+        let shown = r.shown();
+        assert_eq!(shown.len(), Recent::SERIES, "so many series and no more");
+        let press = shown.iter().find(|s| s["device"] == "PRESS").unwrap();
+        assert_eq!(press["points"].as_array().unwrap().len(), Recent::POINTS);
+        assert_eq!(press["points"][119][1], json!(499.0), "the newest stay");
+    }
 
     #[test]
     fn a_pin_matches_only_its_hash() {
