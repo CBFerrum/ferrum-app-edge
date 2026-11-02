@@ -20,10 +20,10 @@ pub struct Mtconnect {
 }
 
 impl Mtconnect {
-    pub fn new(scheme: &str, rest: &str) -> Mtconnect {
+    pub fn new(scheme: &str, rest: &str, limits: &super::transport::Limits) -> Mtconnect {
         let place = rest.split('?').next().unwrap_or(rest).trim_end_matches('/');
         let web = if scheme == "mtconnects" { "https" } else { "http" };
-        let http = reqwest::Client::builder().connect_timeout(ANSWER).build().unwrap_or_default();
+        let http = reqwest::Client::builder().connect_timeout(ANSWER).redirect(limits.redirects()).build().unwrap_or_default();
         Mtconnect { base: format!("{web}://{place}"), interval: query(rest, "interval").and_then(|i| i.parse().ok()).unwrap_or(1000), http }
     }
 }

@@ -74,7 +74,8 @@ through its gateway**, commission it, and list what it may be asked to do.
 | `managed` | false | Whether to become what the platform says: definitions, devices, rules, flows, exports, releases. What is in this file wins |
 | `definitions_dir` | none | Definitions kept on this machine, as `*.yaml` |
 | `devices` | none | Devices kept on this machine, each with its definition |
-| `allow` | any | What hosts a definition may reach, by how they start |
+| `allow` | any | What hosts may be reached, by definitions, exports, firmware and updates, redirects included: a whole host, or a range ending in a dot or a dash (`10.0.`, `plc-`) |
+| `clock_drift_ppm` | 100 | How far this machine's clock may run slow |
 | `listen` | none | Addresses a definition may listen on, exactly |
 | `drivers_dir` | none | The only place an external driver can run from |
 | `files_dir` | none | The only place a definition can read files and SQLite databases from |
@@ -103,12 +104,45 @@ applied then: one a run cannot take by that time is noted on the run, and stays 
 | The link goes down | Keeps working within the lease. The console says **Working offline** | Nothing, until the lease nears its end |
 | The platform hangs | The same, once it has been silent for three exchanges | Nothing |
 | The lease ends | Starts nothing new; follows what is running. Operations shows why | Restore the link, or extend `max_offline_hours` knowing what that allows |
-| The gateway crashes | On restart, asks the equipment about whatever was in flight. What cannot be answered is `OutcomeUnknown`, never resent | Look at the equipment, then record what you found |
+| The gateway crashes | On restart, asks the device each command went to, and no other, about whatever was in flight. What cannot be answered is `OutcomeUnknown`, never resent | Look at the equipment, then record what you found |
+| The machine restarts with no link | Starts nothing new until the time is known. Follows what is running | Restore the link, or vouch for the time at the console |
+| What reaches a device changes under running work (a new definition, a new address) | Stops asking: an answer from elsewhere says nothing about this command. The outcome is `OutcomeUnknown` | Change these with nothing running on the device. If you did not, look, then record what you found |
 | A command is unknown | Stops counting on it. Nothing retries it | Look, then **Say what happened** in Operations or at the console. In a warehouse, **I found it** on the task settles both |
 | Two different endings | The first stands, the command is flagged | Read both, in **Needs a person** |
 | Disk nearly full | Sheds telemetry first; below the reserve starts nothing new | Free space. Shed measurements are counted, not hidden |
 | Gateway replaced | The new one enrolls and a person moves authority. The old one is fenced | Settle what the move made unknown |
 | Key suspected stolen | Quarantine the gateway in Operations. Its epoch ends at once | Investigate, then enroll a new key. There is no rotation in place |
+
+## What keeps working offline
+
+A gateway keeps running what it was authorized to run before the link went: it dispatches commands it
+already holds, within the lease, and follows them. It reads equipment, raises alarms, runs flows, and
+keeps every report, fact and reading for later. People work their tasks and settle unknown outcomes at
+the console. All of it goes up when the link is back.
+
+**It does not originate new work.** A flow can decide offline, but what it asks of equipment is a
+request: the platform's ledger turns it into a command when it arrives, and refuses one that is too old
+or from a flow since stopped. Releasing a wave, a run or a task happens on the platform. So this is a
+site that carries on with what it was given, not a facility that runs its business alone. That
+boundary is deliberate: nothing here can authorize itself.
+
+## Time
+
+Deadlines and leases are in the platform's time. A gateway keeps that time on a clock nothing on the
+machine can set, which goes on counting while the machine is suspended.
+
+| What happens | What it does |
+|---|---|
+| The wall clock is set, by a person or NTP | Nothing |
+| The machine is suspended | That time counts |
+| The process restarts | Nothing is lost: it reads the same clock against what it wrote down |
+| The machine restarts | Nobody can say how long it was off. Time goes on from the later of the last time written down and the wall clock, and **no new work starts** until the platform answers, or a person with the **recover** right vouches at the console. That is on record, and reaches the platform. Running work is followed either way |
+| The platform answers | Time is what it says, backwards included |
+
+Time since the platform last spoke counts for `clock_drift_ppm` more than it reads, 100 parts per
+million unless you say otherwise: 26 seconds in three days. Measure a gateway's crystal and set this if it
+is worse. A restored snapshot of a virtual machine rewinds its clock with its disk, and is a restored
+backup: see below.
 
 ## Backup and restore
 

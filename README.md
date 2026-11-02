@@ -89,7 +89,7 @@ A flow, a schedule or a rollout asks the ledger for a command. An approved envel
 <td width="50%" valign="top">
 
 ### 📴 Works offline
-Reading, deciding, alarms and commands carry on through outages, crashes and restores, from a journal on disk.
+Reading, deciding, alarms and the commands a gateway already holds carry on through outages, crashes and restores, from a journal on disk. New work comes from the platform.
 
 </td>
 </tr>

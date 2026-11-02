@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.4.0
+
+From a review of the connected system under retries, crashes, configuration changes, clock changes
+and physical exceptions. **Nothing here has met physical equipment.**
+
+- **Recovery asks the device a command went to, and no other.** What a command went out on is written
+  with its intent. Looking for it after a crash, following it and stopping it go back to exactly that,
+  or nowhere: a device that merely takes the same operation is never asked, because its "never heard
+  of it" would look like leave to send the command again. If what reaches a device has changed since,
+  the outcome is unknown, for a person. **Finish running work before upgrading:** work a journal holds
+  from before this has nothing to go back to, and becomes unknown.
+- **Stopping one vehicle's order stops one vehicle.** `cancelOrder` went to every vehicle on an adapter,
+  and it stops whatever a vehicle is doing. It now goes to the vehicle that has the order, once that
+  vehicle says so. Over MQTT a cancel goes to the device's own topic, not to `all`.
+- **Time is the platform's, carried forward by a clock nothing here can set.** Setting the wall clock
+  either way changes nothing, a suspended machine has been away, and a process restart loses nothing.
+  After a reboot nobody can say how long it was off, so no new work starts until the platform answers
+  or a person vouches at the console. A clock that ran ahead no longer locks a gateway out of signing.
+  `clock_drift_ppm` keeps a slow crystal from stretching a lease.
+- **Every command is checked the moment before it goes**, not only when it was planned: its deadline,
+  the lease, the authority, a cancel, the device and what it may do. Fencing is checked in the same
+  statement that writes the intent. A command out of time is held back, where it used to go with a
+  second to live.
+- **A dependency needs a recorded completion.** Absent, failed, started and unreadable are not done.
+  How a command ended outlives its row, and what only the platform knows is asked of it.
+- **A redirect cannot leave the allow list**, for firmware, updates, exports and HTTP devices, and
+  encrypted never becomes plain. `allow` now means the host it names, or a range when it ends in a dot
+  or a dash: `plant.example.com` used to match `plant.example.com.elsewhere.org`, and `192.168.1` used to
+  match `192.168.100.5`. **Check your `allow` list.** A release's download is held to it too, so a site
+  with one lists where its releases come from, redirects included. The link to the platform follows no
+  redirect at all.
+- A box behind a peer takes its deadline from the site that holds authority, refuses what is out of time
+  or not what was authorized, and will not speak for what went out on something else.
+- The console asks for the load as well as the place, when a task names one, and takes a person's word
+  for the time when there is no platform to ask.
+- Definitions can send `{expires_at}` and `{epoch}`, so equipment that can check them, can.
+
 ## 0.3.1
 
 - The gateway's releases are static, so they run on any 64-bit Linux. Those of 0.3.0 needed glibc 2.39 and

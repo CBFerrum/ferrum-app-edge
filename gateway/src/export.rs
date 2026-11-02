@@ -55,7 +55,12 @@ impl Sender {
     /// An export can come from the platform, so where it goes is the site's to limit, like anything
     /// a definition opens.
     pub fn new(limits: Limits) -> Sender {
-        let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).connect_timeout(Duration::from_secs(5)).build().unwrap_or_default();
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(5))
+            .redirect(limits.redirects())
+            .build()
+            .unwrap_or_default();
         Sender { http, limits, ..Sender::default() }
     }
 
@@ -137,6 +142,9 @@ impl Sender {
 
     /// A release's file.
     pub async fn fetch(&self, url: &str) -> Result<Vec<u8>, String> {
+        if !self.limits.reaches(url) {
+            return Err(format!("{url} is not in this site's allow list"));
+        }
         let response = self.http.get(url).timeout(Duration::from_secs(600)).send().await.map_err(|e| e.to_string())?;
         if !response.status().is_success() {
             return Err(format!("{url} answered {}", response.status()));

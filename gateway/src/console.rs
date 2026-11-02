@@ -191,6 +191,26 @@ struct Step {
     scan: String,
     #[serde(default)]
     note: String,
+    /// What was scanned on the load, by the names the task's `load` gives.
+    #[serde(default)]
+    load: HashMap<String, String>,
+}
+
+/// The first thing on the load that does not match what the task says it is, if any. A value may be
+/// a list, for an item that goes by its code or its barcode.
+fn wrong_load(want: &Value, scanned: &HashMap<String, String>) -> Option<(String, String)> {
+    for (name, wanted) in want.as_object()? {
+        let got = scanned.get(name).map_or("", |s| s.trim());
+        let matches = match wanted {
+            Value::Array(any) => any.iter().any(|v| v.as_str() == Some(got)),
+            one => one.as_str() == Some(got),
+        };
+        if !matches {
+            let shown = wanted.as_array().and_then(|a| a.last()).unwrap_or(wanted);
+            return Some((name.clone(), shown.as_str().unwrap_or_default().to_string()));
+        }
+    }
+    None
 }
 
 /// A person's step on a task. A barcode the task expects must match: a wrong scan is kept as
@@ -202,15 +222,22 @@ async fn task_step(State(app): State<App>, headers: HeaderMap, Path((id, action)
     };
     let Ok(Some(e)) = app.rt.journal.entry(id) else { return err(StatusCode::NOT_FOUND, "no such task") };
     let expected = e.command.payload["verify"].as_str();
-    let evidence = json!({"scan": s.scan, "note": s.note});
+    let evidence = json!({"scan": s.scan, "note": s.note, "load": s.load});
     let state = match action.as_str() {
         "start" => "Started",
         "done" => {
+            let refuse = |want: String, scanned: &str| {
+                let _ = app.rt.record_fact("site.scan.mismatch", Some(session.name.clone()), json!({"command": id, "expected": want, "scanned": scanned}));
+                err(StatusCode::CONFLICT, format!("that is not {want}: nothing was completed"))
+            };
             if let Some(want) = expected
                 && want != s.scan
             {
-                let _ = app.rt.record_fact("site.scan.mismatch", Some(session.name.clone()), json!({"command": id, "expected": want, "scanned": s.scan}));
-                return err(StatusCode::CONFLICT, format!("that is not {want}: nothing was completed"));
+                return refuse(want.to_string(), &s.scan);
+            }
+            // The place says nothing about what reached it: the load is scanned too, by what it is known by.
+            if let Some((name, want)) = wrong_load(&e.command.payload["load"], &s.load) {
+                return refuse(want, s.load.get(&name).map_or("", String::as_str));
             }
             "Done"
         }
@@ -316,6 +343,25 @@ async fn resume(State(app): State<App>, headers: HeaderMap, axum::Json(r): axum:
     }
 }
 
+/// With no platform to ask after a power cut, a person says the time will do. It lets work start
+/// within what the lease allows by that time, and it is on record who said so.
+async fn vouch(State(app): State<App>, headers: HeaderMap, axum::Json(r): axum::Json<Resume>) -> Response {
+    let session = match app.needs(&headers, Some("recover")) {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    if r.found.trim().is_empty() {
+        return err(StatusCode::UNPROCESSABLE_ENTITY, "say how you know");
+    }
+    let now = app.rt.clock.now();
+    let text = format!("{} vouched for this site's time, {now}: {}", session.name, r.found);
+    let _ = app.rt.journal.notice(app.rt.clock.now_ms(), &text);
+    match app.rt.record_fact("site.clock.vouched", Some(session.name), json!({"found": r.found, "time": now})).and_then(|_| app.rt.vouch_time()) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(why) => err(StatusCode::INTERNAL_SERVER_ERROR, why),
+    }
+}
+
 pub fn router(rt: Arc<Runtime>) -> Router {
     let app = App { rt, sessions: Arc::default(), failures: Arc::new(Mutex::new((0, Utc::now()))) };
     Router::new()
@@ -329,6 +375,7 @@ pub fn router(rt: Arc<Runtime>) -> Router {
         .route("/api/floor", post(floor_report))
         .route("/api/commands/{id}/settle", post(settle))
         .route("/api/resume", post(resume))
+        .route("/api/clock", post(vouch))
         .with_state(app)
 }
 
@@ -350,6 +397,18 @@ mod tests {
         let press = shown.iter().find(|s| s["device"] == "PRESS").unwrap();
         assert_eq!(press["points"].as_array().unwrap().len(), Recent::POINTS);
         assert_eq!(press["points"][119][1], json!(499.0), "the newest stay");
+    }
+
+    #[test]
+    fn a_load_is_what_the_task_says_it_is() {
+        let said = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<HashMap<_, _>>();
+        let want = json!({"item": ["4006381333931", "BOLT"], "lot": "L-1"});
+        assert_eq!(wrong_load(&want, &said(&[("item", "BOLT"), ("lot", "L-1")])), None);
+        assert_eq!(wrong_load(&want, &said(&[("item", "4006381333931"), ("lot", " L-1 ")])), None, "by its barcode, as a scanner sends it");
+        assert_eq!(wrong_load(&want, &said(&[("item", "NUT"), ("lot", "L-1")])), Some(("item".into(), "BOLT".into())));
+        assert_eq!(wrong_load(&want, &said(&[("item", "BOLT")])), Some(("lot".into(), "L-1".into())), "nothing scanned is not a match");
+        assert_eq!(wrong_load(&json!({"unit": "T-100"}), &said(&[("unit", "T-200")])), Some(("unit".into(), "T-100".into())));
+        assert_eq!(wrong_load(&Value::Null, &said(&[])), None, "a task that names no load asks for none");
     }
 
     #[test]

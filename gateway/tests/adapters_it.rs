@@ -7,7 +7,7 @@ use chrono::{Duration, Utc};
 use ferrum_edge_contract::edge::DeviceLink;
 use ferrum_ops_contract::Command;
 use ferrum_ops_contract::sync::SiteDevice;
-use ferrum_site::adapter::{Adapter, Dispatched, Failure, Observation, Reading};
+use ferrum_site::adapter::{Adapter, Dispatched, Failure, Observation, Reading, expiry_secs};
 use ferrum_site::adapters::defined::Defined;
 use ferrum_site::adapters::modbus::{Handshake, Modbus, ModbusConfig, Register};
 use ferrum_site::adapters::mqtt::{Mqtt, MqttConfig, Subscription};
@@ -20,6 +20,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+
+/// How long a dispatch is told it has.
+const LEFT: std::time::Duration = std::time::Duration::from_secs(600);
 
 fn command(operation: &str, payload: Value) -> Command {
     Command {
@@ -278,7 +281,7 @@ async fn mqtt_says_only_what_the_device_said() {
     until("the status subscription", async || broker.subscribed("plant/+/status")).await;
 
     let c = command("machine.start_job", json!({"job": 412}));
-    assert!(matches!(adapter.dispatch(&c, &device("PRESS-1")).await, Ok(Dispatched::Accepted { .. })));
+    assert!(matches!(adapter.dispatch(&c, &device("PRESS-1"), LEFT).await, Ok(Dispatched::Accepted { .. })));
     until("the command on the wire", async || !broker.sent_to("plant/PRESS-1/cmd").is_empty()).await;
     let sent = broker.sent_to("plant/PRESS-1/cmd").remove(0);
     let body: Value = serde_json::from_slice(&sent.payload).unwrap();
@@ -288,17 +291,17 @@ async fn mqtt_says_only_what_the_device_said() {
     assert!(sent.expiry.is_some_and(|s| s > 0 && s <= 600), "a broker must not deliver it after its deadline: {:?}", sent.expiry);
 
     // QoS says what the broker did. Only the device's own status moves the command.
-    assert_eq!(adapter.observe(&c, None).await.unwrap(), Observation::Waiting);
+    assert_eq!(adapter.observe(&c, "PRESS-1", None).await.unwrap(), Observation::Waiting);
     broker.device_says("plant/PRESS-1/status", json!({"command": c.id, "state": "accepted"}).to_string());
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    assert_eq!(adapter.observe(&c, None).await.unwrap(), Observation::Waiting, "accepted is not running");
+    assert_eq!(adapter.observe(&c, "PRESS-1", None).await.unwrap(), Observation::Waiting, "accepted is not running");
     broker.device_says("plant/PRESS-1/status", json!({"command": c.id, "state": "running"}).to_string());
-    until("running", async || adapter.observe(&c, None).await.unwrap() == Observation::Running).await;
+    until("running", async || adapter.observe(&c, "PRESS-1", None).await.unwrap() == Observation::Running).await;
     broker.device_says("plant/PRESS-1/status", json!({"command": Uuid::now_v7(), "state": "completed"}).to_string());
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    assert_eq!(adapter.observe(&c, None).await.unwrap(), Observation::Running, "another command's status is not this one's");
+    assert_eq!(adapter.observe(&c, "PRESS-1", None).await.unwrap(), Observation::Running, "another command's status is not this one's");
     broker.device_says("plant/PRESS-1/status", json!({"command": c.id, "state": "completed"}).to_string());
-    until("completed", async || matches!(adapter.observe(&c, None).await.unwrap(), Observation::Completed(_))).await;
+    until("completed", async || matches!(adapter.observe(&c, "PRESS-1", None).await.unwrap(), Observation::Completed(_))).await;
 
     // Measurements: what can be read is kept, and what cannot is not stored as something else.
     broker.device_says("plant/PRESS-1/temp", json!({"value": 21.5}).to_string());
@@ -316,12 +319,12 @@ async fn mqtt_says_only_what_the_device_said() {
     broker.cut_off();
     until("the loss to be noticed", async || adapter.health() != "connected").await;
     let late = command("machine.start_job", json!({"job": 413}));
-    assert!(matches!(adapter.dispatch(&late, &device("PRESS-1")).await, Err(Failure::NotSent(_))), "with no broker nothing can have gone");
+    assert!(matches!(adapter.dispatch(&late, &device("PRESS-1"), LEFT).await, Err(Failure::NotSent(_))), "with no broker nothing can have gone");
     until("the link to return", async || broker.subscribed("plant/+/status")).await;
     until("connected again", async || adapter.health() == "connected").await;
-    assert!(matches!(adapter.dispatch(&late, &device("PRESS-1")).await, Ok(Dispatched::Accepted { .. })));
+    assert!(matches!(adapter.dispatch(&late, &device("PRESS-1"), LEFT).await, Ok(Dispatched::Accepted { .. })));
     broker.device_says("plant/PRESS-1/status", json!({"command": late.id, "state": "failed", "why": "jam"}).to_string());
-    until("the failure", async || matches!(adapter.observe(&late, None).await.unwrap(), Observation::Failed(_))).await;
+    until("the failure", async || matches!(adapter.observe(&late, "PRESS-1", None).await.unwrap(), Observation::Failed(_))).await;
 }
 
 #[tokio::test]
@@ -329,7 +332,7 @@ async fn a_read_only_mqtt_device_takes_no_commands() {
     let broker = Broker::start().await;
     let adapter = Mqtt::start("r", MqttConfig { command_topic: None, status_topic: None, ..mqtt_config(broker.port) });
     let c = command("machine.start_job", json!({}));
-    assert!(matches!(adapter.dispatch(&c, &device("PRESS-1")).await, Ok(Dispatched::Rejected(_))));
+    assert!(matches!(adapter.dispatch(&c, &device("PRESS-1"), LEFT).await, Ok(Dispatched::Rejected(_))));
 }
 
 fn vda_config(port: u16, version: &str) -> VdaConfig {
@@ -343,15 +346,15 @@ async fn vda5050_follows_the_vehicle() {
     until("the state subscription", async || broker.subscribed("uagv/v2/acme/AMR-1/connection")).await;
     let order = || json!({"nodes": [{"nodeId": "a"}], "edges": []});
     let c = command("warehouse.move", order());
-    assert!(matches!(adapter.dispatch(&c, &device("AMR-1")).await, Err(Failure::NotSent(_))), "a vehicle not known to be online gets nothing");
+    assert!(matches!(adapter.dispatch(&c, &device("AMR-1"), LEFT).await, Err(Failure::NotSent(_))), "a vehicle not known to be online gets nothing");
 
     broker.device_says("uagv/v2/acme/AMR-1/connection", json!({"connectionState": "ONLINE"}).to_string());
     until("online", async || adapter.health().starts_with("1 of 1")).await;
     assert!(
-        matches!(adapter.dispatch(&command("warehouse.move", json!({})), &device("AMR-1")).await, Ok(Dispatched::Rejected(_))),
+        matches!(adapter.dispatch(&command("warehouse.move", json!({})), &device("AMR-1"), LEFT).await, Ok(Dispatched::Rejected(_))),
         "an order needs nodes and edges"
     );
-    assert!(matches!(adapter.dispatch(&c, &device("AMR-1")).await, Ok(Dispatched::Accepted { .. })));
+    assert!(matches!(adapter.dispatch(&c, &device("AMR-1"), LEFT).await, Ok(Dispatched::Accepted { .. })));
     until("the order on the wire", async || !broker.sent_to("uagv/v2/acme/AMR-1/order").is_empty()).await;
     let sent: Value = serde_json::from_slice(&broker.sent_to("uagv/v2/acme/AMR-1/order")[0].payload).unwrap();
     assert_eq!(
@@ -364,25 +367,128 @@ async fn vda5050_follows_the_vehicle() {
         json!({"headerId": header, "orderId": id, "nodeStates": nodes, "edgeStates": [], "driving": driving, "actionStates": [], "errors": [], "batteryState": {"batteryCharge": 81.5}}).to_string()
     };
     broker.device_says("uagv/v2/acme/AMR-1/state", state(10, json!([{"nodeId": "a"}]), true));
-    until("running", async || adapter.observe(&c, None).await.unwrap() == Observation::Running).await;
+    until("running", async || adapter.observe(&c, "AMR-1", None).await.unwrap() == Observation::Running).await;
     broker.device_says("uagv/v2/acme/AMR-1/state", state(5, json!([]), false));
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    assert_eq!(adapter.observe(&c, None).await.unwrap(), Observation::Running, "a late message does not replace a newer one");
+    assert_eq!(adapter.observe(&c, "AMR-1", None).await.unwrap(), Observation::Running, "a late message does not replace a newer one");
     let read = adapter.read().await.unwrap();
     assert!(read.iter().any(|r| matches!(r, Reading::Value { metric, value, .. } if metric == "battery.pct" && *value == 81.5)), "{read:?}");
     broker.device_says("uagv/v2/acme/AMR-1/state", state(11, json!([]), false));
-    until("finished", async || matches!(adapter.observe(&c, None).await.unwrap(), Observation::Completed(_))).await;
+    until("finished", async || matches!(adapter.observe(&c, "AMR-1", None).await.unwrap(), Observation::Completed(_))).await;
 
     let c2 = command("warehouse.move", order());
-    adapter.dispatch(&c2, &device("AMR-1")).await.unwrap();
-    adapter.cancel(&c2, None).await.unwrap();
+    adapter.dispatch(&c2, &device("AMR-1"), LEFT).await.unwrap();
+    assert!(
+        matches!(adapter.cancel(&c2, "AMR-1", None).await, Err(Failure::NotSent(_))),
+        "cancelOrder stops whatever a vehicle is doing, so nothing is asked until it says it has this"
+    );
+    let on_it = json!({"headerId": 12, "orderId": c2.id.to_string(), "nodeStates": [{"nodeId": "a"}], "edgeStates": [], "driving": true, "actionStates": [], "errors": []});
+    broker.device_says("uagv/v2/acme/AMR-1/state", on_it.to_string());
+    until("it has it", async || adapter.observe(&c2, "AMR-1", None).await.unwrap() == Observation::Running).await;
+    adapter.cancel(&c2, "AMR-1", None).await.unwrap();
     until("the cancel on the wire", async || !broker.sent_to("uagv/v2/acme/AMR-1/instantActions").is_empty()).await;
     let cancel: Value = serde_json::from_slice(&broker.sent_to("uagv/v2/acme/AMR-1/instantActions")[0].payload).unwrap();
     assert_eq!(cancel["actions"][0]["actionType"], json!("cancelOrder"));
-    assert_eq!(adapter.observe(&c2, None).await.unwrap(), Observation::Waiting, "asking is not stopping");
-    let fatal = json!({"headerId": 12, "orderId": c2.id.to_string(), "nodeStates": [{"nodeId": "a"}], "edgeStates": [], "driving": false, "actionStates": [], "errors": [{"errorLevel": "FATAL", "errorType": "x"}]});
+    assert_eq!(adapter.observe(&c2, "AMR-1", None).await.unwrap(), Observation::Running, "asking is not stopping");
+    let fatal = json!({"headerId": 13, "orderId": c2.id.to_string(), "nodeStates": [{"nodeId": "a"}], "edgeStates": [], "driving": false, "actionStates": [], "errors": [{"errorLevel": "FATAL", "errorType": "x"}]});
     broker.device_says("uagv/v2/acme/AMR-1/state", fatal.to_string());
-    until("the failure", async || matches!(adapter.observe(&c2, None).await.unwrap(), Observation::Failed(_))).await;
+    until("the failure", async || matches!(adapter.observe(&c2, "AMR-1", None).await.unwrap(), Observation::Failed(_))).await;
+}
+
+#[tokio::test]
+async fn stopping_one_vehicles_order_touches_no_other_vehicle() {
+    let broker = Broker::start().await;
+    let adapter = Vda::start("v", vda_config(broker.port, "2.0.0"), vec!["AMR-1".into(), "AMR-2".into()]);
+    until("the state subscription", async || broker.subscribed("uagv/v2/acme/AMR-2/connection")).await;
+    for vehicle in ["AMR-1", "AMR-2"] {
+        broker.device_says(&format!("uagv/v2/acme/{vehicle}/connection"), json!({"connectionState": "ONLINE"}).to_string());
+    }
+    until("online", async || adapter.health().starts_with("2 of 2")).await;
+    let c = command("warehouse.move", json!({"nodes": [{"nodeId": "a"}], "edges": []}));
+    adapter.dispatch(&c, &device("AMR-1"), LEFT).await.unwrap();
+    let state = json!({"headerId": 10, "orderId": c.id.to_string(), "nodeStates": [{"nodeId": "a"}], "edgeStates": [], "driving": true, "actionStates": [], "errors": []});
+    broker.device_says("uagv/v2/acme/AMR-1/state", state.to_string());
+    until("it has it", async || adapter.observe(&c, "AMR-1", None).await.unwrap() == Observation::Running).await;
+    adapter.cancel(&c, "AMR-1", None).await.unwrap();
+    until("the cancel on the wire", async || !broker.sent_to("uagv/v2/acme/AMR-1/instantActions").is_empty()).await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(broker.sent_to("uagv/v2/acme/AMR-2/instantActions").is_empty(), "cancelOrder would have stopped whatever it was doing");
+    assert_eq!(adapter.observe(&c, "AMR-2", None).await.unwrap(), Observation::Waiting, "and another vehicle's state says nothing about this");
+}
+
+#[tokio::test]
+async fn a_message_never_carries_a_deadline_it_has_not_got() {
+    assert_eq!(expiry_secs(std::time::Duration::ZERO), None, "an expired command does not go with a second to live");
+    assert_eq!(expiry_secs(std::time::Duration::from_millis(1)), Some(1));
+    assert_eq!(expiry_secs(std::time::Duration::from_millis(1500)), Some(2), "rounded up: a message's expiry is a number of seconds, and zero means none");
+    let broker = Broker::start().await;
+    let adapter = Mqtt::start("r", mqtt_config(broker.port));
+    until("connected", async || adapter.health() == "connected").await;
+    let c = command("machine.start_job", json!({"job": 1}));
+    assert!(matches!(adapter.dispatch(&c, &device("PRESS-1"), std::time::Duration::ZERO).await, Err(Failure::NotSent(_))), "it is held back, not sent late");
+}
+
+/// Eight devices that take the same operation, and only one has heard of the command.
+#[tokio::test]
+async fn recovery_asks_the_device_it_sent_to_and_no_other() {
+    use axum::Router;
+    use axum::extract::{Path, State};
+    use axum::http::StatusCode;
+    use axum::routing::get;
+
+    #[derive(Clone, Default)]
+    struct Heard(Arc<Mutex<Vec<String>>>);
+    async fn lookup(State(heard): State<Heard>, Path(id): Path<String>) -> (StatusCode, axum::Json<Value>) {
+        heard.0.lock().unwrap().push(id);
+        (StatusCode::NOT_FOUND, axum::Json(json!({})))
+    }
+    let definition = r#"
+name: rest-robot
+commands:
+  robot.go:
+    post: /missions
+    send: {by: "{device}"}
+    id: $.id
+    status:
+      poll: {get: "/by-command/{id}"}
+      json: $.state
+      running: [Executing]
+      done: Done
+    find:
+      poll: {get: "/by-command/{command}"}
+      json: $.state
+      running: [Executing]
+      done: Done
+    cancel: {delete: "/queue/{device}"}
+"#;
+    let d = Defined::new(Limits::default(), json!({}));
+    let (mut links, mut logs) = (Vec::new(), Vec::new());
+    for n in 0..8 {
+        let heard = Heard::default();
+        let app = Router::new()
+            .route("/by-command/{id}", get(lookup))
+            .route("/queue/{device}", axum::routing::delete(|| async { StatusCode::NO_CONTENT }))
+            .with_state(heard.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        links.push((format!("R-{n}"), Some(format!("http://{address}"))));
+        logs.push(heard);
+    }
+    let devices: Vec<(&str, Option<String>)> = links.iter().map(|(c, a)| (c.as_str(), a.clone())).collect();
+    assert_eq!(apply(&d, definition, &devices), Vec::<String>::new());
+    let c = command("robot.go", json!({}));
+    assert_eq!(d.find(&c, "R-5").await.unwrap(), Some(Observation::NotFound));
+    for (n, heard) in logs.iter().enumerate() {
+        assert_eq!(heard.0.lock().unwrap().len(), usize::from(n == 5), "R-{n} was asked: only the device it went to may answer for it");
+    }
+    assert_ne!(d.endpoint("R-5"), d.endpoint("R-4"), "and a binding can tell them apart");
+    assert!(d.endpoint("nobody").is_none());
+    let before = d.endpoint("R-5");
+    let elsewhere: Vec<(&str, Option<String>)> =
+        devices.iter().map(|(c, a)| (*c, if *c == "R-5" { links[0].1.clone().map(|a| format!("{a}/")) } else { a.clone() })).collect();
+    assert_eq!(apply(&d, definition, &elsewhere), Vec::<String>::new());
+    assert_ne!(d.endpoint("R-5"), before, "moved to another address, its binding no longer holds");
 }
 
 #[tokio::test]
@@ -390,7 +496,7 @@ async fn a_vda5050_version_we_did_not_write_for_is_refused() {
     let broker = Broker::start().await;
     let adapter = Vda::start("o", vda_config(broker.port, "3.0.0"), vec!["AMR-1".into()]);
     let c = command("warehouse.move", json!({"nodes": [], "edges": []}));
-    assert!(matches!(adapter.dispatch(&c, &device("AMR-1")).await, Ok(Dispatched::Rejected(why)) if why.contains("3.0.0")));
+    assert!(matches!(adapter.dispatch(&c, &device("AMR-1"), LEFT).await, Ok(Dispatched::Rejected(why)) if why.contains("3.0.0")));
 }
 
 // ───── just enough of a Modbus TCP controller ─────
@@ -469,14 +575,14 @@ async fn modbus_writes_only_the_handshake_it_was_given() {
     let plc: Arc<Mutex<Plc>> = Arc::default();
     let adapter = Modbus::new(modbus_config(controller(plc.clone()).await));
     let c = command("machine.start_job", json!({"job": 412}));
-    assert!(matches!(adapter.dispatch(&c, &device("PRESS-1")).await, Ok(Dispatched::Accepted { .. })));
+    assert!(matches!(adapter.dispatch(&c, &device("PRESS-1"), LEFT).await, Ok(Dispatched::Accepted { .. })));
     assert_eq!(plc.lock().unwrap().writes, vec![(100, 412), (101, 1)], "the job first: nothing has happened until the start register");
 
-    assert_eq!(adapter.observe(&c, None).await.unwrap(), Observation::Waiting);
+    assert_eq!(adapter.observe(&c, "PRESS-1", None).await.unwrap(), Observation::Waiting);
     plc.lock().unwrap().registers.insert(102, 1);
-    assert_eq!(adapter.observe(&c, None).await.unwrap(), Observation::Running);
+    assert_eq!(adapter.observe(&c, "PRESS-1", None).await.unwrap(), Observation::Running);
     plc.lock().unwrap().registers.insert(102, 2);
-    assert!(matches!(adapter.observe(&c, None).await.unwrap(), Observation::Completed(_)));
+    assert!(matches!(adapter.observe(&c, "PRESS-1", None).await.unwrap(), Observation::Completed(_)));
 
     plc.lock().unwrap().registers.insert(200, 10);
     let read = adapter.read().await.unwrap();
@@ -484,16 +590,16 @@ async fn modbus_writes_only_the_handshake_it_was_given() {
 
     let writes = plc.lock().unwrap().writes.len();
     assert!(
-        matches!(adapter.dispatch(&command("door.force", json!({"job": 1})), &device("PRESS-1")).await, Ok(Dispatched::Rejected(_))),
+        matches!(adapter.dispatch(&command("door.force", json!({"job": 1})), &device("PRESS-1"), LEFT).await, Ok(Dispatched::Rejected(_))),
         "only what the site mapped"
     );
     assert!(
-        matches!(adapter.dispatch(&command("machine.start_job", json!({"job": 70000})), &device("PRESS-1")).await, Ok(Dispatched::Rejected(_))),
+        matches!(adapter.dispatch(&command("machine.start_job", json!({"job": 70000})), &device("PRESS-1"), LEFT).await, Ok(Dispatched::Rejected(_))),
         "a job number that does not fit"
     );
-    assert!(matches!(adapter.dispatch(&command("machine.start_job", json!({})), &device("PRESS-1")).await, Ok(Dispatched::Rejected(_))));
+    assert!(matches!(adapter.dispatch(&command("machine.start_job", json!({})), &device("PRESS-1"), LEFT).await, Ok(Dispatched::Rejected(_))));
     assert_eq!(plc.lock().unwrap().writes.len(), writes, "and none of those wrote anything");
-    assert!(adapter.cancel(&c, None).await.is_err(), "a stop over Modbus would look like a stop without being one");
+    assert!(adapter.cancel(&c, "PRESS-1", None).await.is_err(), "a stop over Modbus would look like a stop without being one");
 }
 
 #[tokio::test]
@@ -502,17 +608,17 @@ async fn an_unanswered_start_is_not_known_to_have_failed() {
     plc.lock().unwrap().silent_on = Some(101);
     let adapter = Modbus::new(modbus_config(controller(plc.clone()).await));
     let c = command("machine.start_job", json!({"job": 412}));
-    let answer = adapter.dispatch(&c, &device("PRESS-1")).await;
+    let answer = adapter.dispatch(&c, &device("PRESS-1"), LEFT).await;
     assert!(matches!(answer, Err(Failure::Unknown(_))), "it may have started, and nothing here can tell: {answer:?}");
 
     // Before the start register nothing can have happened, so that much is known.
     plc.lock().unwrap().silent_on = Some(100);
     let adapter = Modbus::new(modbus_config(controller(plc.clone()).await));
-    let answer = adapter.dispatch(&c, &device("PRESS-1")).await;
+    let answer = adapter.dispatch(&c, &device("PRESS-1"), LEFT).await;
     assert!(matches!(answer, Err(Failure::NotSent(_))), "{answer:?}");
 
     let nobody = Modbus::new(modbus_config("127.0.0.1:9".parse().unwrap()));
-    assert!(matches!(nobody.dispatch(&c, &device("PRESS-1")).await, Err(Failure::NotSent(_))), "no connection, nothing sent");
+    assert!(matches!(nobody.dispatch(&c, &device("PRESS-1"), LEFT).await, Err(Failure::NotSent(_))), "no connection, nothing sent");
 }
 
 // ───── any of them by a definition ─────
@@ -605,22 +711,22 @@ commands:
     reading(&d, |r| is_metric(r, "weight.kg", 12.5)).await;
 
     let c = command("scale.tare", json!({}));
-    assert!(matches!(d.dispatch(&c, &device("SCALE-1")).await, Ok(Dispatched::Accepted { .. })));
-    until("the tare", async || matches!(d.observe(&c, None).await.unwrap(), Observation::Completed(_))).await;
+    assert!(matches!(d.dispatch(&c, &device("SCALE-1"), LEFT).await, Ok(Dispatched::Accepted { .. })));
+    until("the tare", async || matches!(d.observe(&c, "SCALE-1", None).await.unwrap(), Observation::Completed(_))).await;
     let bad = command("scale.nonsense", json!({}));
-    d.dispatch(&bad, &device("SCALE-1")).await.unwrap();
-    until("the refusal", async || matches!(d.observe(&bad, None).await.unwrap(), Observation::Failed(_))).await;
+    d.dispatch(&bad, &device("SCALE-1"), LEFT).await.unwrap();
+    until("the refusal", async || matches!(d.observe(&bad, "SCALE-1", None).await.unwrap(), Observation::Failed(_))).await;
 
     let unknown = command("scale.dance", json!({}));
     assert!(
-        matches!(d.dispatch(&unknown, &device("SCALE-1")).await, Ok(Dispatched::Rejected(why)) if why.contains("scale.dance")),
+        matches!(d.dispatch(&unknown, &device("SCALE-1"), LEFT).await, Ok(Dispatched::Rejected(why)) if why.contains("scale.dance")),
         "only what its definition says"
     );
 
     // `once` proves the send and says that is all it proves.
     let once = command("scale.hang", json!({}));
-    d.dispatch(&once, &device("SCALE-1")).await.unwrap();
-    assert!(matches!(d.observe(&once, None).await.unwrap(), Observation::Completed(e) if e["proved"].as_str().unwrap().contains("nothing beyond")));
+    d.dispatch(&once, &device("SCALE-1"), LEFT).await.unwrap();
+    assert!(matches!(d.observe(&once, "SCALE-1", None).await.unwrap(), Observation::Completed(e) if e["proved"].as_str().unwrap().contains("nothing beyond")));
 
     // That closed the connection: it comes back by itself, and readings with it.
     until("the reconnection", async || *served.lock().unwrap() >= 2).await;
@@ -732,30 +838,33 @@ commands:
     reading(&d, |r| matches!(r, Reading::Attribute { key, .. } if key == "firmware")).await;
 
     let no = command("robot.go", json!({"to": "NOWHERE"}));
-    assert!(matches!(d.dispatch(&no, &device("AMR-1")).await, Ok(Dispatched::Rejected(why)) if why.contains("422")), "it said no: nothing happened");
+    assert!(matches!(d.dispatch(&no, &device("AMR-1"), LEFT).await, Ok(Dispatched::Rejected(why)) if why.contains("422")), "it said no: nothing happened");
     let broke = command("robot.go", json!({"to": "BROKEN"}));
-    assert!(matches!(d.dispatch(&broke, &device("AMR-1")).await, Err(Failure::Unknown(_))), "it broke while reading it: it may have happened");
+    assert!(matches!(d.dispatch(&broke, &device("AMR-1"), LEFT).await, Err(Failure::Unknown(_))), "it broke while reading it: it may have happened");
     let missing = command("robot.go", json!({}));
     assert!(
-        matches!(d.dispatch(&missing, &device("AMR-1")).await, Ok(Dispatched::Rejected(why)) if why.contains("payload.to")),
+        matches!(d.dispatch(&missing, &device("AMR-1"), LEFT).await, Ok(Dispatched::Rejected(why)) if why.contains("payload.to")),
         "half a command does not leave"
     );
 
     let c = command("robot.go", json!({"to": "A-1"}));
-    let Ok(Dispatched::Accepted { external }) = d.dispatch(&c, &device("AMR-1")).await else { panic!("accepted") };
+    let Ok(Dispatched::Accepted { external }) = d.dispatch(&c, &device("AMR-1"), LEFT).await else { panic!("accepted") };
     assert_eq!(external.as_deref(), Some("m-7"), "its own name for the work");
-    assert_eq!(d.observe(&c, external.as_deref()).await.unwrap(), Observation::Running);
+    assert_eq!(d.observe(&c, "AMR-1", external.as_deref()).await.unwrap(), Observation::Running);
     let http = reqwest::Client::new();
     http.post(format!("http://{address}/advance/Done")).send().await.unwrap();
-    assert!(matches!(d.observe(&c, external.as_deref()).await.unwrap(), Observation::Completed(e) if e["id"] == json!("m-7")), "the evidence is what it said");
+    assert!(
+        matches!(d.observe(&c, "AMR-1", external.as_deref()).await.unwrap(), Observation::Completed(e) if e["id"] == json!("m-7")),
+        "the evidence is what it said"
+    );
 
     // A restart: the journal has the name, and this link has never heard of the command.
     let again = defined_like(&d, &address).await;
     http.post(format!("http://{address}/advance/Executing")).send().await.unwrap();
     let c2 = command("robot.go", json!({"to": "A-1"}));
-    assert_eq!(again.observe(&c2, Some("m-7")).await.unwrap(), Observation::Running);
-    again.cancel(&c2, Some("m-7")).await.unwrap();
-    assert!(matches!(again.observe(&c2, Some("m-7")).await.unwrap(), Observation::Aborted(_)));
+    assert_eq!(again.observe(&c2, "AMR-1", Some("m-7")).await.unwrap(), Observation::Running);
+    again.cancel(&c2, "AMR-1", Some("m-7")).await.unwrap();
+    assert!(matches!(again.observe(&c2, "AMR-1", Some("m-7")).await.unwrap(), Observation::Aborted(_)));
 }
 
 async fn defined_like(_: &Defined, address: &std::net::SocketAddr) -> Defined {
@@ -827,19 +936,19 @@ commands:
     assert!(is_metric(&moved, "temp.c", 25.0), "{moved:?}");
 
     let c = command("valve.open", json!({}));
-    d.dispatch(&c, &device("V-2")).await.unwrap();
+    d.dispatch(&c, &device("V-2"), LEFT).await.unwrap();
     until("the command", async || !broker.sent_to("plant/V-2/cmd").is_empty()).await;
     let sent = broker.sent_to("plant/V-2/cmd").remove(0);
     assert!(sent.expiry.is_some(), "a broker must not deliver it after its deadline");
     assert_eq!(serde_json::from_slice::<Value>(&sent.payload).unwrap()["id"], json!(c.id.to_string()));
     broker.device_says("plant/V-2/ack", json!({"id": Uuid::now_v7(), "state": "opened"}).to_string());
     broker.device_says("plant/V-2/ack", json!({"id": c.id, "state": "started"}).to_string());
-    until("started", async || d.observe(&c, None).await.unwrap() == Observation::Running).await;
+    until("started", async || d.observe(&c, "V-2", None).await.unwrap() == Observation::Running).await;
     broker.device_says("plant/V-2/ack", json!({"id": c.id, "state": "opened"}).to_string());
-    until("opened", async || matches!(d.observe(&c, None).await.unwrap(), Observation::Completed(_))).await;
+    until("opened", async || matches!(d.observe(&c, "V-2", None).await.unwrap(), Observation::Completed(_))).await;
     broker.device_says("plant/V-2/ack", json!({"id": c.id, "state": "started"}).to_string());
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    assert!(matches!(d.observe(&c, None).await.unwrap(), Observation::Completed(_)), "a late word does not reopen what ended");
+    assert!(matches!(d.observe(&c, "V-2", None).await.unwrap(), Observation::Completed(_)), "a late word does not reopen what ended");
 }
 
 #[tokio::test]
@@ -878,19 +987,19 @@ commands:
     reading(&d, |r| is_metric(r, "pressure", 21.5)).await;
     reading(&d, |r| is_metric(r, "count", 7.0)).await;
     let c = command("machine.start_job", json!({"job": 412}));
-    assert!(matches!(d.dispatch(&c, &device("PRESS-1")).await, Ok(Dispatched::Accepted { .. })));
+    assert!(matches!(d.dispatch(&c, &device("PRESS-1"), LEFT).await, Ok(Dispatched::Accepted { .. })));
     assert_eq!(plc.lock().unwrap().writes, vec![(200, 412), (201, 1)], "the job first, and only those");
-    assert_eq!(d.observe(&c, None).await.unwrap(), Observation::Waiting);
+    assert_eq!(d.observe(&c, "PRESS-1", None).await.unwrap(), Observation::Waiting);
     plc.lock().unwrap().registers.insert(202, 1);
-    assert_eq!(d.observe(&c, None).await.unwrap(), Observation::Running);
+    assert_eq!(d.observe(&c, "PRESS-1", None).await.unwrap(), Observation::Running);
     plc.lock().unwrap().registers.insert(202, 2);
-    assert!(matches!(d.observe(&c, None).await.unwrap(), Observation::Completed(_)));
+    assert!(matches!(d.observe(&c, "PRESS-1", None).await.unwrap(), Observation::Completed(_)));
     let too_big = command("machine.start_job", json!({"job": 70000}));
-    assert!(matches!(d.dispatch(&too_big, &device("PRESS-1")).await, Ok(Dispatched::Rejected(why)) if why.contains("fit a register")));
+    assert!(matches!(d.dispatch(&too_big, &device("PRESS-1"), LEFT).await, Ok(Dispatched::Rejected(why)) if why.contains("fit a register")));
 
     plc.lock().unwrap().silent_on = Some(201);
     let lost = command("machine.start_job", json!({"job": 9}));
-    assert!(matches!(d.dispatch(&lost, &device("PRESS-1")).await, Err(Failure::Unknown(_))), "the start went unanswered: it may have started");
+    assert!(matches!(d.dispatch(&lost, &device("PRESS-1"), LEFT).await, Err(Failure::Unknown(_))), "the start went unanswered: it may have started");
 }
 
 #[tokio::test]
@@ -941,8 +1050,8 @@ commands:
     );
     reading(&d, |r| is_metric(r, "battery.pct", 50.0)).await;
     let c = command("robot.navigate", json!({"pose": {"x": 1.5}}));
-    d.dispatch(&c, &device("AMR-1")).await.unwrap();
-    until("the goal's end", async || matches!(d.observe(&c, None).await.unwrap(), Observation::Completed(_))).await;
+    d.dispatch(&c, &device("AMR-1"), LEFT).await.unwrap();
+    until("the goal's end", async || matches!(d.observe(&c, "AMR-1", None).await.unwrap(), Observation::Completed(_))).await;
     let goal = said.lock().unwrap().iter().find(|v| v["op"] == json!("send_action_goal")).cloned().unwrap();
     assert_eq!(goal["args"]["pose"]["x"], json!(1.5), "a value keeps its shape");
 }
@@ -966,7 +1075,7 @@ async fn a_serial_port() {
     use std::io::{Read, Write};
     cable.write_all(b"V=230.5\n").unwrap();
     reading(&d, |r| is_metric(r, "volts", 230.5)).await;
-    d.dispatch(&command("meter.reset", json!({})), &device("METER-1")).await.unwrap();
+    d.dispatch(&command("meter.reset", json!({})), &device("METER-1"), LEFT).await.unwrap();
     let mut buf = [0u8; 16];
     let n = tokio::task::block_in_place(|| cable.read(&mut buf).unwrap());
     assert_eq!(&buf[..n], b"RST\n");
@@ -997,8 +1106,8 @@ done
     assert_eq!(apply(&d, "name: pump\nconnect: process://driver.sh\n", &[("PUMP-1", None)]), Vec::<String>::new());
     reading(&d, |r| is_metric(r, "flow", 7.5)).await;
     let c = command("pump.start", json!({"rate": 3}));
-    assert!(matches!(d.dispatch(&c, &device("PUMP-1")).await, Ok(Dispatched::Accepted { .. })));
-    until("the driver's answer", async || matches!(d.observe(&c, None).await.unwrap(), Observation::Completed(_))).await;
+    assert!(matches!(d.dispatch(&c, &device("PUMP-1"), LEFT).await, Ok(Dispatched::Accepted { .. })));
+    until("the driver's answer", async || matches!(d.observe(&c, "PUMP-1", None).await.unwrap(), Observation::Completed(_))).await;
 
     let elsewhere = Defined::new(Limits { drivers_dir: Some(dir.clone()), ..Default::default() }, json!({}));
     let problems = apply(&elsewhere, "name: pump\nconnect: process://../../bin/sh\n", &[("PUMP-1", None)]);

@@ -18,6 +18,9 @@ use std::time::Duration;
 use tokio::net::UdpSocket;
 use uuid::Uuid;
 
+/// How long a dispatch is told it has.
+const LEFT: std::time::Duration = std::time::Duration::from_secs(600);
+
 fn free_port() -> u16 {
     std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
@@ -137,12 +140,12 @@ async fn a_device_written_by_someone_else() {
     let device =
         SiteDevice { id: Uuid::nil(), code: "meter-1".into(), kind: "Sensor".into(), lifecycle: "Active".into(), operations: vec![], limits: BTreeMap::new() };
     let write = command("clock.offset", json!({"offset": "+05:30"}));
-    assert!(matches!(d.dispatch(&write, &device).await, Ok(Dispatched::Accepted { .. })), "it was sent");
+    assert!(matches!(d.dispatch(&write, &device, LEFT).await, Ok(Dispatched::Accepted { .. })), "it was sent");
     tokio::time::sleep(Duration::from_millis(500)).await;
     let read = command("clock.read", json!({}));
     let mut offset = None;
     for _ in 0..200 {
-        let _ = d.dispatch(&read, &device).await;
+        let _ = d.dispatch(&read, &device, LEFT).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
         offset = d.read().await.unwrap().into_iter().find_map(|r| match r {
             Reading::Attribute { key, value, .. } if key == "offset" && value != json!("") => Some(value),

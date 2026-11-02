@@ -135,9 +135,31 @@ pub struct Limits {
     pub state_dir: Option<PathBuf>,
 }
 
+/// Hops a redirect may take, each one checked.
+const MAX_REDIRECTS: usize = 5;
+
 impl Limits {
+    /// An entry is a whole host, or a range when it ends in a dot or a dash. `plant.example.com` is that
+    /// host, and not `plant.example.com.elsewhere.org`.
     fn host_allowed(&self, host: &str) -> bool {
-        self.allow.is_empty() || self.allow.iter().any(|a| host.starts_with(a.as_str()))
+        self.allow.is_empty() || self.allow.iter().any(|a| host == a || (a.ends_with(['.', '-']) && host.starts_with(a.as_str())))
+    }
+
+    /// Where HTTP may be sent on from where it was allowed to go: the same list, at every hop, and
+    /// never from encrypted to plain. Anything else stops before the request is made.
+    pub fn redirects(&self) -> reqwest::redirect::Policy {
+        let limits = self.clone();
+        reqwest::redirect::Policy::custom(move |attempt| {
+            let downgrade = attempt.previous().iter().any(|u| u.scheme() == "https") && attempt.url().scheme() != "https";
+            if attempt.previous().len() > MAX_REDIRECTS {
+                attempt.error("too many redirects")
+            } else if downgrade || !limits.reaches(attempt.url().as_str()) {
+                let to = attempt.url().to_string();
+                attempt.error(format!("sent on to {to}, which this site does not allow"))
+            } else {
+                attempt.follow()
+            }
+        })
     }
 
     /// Whether an address may be reached, for what opens connections of its own.
@@ -317,7 +339,7 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
             let (host, port) = super::tags::host_port(rest, 5683);
             Arc::new(CoapClient::new(format!("{host}:{port}"), subscribe))
         }
-        "mtconnect" | "mtconnects" => Arc::new(super::mtconnect::Mtconnect::new(scheme, rest)),
+        "mtconnect" | "mtconnects" => Arc::new(super::mtconnect::Mtconnect::new(scheme, rest, limits)),
         "nats" => Arc::new(super::nats::Nats::new(rest, subscribe)),
         "amqp" | "amqps" => Arc::new(super::sources::AmqpSource::new(scheme, rest, subscribe)?),
         #[cfg(feature = "kafka")]
@@ -773,7 +795,7 @@ struct Http {
 
 impl Http {
     fn new(base: &str, headers: &[(String, String)], tls: Option<&Tls>, limits: &Limits) -> Result<Http, String> {
-        let mut client = reqwest::Client::builder().timeout(Duration::from_secs(15)).connect_timeout(Duration::from_secs(5));
+        let mut client = reqwest::Client::builder().timeout(Duration::from_secs(15)).connect_timeout(Duration::from_secs(5)).redirect(limits.redirects());
         if let Some(tls) = tls {
             if let Some(ca) = &tls.ca {
                 let ca = reqwest::Certificate::from_pem(&limits.certificate(ca)?).map_err(|e| e.to_string())?;
