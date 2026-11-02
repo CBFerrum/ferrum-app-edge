@@ -130,7 +130,7 @@ the detail of what each thing was tried against.
 | Tenants, roles, audit, SSO, API tokens | ThingsBoard, Hono | **Verified** | The platform's own |
 | Usage limits per tenant | ThingsBoard | **Built** | The operator's, per workspace: measurements a day and devices. Past the first, gateways hold readings until there is room, and commands and leases go on. Other limits are budgets at the gateway |
 | Container workloads at the edge | Greengrass, Kura | **By design** | One binary, and external drivers |
-| Local dashboards at a gateway | Ignition Edge | **Partly** | The console shows work, links and problems. It draws no charts |
+| Local dashboards at a gateway | Ignition Edge | **Built** | The console shows work, links and problems, and to whoever signs in, the last 120 readings of up to 200 series, drawn. There is no designing a screen for it |
 | Federation between platforms | Ignition GAN | **Partly** | A gateway can export to another platform's ingest, and peers work through each other. Platforms do not share a view |
 
 ## Exports

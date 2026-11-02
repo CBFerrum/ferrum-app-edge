@@ -139,6 +139,8 @@ pub struct Runtime {
     signing: tokio::sync::Mutex<()>,
     exports: Mutex<Vec<Export>>,
     sender: Sender,
+    /// What was read lately, for the console.
+    pub recent: Mutex<crate::console::Recent>,
     export_shed: AtomicI64,
 }
 
@@ -223,6 +225,7 @@ impl Runtime {
             signing: tokio::sync::Mutex::new(()),
             exports: Mutex::default(),
             sender: Sender::new(exporting),
+            recent: Mutex::default(),
             export_shed: AtomicI64::new(0),
         });
         runtime.settle_update();
@@ -1023,7 +1026,16 @@ impl Runtime {
         if free_disk(&self.cfg.state_dir).is_some_and(|f| f < self.cfg.reserve_mb << 20) {
             batch.retain(|m| m.class == Class::Alarm);
         }
-        self.offer_exports(&batch, &self.devices_by_id());
+        let by_id = self.devices_by_id();
+        self.offer_exports(&batch, &by_id);
+        {
+            let mut recent = self.recent.lock().unwrap_or_else(|e| e.into_inner());
+            for m in &batch {
+                if let Some(d) = by_id.get(&m.device_id) {
+                    recent.heard(&d.code, &m.metric, m.source_time.timestamp_millis(), m.value);
+                }
+            }
+        }
         if let Err(e) = self.journal.add_samples(&batch) {
             tracing::warn!("measurements not kept: {e}");
         }
