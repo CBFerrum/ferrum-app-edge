@@ -299,12 +299,14 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
         "listen+lwm2m" => Arc::new(super::lwm2m::Lwm2m::new(bind.to_string(), subscribe, hub.ok_or("nothing here can check who calls")?)),
         "knx" => Arc::new(super::knx::Knx::new(rest, subscribe)),
         "iec104" => Arc::new(super::iec104::Iec104::new(rest)),
-        "s7" | "enip" | "ads" | "bacnet" | "snmp" | "mbus" => {
-            let (scheme, rest) = (scheme.to_string(), rest.to_string());
+        "s7" | "enip" | "ads" | "bacnet" | "snmp" | "mbus" | "postgres" | "sqlite" => {
+            let (scheme, rest, address) = (scheme.to_string(), rest.to_string(), address.to_string());
             Arc::new(super::tags::Tagged::new(move || {
-                let (scheme, rest) = (scheme.clone(), rest.clone());
+                let (scheme, rest, address) = (scheme.clone(), rest.clone(), address.clone());
                 Box::pin(async move {
                     match scheme.as_str() {
+                        "postgres" => super::sql::Postgres::connect(&address).await,
+                        "sqlite" => super::sql::Sqlite::connect(&rest).await,
                         "s7" => super::s7::S7::connect(&rest).await,
                         "enip" => super::enip::Enip::connect(&rest).await,
                         "ads" => super::ads::Ads::connect(&rest).await,

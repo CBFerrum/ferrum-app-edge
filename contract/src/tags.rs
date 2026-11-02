@@ -151,6 +151,12 @@ pub fn oid(text: &str) -> Result<(Vec<u32>, bool), String> {
     Ok((arcs, walk))
 }
 
+/// Whether a statement only reads. A database's own read-only mode is the second line of defence.
+pub fn read_only(sql: &str) -> bool {
+    let first = sql.split_whitespace().next().unwrap_or_default().to_lowercase();
+    matches!(first.as_str(), "select" | "with" | "values") && !sql.trim_end().trim_end_matches(';').contains(';')
+}
+
 /// Whether a protocol's tag can be read at all, for checking a definition.
 pub fn check(scheme: &str, tag: &str) -> Result<(), String> {
     match scheme {
@@ -158,6 +164,7 @@ pub fn check(scheme: &str, tag: &str) -> Result<(), String> {
         "bacnet" => BacnetAddress::parse(tag).map(drop),
         "snmp" => oid(tag).map(drop),
         "ads" | "enip" => symbol(tag).map(drop),
+        "postgres" | "sqlite" if !read_only(tag) => Err("this only reads: one select at a time".into()),
         _ => Ok(()),
     }
 }

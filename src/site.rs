@@ -15,6 +15,9 @@
 //! | `GET /solutions/export` | Edge Engineer | what is here, as a bundle, with nothing secret in it |
 //! | `GET /rollouts/{id}` | Edge Viewer | how a rollout of firmware stands, device by device |
 //! | `GET /fleet` | Edge Viewer | how each definition and site stands, and the versions running |
+//! | `GET /devices/{id}/twin` | Edge Viewer | what was asked of it and what it reports |
+//! | `GET /devices/{id}/td` | Edge Viewer | a W3C Thing Description |
+//! | `GET /devices/{id}/aas` | Edge Viewer | an Asset Administration Shell |
 //! | `GET /devices/{id}/availability` | Edge Viewer | `?days=`: how much of each day it was heard |
 //! | `POST /devices/import` | Edge Engineer | `{csv, tokens?}`: many devices, each row on its own |
 //! | `POST /fleet/command` | who may ask one | `{select, operation, payload, expires_in_secs?}`: one command each, through the ledger |
@@ -565,6 +568,18 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
         ("GET", ["fleet"]) => {
             may(ctx, READ)?;
             fleet::health(k, ctx).await?
+        }
+        ("GET", ["devices", id, "twin"]) => {
+            may(ctx, READ)?;
+            crate::twins::twin(k, ctx, uuid(id)?).await?
+        }
+        ("GET", ["devices", id, "td"]) => {
+            may(ctx, READ)?;
+            crate::twins::thing_description(k, ctx, uuid(id)?).await?
+        }
+        ("GET", ["devices", id, "aas"]) => {
+            may(ctx, READ)?;
+            crate::twins::administration_shell(k, ctx, uuid(id)?).await?
         }
         ("GET", ["devices", id, "availability"]) => {
             may(ctx, READ)?;
