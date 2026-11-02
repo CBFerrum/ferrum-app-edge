@@ -34,6 +34,10 @@
 - Kafka topics and AMQP queues as sources. A Kafka reader keeps its place across restarts in the
   gateway's state folder.
 
+Upgrading: gateways first if a workspace will have an allowance of measurements, since an older one treats
+a held exchange as delivered. An export to `postgres` or `listen+opcua` needs a gateway of this version. A
+site that wants `listen+opcua`, `listen+coaps` or `listen+lwm2ms` names the address under `listen`.
+
 ## 0.2.0
 
 The gaps with ThingsBoard and the other reference products, closed or named: `docs/parity.md` goes
