@@ -87,11 +87,16 @@
     - {name: flow_node, type: data, read_only: true, hidden: true}
     - {name: device, type: link, to: Device, read_only: true, in_list: true, in_filter: true}
     - {name: site, type: link, to: Site, read_only: true, in_filter: true}
-    - {name: severity, type: select, options: [Info, Warning, Critical], read_only: true, in_list: true, in_filter: true}
+    - {name: source, type: data, read_only: true, hidden: true, description: "What raised it, when no rule or flow did"}
+    - {name: severity, type: select, options: [Info, Warning, Minor, Major, Critical], read_only: true, in_list: true, in_filter: true}
     - {name: status, type: select, options: [Active, Acknowledged, Cleared], default: Active, read_only: true, in_list: true, in_filter: true}
+    - {name: assignee, type: data, read_only: true, hidden: true}
+    - {name: assignee_email, type: data, read_only: true, in_list: true, in_filter: true, label: Assigned To}
+    - {name: shelved_until, type: datetime, read_only: true, label: Shelved Until}
     - {name: value, type: decimal, read_only: true}
     - {name: raised_at, type: datetime, read_only: true, in_list: true}
     - {name: cleared_at, type: datetime, read_only: true}
+    - {name: cleared_by, type: data, read_only: true}
     - {name: acknowledged_by, type: data, read_only: true}
     - {name: acknowledged_at, type: datetime, read_only: true}
     - {name: note, type: text, read_only: true}
@@ -148,3 +153,34 @@
     - {name: shared_hash, type: data, read_only: true, no_copy: true, hidden: true}
     - {name: shared_at, type: datetime, read_only: true, no_copy: true, in_list: true, label: Shared Since}
   list: {columns: [dashboard_name, description, shared_at], sort: dashboard_name asc}
+
+- name: EdgeNotifyStep
+  label: Notify Step
+  kind: child
+  module: edge
+  fields:
+    - {name: after_minutes, type: int, default: 0, min: "0", in_list: true, label: After (Minutes), description: "If nobody has dealt with it by then. Zero is at once"}
+    - {name: channel, type: select, options: [Bell, Email, Webhook, Slack, Teams], default: Bell, required: true, in_list: true}
+    - {name: target, type: data, required: true, in_list: true, description: "A role or an email address, or for a webhook, Slack or Teams, the URL of its incoming webhook"}
+
+- name: EdgeNotifyRule
+  label: Edge Notify Rule
+  label_plural: Edge Notify Rules
+  kind: master
+  module: edge
+  title_field: rule_name
+  search_fields: [rule_name]
+  description: Who is told about what, and how, in steps that wait. Dealing with an alarm stops the steps still to come.
+  fields:
+    - {name: rule_name, type: data, required: true, unique: true, in_list: true}
+    - {name: enabled, type: check, default: true, in_list: true, in_filter: true}
+    - {name: trigger, type: select, options: [Alarm raised, Alarm cleared, Alarm acknowledged], default: Alarm raised, required: true, in_list: true, in_filter: true}
+    - {name: min_severity, type: select, options: [Info, Warning, Minor, Major, Critical], default: Warning, label: This Serious or Worse, in_list: true}
+    - {name: site, type: link, to: Site, description: "Every site, if empty"}
+    - {name: device, type: link, to: Device, description: "Every device, if empty"}
+    - {name: definition, type: link, to: DeviceDefinition, description: "Every device of one definition"}
+    - {name: subject, type: data, description: "{summary}, {severity}, {device}, {site} and {raised_at} are filled in"}
+    - {name: body, type: text}
+    - {name: steps, type: table, of: EdgeNotifyStep, label: Steps}
+  list: {columns: [rule_name, trigger, min_severity, enabled], sort: rule_name asc}
+

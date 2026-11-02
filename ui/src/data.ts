@@ -73,6 +73,8 @@ export interface AlarmRow {
   cleared_at?: string | null;
   acknowledged_by?: string | null;
   note?: string | null;
+  assignee_email?: string | null;
+  shelved_until?: string | null;
   value?: number | null;
   device?: string;
   code?: string | null;
@@ -244,3 +246,28 @@ export const saveBoard = (id: string, version: number, patch: Partial<BoardDoc>)
 export const boardData = (body: string, vars: Record<string, string>, last_secs: number) => api.post<Record<string, { data?: unknown; error?: string }>>(`${base}/boards/data`, { body, vars, last_secs });
 export const shareBoard = (id: string) => api.post<{ token: string }>(`${base}/boards/${id}/share`, {});
 export const unshareBoard = (id: string) => api.del(`${base}/boards/${id}/share`);
+
+export interface AlarmDetail {
+  id: string;
+  summary: string;
+  severity: string;
+  status: string;
+  raised_at: string;
+  cleared_at: string | null;
+  cleared_by: string | null;
+  acknowledged_by: string | null;
+  value: number | null;
+  device: string | null;
+  code: string | null;
+  assignee: string | null;
+  assignee_email: string | null;
+  shelved_until: string | null;
+  notes: { kind: string; by: string; text: string | null; at: string }[];
+  notices: { channel: string; target: string; status: string; due_at: string; sent_at: string | null; error: string | null }[];
+}
+
+export const alarmDetail = (id: string) => api.get<AlarmDetail>(`${base}/alarms/${id}`);
+export const alarmNote = (id: string, text: string) => api.post(`${base}/alarms/${id}/note`, { text });
+export const alarmAssign = (id: string, user: string | null) => api.post(`${base}/alarms/${id}/assign`, { user });
+export const alarmShelve = (id: string, minutes: number) => api.post(`${base}/alarms/${id}/shelve`, { minutes });
+export const alarmClear = (id: string, note: string) => api.post(`${base}/alarms/${id}/clear`, { note });

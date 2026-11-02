@@ -2,6 +2,7 @@
 //! when it happened: a late attribute does not replace a newer one, and an alarm's clearing that
 //! arrives before its raising leaves it cleared.
 
+use crate::notices;
 use chrono::{DateTime, Utc};
 use ferrum_domain::util::{elevated, sys};
 use ferrum_edge_contract::edge::AlarmChange;
@@ -183,6 +184,10 @@ async fn alarm(k: &Kernel, ctx: &Ctx, tx: &mut Tx, change: &AlarmChange, at: Dat
             v.insert("status".into(), json!("Cleared"));
             v.insert("cleared_at".into(), json!(at.to_rfc3339()));
             k.set_values_tx(&sys(ctx), tx, "EdgeAlarm", id, v).await?;
+            crate::alarms::note(tx, ctx.tenant, id, "the equipment", "Cleared", None).await?;
+            notices::stand_down(tx, ctx, id).await?;
+            let alarm = crate::alarms::load(tx, ctx.tenant, id).await?;
+            notices::alarm_changed(tx, ctx, &alarm, notices::CLEARED, at).await?;
         }
         return Ok(());
     }
@@ -215,11 +220,60 @@ async fn alarm(k: &Kernel, ctx: &Ctx, tx: &mut Tx, change: &AlarmChange, at: Dat
         Some(node) => (doc["flow"], doc["flow_node"]) = (json!(change.rule), json!(node)),
     }
     let made = k.insert_tx(&elevated(ctx), tx, "EdgeAlarm", doc.as_object().cloned().unwrap_or_default()).await?;
+    let id = made.get("id").and_then(Value::as_str).and_then(|i| i.parse().ok());
     if severity == "Critical" {
-        let id = made.get("id").and_then(Value::as_str).and_then(|i| i.parse().ok());
         for user in engineers(ctx, tx).await? {
             notify::send(tx, ctx.tenant, user, &summary, None, Some("EdgeAlarm"), id).await?;
         }
     }
+    if let Some(id) = id {
+        let alarm = crate::alarms::load(tx, ctx.tenant, id).await?;
+        notices::alarm_changed(tx, ctx, &alarm, notices::RAISED, at).await?;
+    }
+    Ok(())
+}
+
+/// Minutes a gateway can stay silent before someone should look.
+const GATEWAY_SILENT_MINUTES: i32 = 5;
+
+/// A gateway that stopped talking cannot raise an alarm about itself, so this does, and clears it
+/// when it is back. One that was never heard from has not gone anywhere.
+pub async fn watch_gateways(k: &Kernel, ctx: &Ctx) -> Result<()> {
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let rows: Vec<(Uuid, String, Option<Uuid>, bool, Option<Uuid>)> = sqlx::query_as(
+        "select g.device_id, d.device_code, d.site, g.seen_at < now() - make_interval(mins => $2), \
+                (select a.id from e_edge_alarm a where a.tenant_id = g.tenant_id and a.device = g.device_id and a.source = 'gateway' and a.status <> 'Cleared' limit 1) \
+         from edge_gateway g join e_device d on d.tenant_id = g.tenant_id and d.id = g.device_id \
+         where g.tenant_id = $1 and d.lifecycle in ('Commissioned', 'Active')",
+    )
+    .bind(ctx.tenant)
+    .bind(GATEWAY_SILENT_MINUTES)
+    .fetch_all(&mut *tx)
+    .await?;
+    let now = Utc::now();
+    for (device, code, site, silent, open) in rows {
+        match (silent, open) {
+            (true, None) => {
+                let doc = json!({"summary": format!("Gateway {code} has gone quiet"), "device": device, "site": site, "severity": "Major", "status": "Active", "source": "gateway", "raised_at": now.to_rfc3339()});
+                let made = k.insert_tx(&elevated(ctx), &mut tx, "EdgeAlarm", doc.as_object().cloned().unwrap_or_default()).await?;
+                if let Some(id) = made.get("id").and_then(Value::as_str).and_then(|i| i.parse().ok()) {
+                    let alarm = crate::alarms::load(&mut tx, ctx.tenant, id).await?;
+                    notices::alarm_changed(&mut tx, ctx, &alarm, notices::RAISED, now).await?;
+                }
+            }
+            (false, Some(id)) => {
+                let mut v = Doc::new();
+                v.insert("status".into(), json!("Cleared"));
+                v.insert("cleared_at".into(), json!(now.to_rfc3339()));
+                k.set_values_tx(&sys(ctx), &mut tx, "EdgeAlarm", id, v).await?;
+                crate::alarms::note(&mut tx, ctx.tenant, id, "the gateway", "Cleared", Some("It is talking again")).await?;
+                notices::stand_down(&mut tx, ctx, id).await?;
+                let alarm = crate::alarms::load(&mut tx, ctx.tenant, id).await?;
+                notices::alarm_changed(&mut tx, ctx, &alarm, notices::CLEARED, now).await?;
+            }
+            _ => {}
+        }
+    }
+    tx.commit().await?;
     Ok(())
 }

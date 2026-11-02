@@ -49,6 +49,7 @@ const router = createBrowserRouter(
         { path: "devices", lazy: () => import("./Devices").then((m) => ({ Component: m.Devices })) },
         { path: "d/:id", lazy: () => import("./Device").then((m) => ({ Component: m.DevicePage })) },
         { path: "alarms", lazy: () => import("./Alarms").then((m) => ({ Component: m.Alarms })) },
+        { path: "alarms/:id", lazy: () => import("./AlarmPage").then((m) => ({ Component: m.AlarmPage })) },
         { path: "robots", lazy: () => import("./Robots").then((m) => ({ Component: m.Robots })) },
         { path: "definitions", lazy: () => import("./Definitions").then((m) => ({ Component: m.Definitions })) },
         { path: "definitions/:id", lazy: () => import("./Definitions").then((m) => ({ Component: m.DefinitionPage })) },
