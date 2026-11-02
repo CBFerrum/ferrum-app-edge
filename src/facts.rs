@@ -64,6 +64,7 @@ pub async fn apply(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: &str, payload: &Val
         }
         "request" => request(ctx, tx, payload, at).await?,
         "joined" => joined(k, ctx, tx, payload).await?,
+        "transaction" => crate::charging::heard(tx, ctx.tenant, body).await?,
         _ => {}
     }
     Ok(())

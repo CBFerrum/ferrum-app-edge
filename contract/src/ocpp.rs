@@ -125,6 +125,107 @@ pub fn answer(action: &str, said: &Value, id_tags: Option<&Value>, transaction: 
     }
 }
 
+/// What money depends on. These are kept before a charger is told they were heard, because a charger
+/// that gets no answer says them again and one that gets an answer forgets them.
+pub fn billing(action: &str) -> bool {
+    matches!(action, "StartTransaction" | "StopTransaction" | "MeterValues" | "TransactionEvent")
+}
+
+/// One meter reading of a session, in what it was said in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reading {
+    pub at: DateTime<Utc>,
+    pub value: f64,
+    pub unit: Option<String>,
+    /// Signed by the meter, which nothing here can verify.
+    pub signed: bool,
+}
+
+fn to_wh(value: f64, unit: Option<&str>) -> Option<f64> {
+    match unit {
+        None | Some("Wh") => Some(value),
+        Some("kWh") => Some(value * 1000.0),
+        _ => None,
+    }
+}
+
+/// The energy registers in what a charger said, whatever shape it said them in.
+pub fn registers(said: &Value) -> Vec<Reading> {
+    let mut out = Vec::new();
+    for list in [&said["meterValue"], &said["transactionData"]] {
+        for reading in list.as_array().into_iter().flatten() {
+            let Some(at) = reading["timestamp"].as_str().and_then(|t| t.parse::<DateTime<Utc>>().ok()) else { continue };
+            for sample in reading["sampledValue"].as_array().into_iter().flatten() {
+                let measurand = sample["measurand"].as_str().unwrap_or("Energy.Active.Import.Register");
+                if measurand != "Energy.Active.Import.Register" || sample["phase"].is_string() {
+                    continue;
+                }
+                let Some(value) = sample["value"].as_f64().or_else(|| sample["value"].as_str()?.parse().ok()) else { continue };
+                let signed = sample["format"].as_str() == Some("SignedData") || sample.get("signedMeterValue").is_some();
+                let unit = sample["unit"].as_str().or(sample["unitOfMeasure"]["unit"].as_str()).map(str::to_string);
+                out.push(Reading { at, value, unit, signed });
+            }
+        }
+    }
+    out
+}
+
+/// What can be said about a session's energy, and why it may not be enough to bill on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Evidence {
+    /// Energy between the first and last register, when those can be trusted.
+    pub energy_wh: Option<f64>,
+    /// Anything a person has to look at before this is money. Empty is the only thing that settles.
+    pub flags: Vec<&'static str>,
+    /// Whether anything shows energy flowed. A charger saying it started does not.
+    pub flowed: bool,
+}
+
+/// Judges a session's registers. `started` and `stopped` bound it: a reading outside is late or wrong,
+/// and is not silently used. Nothing is guessed: a register that went backwards is a reset or a fault,
+/// not a smaller number, and a signature nothing here can check is not evidence of anything.
+pub fn evidence(mut readings: Vec<Reading>, started: DateTime<Utc>, stopped: Option<DateTime<Utc>>, reported: Option<f64>) -> Evidence {
+    let mut flags = Vec::new();
+    readings.sort_by_key(|r| r.at);
+    let mut within = Vec::new();
+    for r in readings {
+        if r.at < started || stopped.is_some_and(|end| r.at > end) {
+            if !flags.contains(&"reading_outside_session") {
+                flags.push("reading_outside_session");
+            }
+            continue;
+        }
+        if r.signed && !flags.contains(&"signature_not_verified") {
+            flags.push("signature_not_verified");
+        }
+        match to_wh(r.value, r.unit.as_deref()) {
+            Some(wh) => within.push(wh),
+            None if !flags.contains(&"unit_not_understood") => flags.push("unit_not_understood"),
+            None => {}
+        }
+    }
+    if within.windows(2).any(|w| w[1] < w[0]) {
+        flags.push("register_went_backwards");
+    }
+    let flowed = within.windows(2).any(|w| w[1] > w[0]);
+    let energy_wh = match (within.first(), within.last()) {
+        (Some(first), Some(last)) if within.len() >= 2 && !flags.contains(&"register_went_backwards") => Some(last - first),
+        _ => None,
+    };
+    if energy_wh.is_none() && !flags.contains(&"register_went_backwards") {
+        flags.push("missing_readings");
+    }
+    if let (Some(said), Some(worked)) = (reported, energy_wh)
+        && (said - worked).abs() > 1.0
+    {
+        flags.push("charger_disagrees_with_its_register");
+    }
+    if stopped.is_none() {
+        flags.push("still_open");
+    }
+    Evidence { energy_wh, flags, flowed }
+}
+
 /// How a call ended. A charger that accepts has only said it will try, which is as much as OCPP says.
 pub fn status(topic: &str, body: &[u8], names: &[&str]) -> Option<Ending> {
     let (_, rest) = split(topic)?;
@@ -152,6 +253,59 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn at(minute: u32) -> DateTime<Utc> {
+        format!("2026-11-02T10:{minute:02}:00Z").parse().unwrap()
+    }
+
+    fn wh(minute: u32, value: f64) -> Reading {
+        Reading { at: at(minute), value, unit: Some("Wh".into()), signed: false }
+    }
+
+    #[test]
+    fn a_session_is_as_much_as_its_register_shows() {
+        let good = evidence(vec![wh(1, 1000.0), wh(5, 1400.0), wh(9, 2000.0)], at(0), Some(at(10)), Some(1000.0));
+        assert_eq!((good.energy_wh, good.flowed, good.flags.is_empty()), (Some(1000.0), true, true), "{good:?}");
+        let kwh = |m, v| Reading { at: at(m), value: v, unit: Some("kWh".into()), signed: false };
+        assert_eq!(evidence(vec![kwh(1, 1.0), wh(9, 3000.0)], at(0), Some(at(10)), None).energy_wh, Some(2000.0), "units are converted, not assumed");
+
+        // AT-OPS-012, one fault at a time. None of them produces a number to bill.
+        let reset = evidence(vec![wh(1, 5000.0), wh(5, 10.0), wh(9, 400.0)], at(0), Some(at(10)), None);
+        assert_eq!((reset.energy_wh, reset.flags.contains(&"register_went_backwards")), (None, true), "{reset:?}");
+        let late = evidence(vec![wh(1, 1000.0), wh(9, 2000.0), wh(20, 9000.0)], at(0), Some(at(10)), None);
+        assert_eq!(late.energy_wh, Some(1000.0), "a late reading is not used");
+        assert!(late.flags.contains(&"reading_outside_session"), "and is said");
+        let missing = evidence(vec![wh(1, 1000.0)], at(0), Some(at(10)), None);
+        assert_eq!((missing.energy_wh, missing.flags.contains(&"missing_readings")), (None, true));
+        assert!(evidence(vec![], at(0), Some(at(10)), None).flags.contains(&"missing_readings"));
+        let odd = Reading { at: at(5), value: 3.0, unit: Some("varh".into()), signed: false };
+        assert!(evidence(vec![wh(1, 1.0), odd, wh(9, 2.0)], at(0), Some(at(10)), None).flags.contains(&"unit_not_understood"));
+        let signed = Reading { at: at(5), value: 1500.0, unit: Some("Wh".into()), signed: true };
+        assert!(evidence(vec![wh(1, 1000.0), signed, wh(9, 2000.0)], at(0), Some(at(10)), None).flags.contains(&"signature_not_verified"));
+        let disagrees = evidence(vec![wh(1, 1000.0), wh(9, 2000.0)], at(0), Some(at(10)), Some(1500.0));
+        assert!(disagrees.flags.contains(&"charger_disagrees_with_its_register"));
+        assert!(evidence(vec![wh(1, 1.0), wh(2, 2.0)], at(0), None, None).flags.contains(&"still_open"));
+    }
+
+    #[test]
+    fn accepting_a_start_is_not_energy_flowing() {
+        assert!(!evidence(vec![wh(1, 1000.0), wh(5, 1000.0), wh(9, 1000.0)], at(0), Some(at(10)), None).flowed);
+    }
+
+    #[test]
+    fn registers_are_found_in_either_version() {
+        let old = json!({"meterValue": [{"timestamp": "2026-11-02T10:00:00Z", "sampledValue": [
+            {"value": "1500", "measurand": "Energy.Active.Import.Register", "unit": "Wh"},
+            {"value": "99", "measurand": "Energy.Active.Import.Register", "phase": "L1"},
+            {"value": "230", "measurand": "Voltage"},
+            {"value": "AbCd", "format": "SignedData", "measurand": "Energy.Active.Import.Register"},
+        ]}]});
+        let new = json!({"meterValue": [{"timestamp": "2026-11-02T10:00:00Z", "sampledValue": [
+            {"value": 1.5, "unitOfMeasure": {"unit": "kWh"}, "signedMeterValue": {"signedMeterData": "x"}},
+        ]}]});
+        assert_eq!(registers(&old).len(), 1, "one register, not its phases or a signature's bytes");
+        assert_eq!(registers(&new), [Reading { at: at(0), value: 1.5, unit: Some("kWh".into()), signed: true }]);
     }
 
     #[test]
