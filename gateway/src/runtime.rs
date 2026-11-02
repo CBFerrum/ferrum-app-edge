@@ -188,6 +188,7 @@ impl Runtime {
             listen: cfg.listen.clone(),
             tls_dir: Some(cfg.state_dir.join("tls")),
             firmware_dir: Some(cfg.state_dir.join("firmware")),
+            files_dir: cfg.files_dir.clone(),
         };
         let exporting = OpenLimits { allow: cfg.allow.clone(), tls_dir: Some(cfg.state_dir.join("tls")), ..OpenLimits::default() };
         let defined = Arc::new(Defined::new(limits, json!(cfg.secrets)));

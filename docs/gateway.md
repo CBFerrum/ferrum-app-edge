@@ -62,6 +62,7 @@ through its gateway**, commission it, and list what it may be asked to do.
 | `allow` | any | What hosts a definition may reach, by how they start |
 | `listen` | none | Addresses a definition may listen on, exactly |
 | `drivers_dir` | none | The only place an external driver can run from |
+| `files_dir` | none | The only place a definition can read files and SQLite databases from |
 | `secrets` | none | What `{secret.x}` stands for. They stay here |
 | `peers` | none | Boxes this one works through: `{name, url, devices, concurrency}` |
 | `peer_only`, `listen_peers`, `trusted_peers` | off | For such a box: no platform of its own, where to answer, and whose keys to believe |

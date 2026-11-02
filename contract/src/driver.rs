@@ -1406,6 +1406,10 @@ pub fn parse(text: &str) -> Result<Compiled, String> {
             return Err(format!("poll[{i}]: say what to send"));
         }
         check_step(&format!("poll[{i}]"), &p.step, scheme_of)?;
+        // Anything that changes equipment is a command, and goes through the ledger.
+        if !p.step.write.is_empty() || p.step.call.is_some() || (p.step.node.is_some() && p.step.send.is_some()) {
+            return Err(format!("poll[{i}]: a poll only reads: writing is a command"));
+        }
     }
     let mut reads = Vec::new();
     for (i, r) in d.read.iter().enumerate() {
@@ -1857,6 +1861,17 @@ commands:
         fails("name: x\nread:\n  - {metric: 'no spaces', json: $.a}", "not a metric");
         fails("name: x\nconnect: modbus+tcp://a:502\npoll:\n  - {every: 1s, send: hi}", "Modbus takes");
         fails("name: x\nconnect: tcp://a:1\npoll:\n  - {every: 1s, read: holding, at: 1}", "are for Modbus");
+    }
+
+    #[test]
+    fn a_poll_only_reads() {
+        for step in ["{every: 1s, write: [{at: 1, value: 1}]}", "{every: 1s, node: M0.0, send: true}"] {
+            let connect = if step.contains("write") { "modbus+tcp://x:502" } else { "s7://x:102" };
+            let bad = parse(&format!("name: a\nconnect: {connect}\npoll:\n  - {step}\n")).err().unwrap();
+            assert!(bad.contains("only reads"), "{bad}");
+        }
+        assert!(parse("name: a\nconnect: opcua://x:4840\npoll:\n  - {every: 1s, node: a, call: b}\n").err().unwrap().contains("only reads"));
+        assert!(parse("name: a\nconnect: s7://x:102\npoll:\n  - {every: 1s, node: M0.0}\n").is_ok());
     }
 
     #[test]

@@ -128,6 +128,9 @@ pub struct Limits {
     pub tls_dir: Option<PathBuf>,
     /// Where firmware waits for devices to fetch it.
     pub firmware_dir: Option<PathBuf>,
+    /// Where a definition may read files. Without it, nowhere: a definition comes from the platform,
+    /// and must not be able to read whatever it likes on a gateway.
+    pub files_dir: Option<PathBuf>,
 }
 
 impl Limits {
@@ -148,6 +151,17 @@ impl Limits {
         let path = dir.join(name).canonicalize().map_err(|e| format!("{name}: {e}"))?;
         if !path.starts_with(&dir) {
             return Err(format!("{name} is outside the drivers directory"));
+        }
+        Ok(path)
+    }
+
+    /// A file or folder a definition reads, which must be in `files_dir`, however it is written.
+    pub fn local_file(&self, name: &str) -> Result<PathBuf, String> {
+        let dir = self.files_dir.as_ref().ok_or("this site lets no definition read its files: set files_dir")?;
+        let dir = dir.canonicalize().map_err(|e| format!("{}: {e}", dir.display()))?;
+        let path = PathBuf::from(format!("/{}", name.trim_start_matches('/'))).canonicalize().map_err(|e| format!("{name}: {e}"))?;
+        if !path.starts_with(&dir) {
+            return Err(format!("{name} is outside the files directory"));
         }
         Ok(path)
     }
@@ -230,10 +244,14 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
         }
         return Ok(Arc::new(Together { parts, hub }));
     }
-    if matches!(scheme, "listen" | "listen+udp" | "webhook" | "listen+mqtt" | "listen+mqtts" | "listen+http" | "listen+https" | "listen+coap") {
-        if !limits.listen.iter().any(|a| a == bind) {
+    // Opening a port is the site's decision, whichever protocol it is for.
+    if scheme.starts_with("listen") || scheme == "webhook" {
+        let port = bind.split('/').next().unwrap_or(bind);
+        if !limits.listen.iter().any(|a| a == bind || a == port) {
             return Err(format!("{bind} is not in this site's listen list"));
         }
+    } else if matches!(scheme, "file" | "sqlite") {
+        limits.local_file(bind)?;
     } else if !matches!(scheme, "serial" | "process" | "modbus+rtu") && !limits.host_allowed(host_of(rest)) {
         return Err(format!("{} is not in this site's allow list", host_of(rest)));
     }
@@ -1180,6 +1198,30 @@ mod serial {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_definition_opens_no_port_and_reads_no_file_a_site_did_not_offer() {
+        let dir = std::env::temp_dir().join(format!("files-{}", uuid::Uuid::now_v7().simple()));
+        std::fs::create_dir_all(dir.join("in")).unwrap();
+        let outside = dir.with_extension("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        let open_with = |address: &str, limits: &Limits| open(address, Options { hub: Some(Default::default()), ..Options::default() }, limits).err();
+        let none = Limits::default();
+        for port in ["listen+snmp://0.0.0.0:162", "listen+ocpp://0.0.0.0:9000/ocpp", "listen+lwm2m://0.0.0.0:5683"] {
+            assert!(open_with(port, &none).is_some_and(|e| e.contains("listen list")), "{port}");
+        }
+        let listed = Limits { listen: vec!["127.0.0.1:9000".into()], ..Limits::default() };
+        assert_eq!(open_with("listen+ocpp://127.0.0.1:9000/ocpp", &listed), None, "a path is not part of a port");
+
+        let inside = dir.join("in");
+        for address in ["file:///etc", "sqlite:///etc/passwd"] {
+            assert!(open_with(address, &none).is_some_and(|e| e.contains("files_dir")), "{address}");
+        }
+        let limits = Limits { files_dir: Some(dir.clone()), ..Limits::default() };
+        assert_eq!(open_with(&format!("file://{}", inside.display()), &limits), None);
+        let escape = format!("file://{}/../{}", dir.display(), outside.file_name().unwrap().to_string_lossy());
+        assert!(open_with(&escape, &limits).is_some_and(|e| e.contains("outside")), "however it is written");
+    }
 
     #[test]
     fn a_definition_opens_only_what_the_site_allows() {
