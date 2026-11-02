@@ -1,13 +1,16 @@
 name: release
 
-# A tag publishes. Running it by hand only builds, to show the workflow works before anyone tags.
+# A tag publishes. Running it by hand, or changing how it builds, only builds, to show it works before
+# anyone tags.
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths: [".github/workflows/release.yml", "scripts/starts.sh"]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -17,29 +20,46 @@ jobs:
           - {runner: ubuntu-24.04, arch: x86_64}
           - {runner: ubuntu-24.04-arm, arch: aarch64}
     runs-on: ${{ matrix.runner }}
+    env:
+      TARGET: ${{ matrix.arch }}-unknown-linux-musl
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      CC_aarch64_unknown_linux_musl: musl-gcc
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # The Rust the tests ran on. Bump it with ci.yml.
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: ${{ env.TARGET }}
       - name: Check the tag says what the code says
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
           test "${GITHUB_REF_NAME}" = "v${version}"
-      - run: cargo build --release --locked -p ferrum-site --bin ferrum-site
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      # Static, because a gateway's C library is whatever its box came with, and glibc only runs on one
+      # as new as the machine that built it.
+      - run: cargo build --release --locked -p ferrum-site --bin ferrum-site --target "$TARGET"
       - name: Name it for what it runs on
         run: |
           mkdir out
-          cp target/release/ferrum-site "out/ferrum-site-${{ matrix.arch }}-linux"
+          cp "target/$TARGET/release/ferrum-site" "out/ferrum-site-${{ matrix.arch }}-linux"
           (cd out && sha256sum "ferrum-site-${{ matrix.arch }}-linux" > "ferrum-site-${{ matrix.arch }}-linux.sha256")
       - uses: actions/upload-artifact@v4
         with:
           name: ferrum-site-${{ matrix.arch }}
           path: out/*
+      - name: Start it on what gateways run
+        run: scripts/starts.sh "out/ferrum-site-${{ matrix.arch }}-linux" ubuntu:22.04 debian:12 centos:7 alpine:3.20
+      # Everything in ci.yml ran on glibc, and this is the C library people get. The one skipped wants a
+      # database, and ci.yml has it.
+      - run: cargo test --locked -p ferrum-site --target "$TARGET" -- --skip a_table_of_someone_elses
 
   publish:
     if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -48,4 +68,4 @@ jobs:
       - name: Publish the files, unsigned. A person signs each with `ferrum-site sign`, and no key is here.
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" out/* --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --notes "See CHANGELOG.md. Sign before rolling out."
+        run: gh release create "${GITHUB_REF_NAME}" out/* --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --notes "Static binaries for 64-bit Linux. See CHANGELOG.md. Sign before rolling out."

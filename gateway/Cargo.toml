@@ -61,6 +61,10 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 uuid = { workspace = true }
 webpki-roots = "1"
 
+# musl's allocator takes one lock, and every reading allocates.
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = { version = "0.1", default-features = false }
+
 [dev-dependencies]
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
