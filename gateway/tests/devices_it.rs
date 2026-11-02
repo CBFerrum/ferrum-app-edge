@@ -7,6 +7,7 @@ use ferrum_edge_contract::edge::{Basic, Credentials, DeviceLink};
 use ferrum_ops_contract::Command;
 use ferrum_ops_contract::sync::SiteDevice;
 use ferrum_site::adapter::{Adapter, Dispatched, Failure, Observation, Reading};
+use ferrum_site::adapters::coap::Coap;
 use ferrum_site::adapters::defined::Defined;
 use ferrum_site::adapters::hub::hash;
 use ferrum_site::adapters::transport::Limits;
@@ -473,4 +474,255 @@ async fn opening_a_port_for_devices_is_the_sites_decision() {
     let d = Defined::new(Limits::default(), json!({}));
     let problems = d.apply(&definitions, &[token("PRESS-1", PRESS)]);
     assert!(problems.iter().any(|p| p.contains("listen list")), "{problems:?}");
+}
+
+struct Doors {
+    plant: Plant,
+    http: String,
+    coap: std::net::SocketAddr,
+}
+
+/// One definition with every way in, and one device that can use any of them.
+async fn every_way_in(link: DeviceLink) -> Doors {
+    let (mqtt, http, coap) = (free_port(), free_port(), free_port());
+    let body = format!(
+        "name: devices\nconnect: listen+mqtt://127.0.0.1:{mqtt}\napi: device\nalso:\n  - listen+http://127.0.0.1:{http}\n  - listen+coap://127.0.0.1:{coap}\n"
+    );
+    let definitions = BTreeMap::from([("devices".to_string(), body)]);
+    let listen = [mqtt, http, coap].map(|p| format!("127.0.0.1:{p}")).to_vec();
+    let d = Defined::new(Limits { listen, ..Default::default() }, json!({}));
+    assert_eq!(d.apply(&definitions, &[link]), Vec::<String>::new());
+    until("the ports", async || d.links().iter().all(|l| l.up)).await;
+    Doors {
+        plant: Plant { d, definitions, port: mqtt, seen: Mutex::default() },
+        http: format!("http://127.0.0.1:{http}/api/v1"),
+        coap: format!("127.0.0.1:{coap}").parse().unwrap(),
+    }
+}
+
+#[tokio::test]
+async fn over_http_a_device_says_and_hears_the_same_things() {
+    let mut link = token("PRESS-1", PRESS);
+    link.shared = BTreeMap::from([("mode".to_string(), json!("eco"))]);
+    let Doors { plant, http, .. } = every_way_in(link).await;
+    let web = reqwest::Client::new();
+    let post = |path: String, body: &'static str| web.post(path).header("content-type", "application/json").body(body).send();
+
+    assert_eq!(post(format!("{http}/{PRESS}/telemetry"), r#"{"temp": 3}"#).await.unwrap().status(), 200);
+    plant.reading(|r| is_metric(r, "PRESS-1", "temp", 3.0)).await;
+    assert_eq!(post(format!("{http}/{PRESS}/attributes"), r#"{"firmware": "1.2"}"#).await.unwrap().status(), 200);
+    plant.reading(|r| is_attribute(r, "PRESS-1", "firmware")).await;
+    assert_eq!(post(format!("{http}/wrong/telemetry"), r#"{"temp": 3}"#).await.unwrap().status(), 401, "a token that is nobody's");
+    assert_eq!(post(format!("{http}/{PRESS}/telemetry"), "not json").await.unwrap().status(), 400);
+    assert_eq!(post(format!("{http}/{PRESS}/nothing"), "{}").await.unwrap().status(), 404);
+    assert_eq!(web.get(format!("{http}/{PRESS}/telemetry")).send().await.unwrap().status(), 405);
+
+    let said: Value = web.get(format!("{http}/{PRESS}/attributes")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(said, json!({"client": {"firmware": "1.2"}, "shared": {"mode": "eco"}}));
+    let only: Value = web.get(format!("{http}/{PRESS}/attributes?sharedKeys=mode&clientKeys=none")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(only, json!({"client": {}, "shared": {"mode": "eco"}}));
+
+    assert_eq!(web.get(format!("{http}/{PRESS}/rpc?timeout=50")).send().await.unwrap().status(), 408, "nothing for it");
+    let waiting = tokio::spawn({
+        let (web, url) = (web.clone(), format!("{http}/{PRESS}/rpc?timeout=5000"));
+        async move { web.get(url).send().await.unwrap().json::<Value>().await.unwrap() }
+    });
+    let c = command("fan.start", json!({"speed": 3}));
+    let mut external = None;
+    until("it to be waiting", async || {
+        if let Ok(Dispatched::Accepted { external: e }) = plant.d.dispatch(&c, &site_device("PRESS-1")).await {
+            external = e;
+        }
+        external.is_some()
+    })
+    .await;
+    let call = waiting.await.unwrap();
+    let id = external.unwrap();
+    assert_eq!((call["method"].as_str(), call["params"]["speed"].as_i64(), call["id"].to_string()), (Some("fan.start"), Some(3), id.clone()));
+    assert_eq!(post(format!("{http}/{PRESS}/rpc/{id}"), r#"{"result": "ok"}"#).await.unwrap().status(), 200);
+    until("the answer", async || matches!(plant.d.observe(&c, Some(&id)).await, Ok(Observation::Completed(_)))).await;
+
+    let updates = tokio::spawn({
+        let (web, url) = (web.clone(), format!("{http}/{PRESS}/attributes/updates?timeout=5000"));
+        async move { web.get(url).send().await.unwrap().json::<Value>().await.unwrap() }
+    });
+    let set = command("set.limit", json!({"value": 9}));
+    until("it to be waiting", async || matches!(plant.d.dispatch(&set, &site_device("PRESS-1")).await, Ok(Dispatched::Accepted { .. }))).await;
+    assert_eq!(updates.await.unwrap(), json!({"limit": 9}));
+    assert_eq!(web.post(format!("{http}/{PRESS}/telemetry")).body(vec![b'1'; 2 << 20]).send().await.unwrap().status(), 413, "there is a limit");
+}
+
+mod coap {
+    use super::*;
+    use tokio::net::UdpSocket;
+
+    pub struct Client {
+        socket: UdpSocket,
+        next: std::sync::atomic::AtomicU16,
+    }
+
+    pub fn path(token: &str, rest: &[&str]) -> Vec<(u16, Vec<u8>)> {
+        ["api", "v1", token].iter().chain(rest).map(|p| (11, p.as_bytes().to_vec())).collect()
+    }
+
+    impl Client {
+        pub async fn to(server: std::net::SocketAddr) -> Client {
+            let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            socket.connect(server).await.unwrap();
+            Client { socket, next: 1.into() }
+        }
+
+        pub fn request(&self, code: u8, options: Vec<(u16, Vec<u8>)>, payload: &[u8]) -> Coap {
+            let id = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Coap { kind: 0, code, id, token: id.to_be_bytes().to_vec(), options, payload: payload.to_vec() }
+        }
+
+        pub async fn say(&self, m: &Coap) {
+            self.socket.send(&m.to_bytes()).await.unwrap();
+        }
+
+        pub async fn hear(&self) -> Coap {
+            let mut buffer = [0u8; 1500];
+            let n = tokio::time::timeout(Wait::from_secs(5), self.socket.recv(&mut buffer)).await.expect("an answer").unwrap();
+            Coap::parse(&buffer[..n]).unwrap()
+        }
+
+        pub async fn ask(&self, m: &Coap) -> Coap {
+            self.say(m).await;
+            self.hear().await
+        }
+
+        pub async fn silent(&self) -> bool {
+            let mut buffer = [0u8; 1500];
+            tokio::time::timeout(Wait::from_millis(150), self.socket.recv(&mut buffer)).await.is_err()
+        }
+    }
+}
+
+#[tokio::test]
+async fn over_coap_a_device_says_things_once_however_often_it_repeats_them() {
+    let Doors { plant, coap: server, .. } = every_way_in(token("PRESS-1", PRESS)).await;
+    let device = coap::Client::to(server).await;
+    let post = device.request(2, coap::path(PRESS, &["telemetry"]), br#"{"temp": 4}"#);
+    let first = device.ask(&post).await;
+    assert_eq!((first.kind, first.code, first.id, &first.token), (2, 0x44, post.id, &post.token), "acknowledged, changed, in the same exchange");
+    plant.reading(|r| is_metric(r, "PRESS-1", "temp", 4.0)).await;
+
+    // Its answer was lost, as far as it knows, so it says it again.
+    assert_eq!(device.ask(&post).await, first, "the same answer");
+    assert!(!plant.saw(|r| is_metric(r, "PRESS-1", "temp", 4.0)).await, "and one reading");
+
+    assert_eq!(device.ask(&device.request(2, coap::path("wrong", &["telemetry"]), b"{}")).await.code, 0x81, "4.01 for a token that is nobody's");
+    assert_eq!(device.ask(&device.request(2, coap::path(PRESS, &["telemetry"]), b"not json")).await.code, 0x80, "4.00");
+    assert_eq!(device.ask(&device.request(1, coap::path(PRESS, &["telemetry"]), b"")).await.code, 0x85, "4.05");
+    assert_eq!(device.ask(&device.request(2, coap::path(PRESS, &["nothing"]), b"{}")).await.code, 0x84, "4.04");
+
+    // A ping, which is an empty confirmable message, is answered with a reset.
+    let ping = Coap { kind: 0, code: 0, id: 900, ..Default::default() };
+    assert_eq!(device.ask(&ping).await.kind, 3);
+
+    // Non-confirmable: it asked for no acknowledgement and gets a plain answer.
+    let mut non = device.request(2, coap::path(PRESS, &["attributes"]), br#"{"firmware": "2"}"#);
+    non.kind = 1;
+    assert_eq!(device.ask(&non).await.kind, 1);
+    plant.reading(|r| is_attribute(r, "PRESS-1", "firmware")).await;
+    let read = device.ask(&device.request(1, coap::path(PRESS, &["attributes"]), b"")).await;
+    assert_eq!(serde_json::from_slice::<Value>(&read.payload).unwrap()["client"]["firmware"], json!("2"));
+}
+
+#[tokio::test]
+async fn over_coap_a_body_can_come_in_pieces() {
+    let Doors { plant, coap: server, .. } = every_way_in(token("PRESS-1", PRESS)).await;
+    let device = coap::Client::to(server).await;
+    let body = br#"{"temp": 12, "note": "long enough to need two datagrams on a small device"}"#;
+    let (first, second) = body.split_at(32);
+    let mut a = device.request(2, coap::path(PRESS, &["telemetry"]), first);
+    a.options.push((27, vec![0b0000_1001])); // Block 0, more, 32 bytes.
+    let said = device.ask(&a).await;
+    assert_eq!(said.code, 0x5f, "2.31 Continue");
+    // Each block may have a token of its own, and aiocoap's do.
+    let mut b = device.request(2, coap::path(PRESS, &["telemetry"]), second);
+    assert_ne!(a.token, b.token);
+    b.options.push((27, vec![0b0001_0001])); // Block 1, the last.
+    assert_eq!(device.ask(&b).await.code, 0x44);
+    plant.reading(|r| is_metric(r, "PRESS-1", "temp", 12.0)).await;
+}
+
+#[tokio::test]
+async fn over_coap_a_device_can_watch_for_what_is_for_it() {
+    let Doors { plant, coap: server, .. } = every_way_in(token("PRESS-1", PRESS)).await;
+    let device = coap::Client::to(server).await;
+    let mut options = coap::path(PRESS, &["rpc"]);
+    options.push((6, vec![]));
+    let watch = device.request(1, options, b"");
+    assert_eq!(device.ask(&watch).await.code, 0x45, "2.05, and it is registered");
+    let c = command("fan.start", json!({"speed": 2}));
+    let Ok(Dispatched::Accepted { external: Some(id) }) = plant.d.dispatch(&c, &site_device("PRESS-1")).await else { panic!("accepted") };
+    let note = device.hear().await;
+    assert_eq!((note.code, &note.token), (0x45, &watch.token));
+    let call: Value = serde_json::from_slice(&note.payload).unwrap();
+    assert_eq!((call["method"].as_str(), call["id"].to_string()), (Some("fan.start"), id.clone()));
+    let answer = device.request(2, coap::path(PRESS, &["rpc", &id]), br#"{"result": "ok"}"#);
+    assert_eq!(device.ask(&answer).await.code, 0x44);
+    until("the answer", async || matches!(plant.d.observe(&c, Some(&id)).await, Ok(Observation::Completed(_)))).await;
+
+    // A reset says it has stopped caring, and it goes the same way as a device that left.
+    device.say(&Coap { kind: 3, code: 0, id: 1, ..Default::default() }).await;
+    let again = command("fan.stop", json!({}));
+    tokio::time::sleep(Wait::from_millis(100)).await;
+    assert!(matches!(plant.d.dispatch(&again, &site_device("PRESS-1")).await, Err(Failure::NotSent(_))));
+    assert!(device.silent().await);
+}
+
+#[tokio::test]
+async fn nonsense_over_coap_harms_nothing() {
+    let Doors { plant, coap: server, .. } = every_way_in(token("PRESS-1", PRESS)).await;
+    let device = coap::Client::to(server).await;
+    for junk in [&b""[..], b"\x00", b"\xff\xff\xff\xff", b"\x40\x01", b"\x48\x01\x00\x00", b"\x40\x01\x00\x01\xff"] {
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket.send_to(junk, server).await.unwrap();
+    }
+    device.ask(&device.request(2, coap::path(PRESS, &["telemetry"]), br#"{"temp": 6}"#)).await;
+    plant.reading(|r| is_metric(r, "PRESS-1", "temp", 6.0)).await;
+}
+
+#[tokio::test]
+async fn one_device_can_use_any_way_in() {
+    let Doors { plant, http, coap: server } = every_way_in(token("PRESS-1", PRESS)).await;
+    let mut press = with_token(plant.port, PRESS).await;
+    assert!(press.up().await);
+    press.says("v1/devices/me/attributes", json!({"via": "mqtt"})).await;
+    plant.reading(|r| is_attribute(r, "PRESS-1", "via")).await;
+    let said: Value = reqwest::get(format!("{http}/{PRESS}/attributes")).await.unwrap().json().await.unwrap();
+    assert_eq!(said["client"]["via"], json!("mqtt"), "what it said one way is there the other");
+    press.listens("v1/devices/me/rpc/request/+").await;
+    let device = coap::Client::to(server).await;
+    let mut options = coap::path(PRESS, &["rpc"]);
+    options.push((6, vec![]));
+    device.ask(&device.request(1, options, b"")).await;
+    let c = command("fan.start", json!({}));
+    assert!(matches!(plant.d.dispatch(&c, &site_device("PRESS-1")).await, Ok(Dispatched::Accepted { .. })));
+    press.hears().await;
+    assert_eq!(device.hear().await.code, 0x45, "both hear it");
+}
+
+#[tokio::test]
+async fn a_definition_only_opens_what_devices_can_call() {
+    let bad = [
+        ("name: a\nconnect: tcp://x:1\napi: device\n", "listen+mqtt"),
+        ("name: a\nconnect: listen+coap://0.0.0.0:5683\n", "api: device"),
+        ("name: a\nconnect: listen+http://0.0.0.0:8080\n", "api: device"),
+        ("name: a\nconnect: listen+mqtt://0.0.0.0:1883\nalso: [listen+http://0.0.0.0:8080]\n", "with an api"),
+        ("name: a\nconnect: listen+mqtt://0.0.0.0:1883\napi: device\nalso: [tcp://x:1]\n", "not a way"),
+    ];
+    for (body, why) in bad {
+        let e = ferrum_edge_contract::driver::parse(body).err().unwrap_or_else(|| panic!("{body} passed"));
+        assert!(e.contains(why), "{body}: {e}");
+    }
+    assert!(
+        ferrum_edge_contract::driver::parse(
+            "name: a\nconnect: listen+mqtt://0.0.0.0:1883\napi: device\nalso: [listen+http://0.0.0.0:8080, listen+coap://0.0.0.0:5683]\n"
+        )
+        .is_ok()
+    );
 }

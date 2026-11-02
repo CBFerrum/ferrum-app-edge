@@ -13,6 +13,7 @@ macro_rules! templates {
 }
 
 templates![
+    "device-api.yaml",
     "vda5050-3.yaml",
     "rosbridge.yaml",
     "open-rmf.yaml",

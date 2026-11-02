@@ -178,6 +178,7 @@ impl Link {
             tls: d.tls.as_ref(),
             hub: Some(hub.clone()),
             api: d.api == Some(Api::Device),
+            also: &d.also,
         };
         let transport = transport::open(&address, options, limits)?;
         let (stop, _) = watch::channel(false);

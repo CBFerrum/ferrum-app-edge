@@ -18,6 +18,9 @@
 //! | `GET /alarms` | Edge Viewer | `?all=1` for those cleared too: newest first |
 //! | `PUT /devices/{id}/desired` | Edge Engineer | `{key, value}`: asks for an attribute through the ledger |
 //! | `POST /devices/{id}/token` | Edge Engineer | a token for a device that talks to us directly, shown once |
+//! | `GET /devices/{id}/connection` | Edge Viewer | how it connects: addresses and which proofs it has, and no secrets |
+//! | `POST /devices/{id}/credentials` | Edge Engineer | `{kind: token}`, `{kind: password, client_id?, username?}` or `{kind: certificate, certificate}`: a secret is shown once |
+//! | `DELETE /devices/{id}/credentials` | Edge Engineer | `?kind=`: one way of proving who it is, or all of them |
 //! | `POST /strangers/claim` | Edge Engineer | `{gateway, code, name?, definition?}`: a device heard on a shared connection becomes a record |
 //! | `POST /alarms/{id}/acknowledge` | Edge Engineer | `{note?}` |
 //! | `GET /robots` | Edge Viewer | robots, where each is and what it is doing |
@@ -32,6 +35,7 @@
 
 use crate::config;
 use async_trait::async_trait;
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use ferrum_domain::util::sys;
 use ferrum_edge_contract::driver;
@@ -219,18 +223,132 @@ fn token_hash(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
 
-async fn new_token(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
-    ferrum_ops::site::device_site(k, ctx, id).await?;
+/// A secret for a device, shown once. It is long enough that a plain hash is all it needs.
+fn new_secret() -> String {
     let mut bytes = [0u8; 24];
     rand::rng().fill_bytes(&mut bytes);
-    let token = hex::encode(bytes);
-    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    hex::encode(bytes)
+}
+
+/// A certificate's fingerprint: given as one, or worked out from the PEM of the certificate. A
+/// private key pasted here by mistake is refused and not looked at.
+fn fingerprint_of(text: &str) -> Result<String> {
+    let text = text.trim();
+    if text.len() == 64 && text.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(text.to_lowercase());
+    }
+    let begin = "-----BEGIN CERTIFICATE-----";
+    let inner = text
+        .strip_prefix(begin)
+        .and_then(|t| t.split("-----END CERTIFICATE-----").next())
+        .ok_or_else(|| Error::field("certificate", "a certificate in PEM, or its SHA-256 fingerprint"))?;
+    let clean: String = inner.chars().filter(|c| !c.is_whitespace()).collect();
+    let der = base64::engine::general_purpose::STANDARD.decode(clean).map_err(|_| Error::field("certificate", "that certificate cannot be read"))?;
+    Ok(hex::encode(Sha256::digest(der)))
+}
+
+async fn new_token(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
+    credentials(k, ctx, id, &json!({"kind": "token"})).await
+}
+
+/// How a device proves who it is. A secret is shown once, and only its hash is kept here or goes to
+/// a gateway. Each kind replaces the one before it, and a gateway hears of it at its next exchange,
+/// which ends any connection made with the old one.
+async fn credentials(k: &Kernel, ctx: &Ctx, id: Uuid, b: &Value) -> Result<Value> {
+    ferrum_ops::site::device_site(k, ctx, id).await?;
+    let text = |key: &str| b[key].as_str().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
     let mut v = Doc::new();
-    v.insert("edge_token_hash".into(), json!(token_hash(&token)));
+    let answer = match b["kind"].as_str() {
+        Some("token") => {
+            let token = new_secret();
+            v.insert("edge_token_hash".into(), json!(token_hash(&token)));
+            json!({"token": token})
+        }
+        Some("password") => {
+            let (client_id, username) = (text("client_id"), text("username"));
+            if client_id.is_none() && username.is_none() {
+                return Err(Error::field("username", "a password goes with a client id, a user name or both"));
+            }
+            let password = new_secret();
+            v.insert("edge_client_id".into(), json!(client_id));
+            v.insert("edge_username".into(), json!(username));
+            v.insert("edge_password_hash".into(), json!(token_hash(&password)));
+            json!({"client_id": client_id, "username": username, "password": password})
+        }
+        Some("certificate") => {
+            let fingerprint = fingerprint_of(&text("certificate").ok_or_else(|| Error::field("certificate", "which certificate?"))?)?;
+            v.insert("edge_certificate".into(), json!(fingerprint));
+            json!({"fingerprint": fingerprint})
+        }
+        _ => return Err(Error::field("kind", "token, password or certificate")),
+    };
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    if let Some(fingerprint) = answer["fingerprint"].as_str() {
+        let taken: Option<i32> = sqlx::query_scalar("select 1 from e_device where tenant_id = $1 and edge_certificate = $2 and id <> $3")
+            .bind(ctx.tenant)
+            .bind(fingerprint)
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if taken.is_some() {
+            return Err(Error::field("certificate", "another device has that certificate"));
+        }
+    }
     k.set_values_tx(&sys(ctx), &mut tx, "Device", id, v).await?;
-    audit::record(&mut tx, ctx, "Device", id, "edge.token_issued", None, json!({})).await?;
+    audit::record(&mut tx, ctx, "Device", id, "edge.credentials_issued", None, json!({"kind": b["kind"]})).await?;
     tx.commit().await?;
-    Ok(json!({"token": token}))
+    Ok(answer)
+}
+
+/// Takes away one way of proving who it is, or all of them.
+async fn revoke(k: &Kernel, ctx: &Ctx, id: Uuid, kind: Option<&str>) -> Result<Value> {
+    ferrum_ops::site::device_site(k, ctx, id).await?;
+    let mut v = Doc::new();
+    for (name, fields) in
+        [("token", &["edge_token_hash"][..]), ("password", &["edge_client_id", "edge_username", "edge_password_hash"]), ("certificate", &["edge_certificate"])]
+    {
+        if kind.is_none_or(|k| k == name) {
+            for f in fields {
+                v.insert((*f).into(), Value::Null);
+            }
+        }
+    }
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    k.set_values_tx(&sys(ctx), &mut tx, "Device", id, v).await?;
+    audit::record(&mut tx, ctx, "Device", id, "edge.credentials_revoked", None, json!({"kind": kind})).await?;
+    tx.commit().await?;
+    Ok(json!({"revoked": true}))
+}
+
+/// How a device connects, for a person setting one up. No secret is in here.
+async fn connection(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let row: Option<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "select f.published_body, d.edge_token_hash, d.edge_client_id, d.edge_username, d.edge_password_hash, d.edge_certificate, d.edge_connect \
+         from e_device d left join e_device_definition f on f.tenant_id = d.tenant_id and f.id = d.edge_definition where d.tenant_id = $1 and d.id = $2",
+    )
+    .bind(ctx.tenant)
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    let Some((body, token, client_id, username, password, certificate, connect)) = row else { return Err(Error::NotFound("device".into())) };
+    let compiled = body.as_deref().and_then(|b| driver::parse(b).ok());
+    let definition = compiled.as_ref().map(|c| &c.definition);
+    let calls_in = definition.is_some_and(|d| d.api.is_some());
+    let mut addresses: Vec<String> = definition.map(|d| d.connect.iter().chain(&d.also).cloned().collect()).unwrap_or_default();
+    if let Some(own) = connect.filter(|c| !c.is_empty()) {
+        addresses = vec![own];
+    }
+    Ok(json!({
+        "calls_in": calls_in,
+        "addresses": addresses,
+        "token": token.is_some(),
+        "password": password.is_some(),
+        "client_id": client_id,
+        "username": username,
+        "certificate": certificate,
+    }))
 }
 
 async fn claim(k: &Kernel, ctx: &Ctx, b: &Value) -> Result<Value> {
@@ -445,6 +563,18 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
         ("POST", ["devices", id, "token"]) => {
             may(ctx, ENGINEER)?;
             new_token(k, ctx, uuid(id)?).await?
+        }
+        ("GET", ["devices", id, "connection"]) => {
+            may(ctx, READ)?;
+            connection(k, ctx, uuid(id)?).await?
+        }
+        ("POST", ["devices", id, "credentials"]) => {
+            may(ctx, ENGINEER)?;
+            credentials(k, ctx, uuid(id)?, &body(req)?).await?
+        }
+        ("DELETE", ["devices", id, "credentials"]) => {
+            may(ctx, ENGINEER)?;
+            revoke(k, ctx, uuid(id)?, req.query.get("kind").and_then(Value::as_str)).await?
         }
         ("POST", ["strangers", "claim"]) => {
             may(ctx, ENGINEER)?;

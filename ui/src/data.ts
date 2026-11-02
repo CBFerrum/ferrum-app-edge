@@ -185,7 +185,27 @@ export const desire = (id: string, key: string, value: unknown) => api.put<{ com
 export const deviceRecord = (id: string) => api.get<{ device_name: string; device_code: string; kind: string; operations?: { operation: string }[] }>(docPath("Device", id));
 export const sendCommand = (target: string, operation: string, payload: unknown, expires_in_secs: number) =>
   api.post<{ id: string; state: string }>("/api/app/ops/commands", { target, operation, payload, expires_in_secs });
-export const newToken = (id: string) => api.post<{ token: string }>(`${base}/devices/${id}/token`, {});
+export interface Connection {
+  calls_in: boolean;
+  addresses: string[];
+  token: boolean;
+  password: boolean;
+  client_id: string | null;
+  username: string | null;
+  certificate: string | null;
+}
+
+export interface Issued {
+  token?: string;
+  client_id?: string | null;
+  username?: string | null;
+  password?: string;
+  fingerprint?: string;
+}
+
+export const connection = (id: string) => api.get<Connection>(`${base}/devices/${id}/connection`);
+export const issueCredentials = (id: string, body: Record<string, string>) => api.post<Issued>(`${base}/devices/${id}/credentials`, body);
+export const revokeCredentials = (id: string, kind: string) => api.del(`${base}/devices/${id}/credentials?kind=${kind}`);
 export const alarms = (all: boolean) => api.get<{ alarms: AlarmRow[] }>(`${base}/alarms`, all ? { all: 1 } : {});
 export const acknowledge = (id: string, note: string) => api.post(`${base}/alarms/${id}/acknowledge`, { note: note || null });
 export const robots = () => api.get<{ robots: Robot[] }>(`${base}/robots`);

@@ -1,7 +1,9 @@
 //! The adapters. None of them claims a certification: `docs/compatibility.md` is the record of what
 //! each was tried on, and today that is simulators only.
 
+pub mod coap;
 pub mod defined;
+pub mod http_server;
 pub mod hub;
 pub mod operator;
 pub mod sim;

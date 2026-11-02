@@ -2,6 +2,8 @@
 //! the platform sent, so that checking a device needs no link and a lost gateway gives no secret away.
 //! The hub knows who is connected now: whichever way a device came in, what is for it goes through here.
 
+use crate::adapter::Failure;
+use crate::adapters::transport::{Message, Out};
 use ferrum_edge_contract::device_api;
 use ferrum_edge_contract::driver::topic_matches;
 use ferrum_edge_contract::edge::{Basic, DeviceLink};
@@ -193,6 +195,35 @@ impl Hub {
             sessions.remove(&id);
         }
         taken
+    }
+
+    /// Takes something a device said, under its own name, whichever way it came in. A request for
+    /// attributes is answered here, because that needs nobody but this gateway. False means nothing is
+    /// taking what devices say any more.
+    pub async fn said(&self, tx: &mpsc::Sender<Message>, device: &str, topic: &str, body: Vec<u8>) -> bool {
+        let topic = device_api::named(topic, device);
+        if let Some(id) = topic.strip_prefix("v1/devices/").and_then(|t| t.strip_prefix(device)).and_then(|t| t.strip_prefix("/attributes/request/")) {
+            let asked: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+            let found = self.attributes(device, asked["clientKeys"].as_str(), asked["sharedKeys"].as_str());
+            self.deliver(&format!("v1/devices/{device}/attributes/response/{id}"), found.to_string().as_bytes());
+            return true;
+        }
+        tx.send(Message { topic, body, status: None, from: Some(device.to_string()) }).await.is_ok()
+    }
+
+    /// Sends what a definition published to whoever is listening for it. Nobody listening means it
+    /// did not go, which is what makes it safe to try again.
+    pub fn publish(&self, out: Out) -> Result<Option<Message>, Failure> {
+        let Out::Publish { topic, body, .. } = out else { return Err(Failure::NotSent("a device hears what is published to it".into())) };
+        match self.deliver(&topic, &body) {
+            0 => Err(Failure::NotSent(format!("nothing connected is listening for {topic}"))),
+            _ => Ok(None),
+        }
+    }
+
+    /// An id for a device asking something where its transport gives none.
+    pub fn next_request(&self) -> u64 {
+        self.next.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Keeps what a device said about itself, for when it asks.

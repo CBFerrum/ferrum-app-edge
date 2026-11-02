@@ -7,6 +7,8 @@
 //! and a port to listen on only if `listen` names it. See [`Limits`].
 
 use crate::adapter::Failure;
+use crate::adapters::coap::CoapServer;
+use crate::adapters::http_server::HttpServer;
 use crate::adapters::hub::Hub;
 use crate::adapters::mqtt_server::MqttServer;
 use async_trait::async_trait;
@@ -196,6 +198,8 @@ pub struct Options<'a> {
     pub hub: Option<Arc<Hub>>,
     /// What arrives is the device API, and devices keep to it.
     pub api: bool,
+    /// Other ways in for the same devices.
+    pub also: &'a [String],
 }
 
 /// Opens what an address names, within what this site allows.
@@ -206,10 +210,19 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
     CRYPTO.call_once(|| {
         let _ = rustls::crypto::ring::default_provider().install_default();
     });
-    let Options { frame, subscribe, headers, tls, hub, api } = options;
+    let Options { frame, subscribe, headers, tls, hub, api, also } = options;
     let (scheme, rest) = address.split_once("://").ok_or_else(|| format!("{address} has no scheme"))?;
     let bind = rest.split('?').next().unwrap_or(rest);
-    if matches!(scheme, "listen" | "listen+udp" | "webhook" | "listen+mqtt" | "listen+mqtts") {
+    if !also.is_empty() {
+        let hub = hub.ok_or("nothing here can check who calls")?;
+        let mut parts = Vec::with_capacity(also.len() + 1);
+        for one in std::iter::once(address).chain(also.iter().map(String::as_str)) {
+            let options = Options { frame: None, subscribe: &[], headers: &[], tls, hub: Some(hub.clone()), api, also: &[] };
+            parts.push(open(one, options, limits)?);
+        }
+        return Ok(Arc::new(Together { parts, hub }));
+    }
+    if matches!(scheme, "listen" | "listen+udp" | "webhook" | "listen+mqtt" | "listen+mqtts" | "listen+http" | "listen+https" | "listen+coap") {
         if !limits.listen.iter().any(|a| a == bind) {
             return Err(format!("{bind} is not in this site's listen list"));
         }
@@ -229,14 +242,20 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
         "listen" => Arc::new(Listen { address: bind.to_string(), frame, peers: Arc::default() }),
         "listen+udp" => Arc::new(ListenUdp { address: bind.to_string(), socket: Mutex::new(None) }),
         "webhook" => Arc::new(Webhook { address: bind.to_string(), token: query(rest, "token") }),
-        "listen+mqtt" | "listen+mqtts" => {
-            let secured = match (scheme, tls) {
-                ("listen+mqtts", Some(tls)) => Some(acceptor(tls, limits)?),
-                ("listen+mqtts", None) => return Err("listen+mqtts needs tls: cert and key, by name in the site's certificates".into()),
+        "listen+mqtt" | "listen+mqtts" | "listen+http" | "listen+https" => {
+            let secured = match (scheme.ends_with('s'), tls) {
+                (true, Some(tls)) => Some(acceptor(tls, limits)?),
+                (true, None) => return Err(format!("{scheme} needs tls: cert and key, by name in the site's certificates")),
                 _ => None,
             };
-            Arc::new(MqttServer { address: bind.to_string(), tls: secured, hub: hub.ok_or("nothing here can check who calls")?, api })
+            let hub = hub.ok_or("nothing here can check who calls")?;
+            if scheme.starts_with("listen+mqtt") {
+                Arc::new(MqttServer { address: bind.to_string(), tls: secured, hub, api })
+            } else {
+                Arc::new(HttpServer { address: bind.to_string(), tls: secured, hub })
+            }
         }
+        "listen+coap" => Arc::new(CoapServer { address: bind.to_string(), hub: hub.ok_or("nothing here can check who calls")?, socket: Mutex::new(None) }),
         "http" | "https" => Arc::new(Http::new(address, headers, tls, limits)?),
         #[cfg(feature = "ws")]
         "ws" | "wss" => {
@@ -267,6 +286,45 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
 
 type Reader = Box<dyn AsyncRead + Send + Unpin>;
 type Writer = Box<dyn AsyncWrite + Send + Unpin>;
+
+/// Several ways in for the same devices. They stand and fall together: a port that cannot open is
+/// said plainly, not left for a device to discover.
+struct Together {
+    parts: Vec<Arc<dyn Transport>>,
+    hub: Arc<Hub>,
+}
+
+#[async_trait]
+impl Transport for Together {
+    async fn run(&self, tx: mpsc::Sender<Message>, ready: mpsc::Sender<()>) -> Result<(), String> {
+        let (up, mut ups) = mpsc::channel(self.parts.len());
+        let mut running = tokio::task::JoinSet::new();
+        for part in &self.parts {
+            let (part, tx, up) = (part.clone(), tx.clone(), up.clone());
+            running.spawn(async move { part.run(tx, up).await });
+        }
+        let count = self.parts.len();
+        let all_up = async move {
+            for _ in 0..count {
+                let _ = ups.recv().await;
+            }
+            let _ = ready.send(()).await;
+            std::future::pending::<()>().await;
+        };
+        tokio::select! {
+            () = all_up => Ok(()),
+            done = running.join_next() => match done {
+                Some(Ok(result)) => result,
+                Some(Err(e)) => Err(e.to_string()),
+                None => Ok(()),
+            },
+        }
+    }
+
+    async fn send(&self, out: Out) -> Result<Option<Message>, Failure> {
+        self.hub.publish(out)
+    }
+}
 
 /// Takes any certificate a device presents. It proves the device holds that key, which the handshake
 /// checks, and whether that key is one we know is for the directory to say, by its fingerprint. A

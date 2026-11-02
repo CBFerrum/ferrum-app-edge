@@ -1330,6 +1330,7 @@ name = "ferrum-app-edge"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "ed25519-dalek",
  "ferrum-domain",
