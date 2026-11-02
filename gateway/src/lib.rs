@@ -20,7 +20,7 @@ pub mod update;
 
 // In the library rather than the binary, so that the tests run on what ships. On musl's own allocator
 // a gateway stored about 15% fewer readings at full load than the same code on glibc. This one stores
-// as many, for about 40 MB more memory.
+// as many, and settles at the same memory after a peak about 30 MB higher.
 #[cfg(target_env = "musl")]
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
