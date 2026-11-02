@@ -360,6 +360,7 @@ async fn scenario() {
     equipment_that_cannot_say_leaves_the_outcome_unknown(&w).await;
     a_fleet_with_no_memory_is_not_sent_twice(&w).await;
     a_crash_never_asks_another_device(&w).await;
+    what_a_site_has_forgotten_is_asked_of_the_platform(&w).await;
     a_definition_changed_under_running_work_leaves_it_unknown(&w).await;
     a_power_cut_with_no_link_waits_for_someone_to_vouch_for_the_time(&w).await;
     what_the_lease_and_the_disk_allow(&w).await;
@@ -653,6 +654,35 @@ async fn commissioned(ws: &Workspace, code: &str) -> Uuid {
     devices::set_lifecycle(&ws.k, &ws.admin, d, Lifecycle::Commissioned, "checked").await.unwrap();
     devices::set_lifecycle(&ws.k, &ws.admin, d, Lifecycle::Active, "in service").await.unwrap();
     d
+}
+
+async fn what_a_site_has_forgotten_is_asked_of_the_platform(w: &World) {
+    let ws = workspace(w, "forgotten").await;
+    let mut site = running(w, &ws, "").await;
+    let first = issue(&ws, ws.robot, "warehouse.move", json!({"tote": "F"}), 60).await;
+    reaches(&ws, first, "Completed", 15).await;
+    until("its row to go", 15, async || site.journal().entry(first).unwrap().is_none()).await;
+    site.kill();
+    // Past what a site keeps: it has no record of this at all, and that is not the same as done.
+    rusqlite::Connection::open(site.dir.join("journal.db")).unwrap().execute("delete from outcome", []).unwrap();
+    assert_eq!(site.journal().outcome(first).unwrap(), None);
+    let waiting = issue(&ws, ws.robot, "warehouse.move", json!({"task": {"after": [first]}}), 60).await;
+    w.p.down.store(true, Ordering::SeqCst);
+    let mut tx = ws.k.db.tenant_tx(ws.tenant).await.unwrap();
+    let taken = commands::take_for_site(&mut tx, ws.tenant, &ws.slug, 1, 10).await.unwrap();
+    tx.commit().await.unwrap();
+    {
+        let j = site.journal();
+        for c in &taken {
+            j.receive(c, 0).unwrap();
+        }
+    }
+    site.start(None);
+    tokio::time::sleep(StdDuration::from_secs(1)).await;
+    assert_eq!(site.missions_for(waiting), 0, "with the platform away nothing can say it finished, so it waits");
+    w.p.down.store(false, Ordering::SeqCst);
+    reaches(&ws, waiting, "Completed", 20).await;
+    assert_eq!(site.missions_for(waiting), 1, "the platform said how the first one ended");
 }
 
 async fn a_crash_never_asks_another_device(w: &World) {
