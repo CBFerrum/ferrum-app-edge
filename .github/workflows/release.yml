@@ -6,13 +6,19 @@ on:
   push:
     tags: ["v*"]
   pull_request:
-    paths: [".github/workflows/release.yml", "scripts/starts.sh"]
+    paths: [".github/workflows/release.yml", "scripts/starts.sh", "scripts/qualification.py"]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  # Everything ci.yml runs, on exactly what is about to be released.
+  qualify:
+    uses: ./.github/workflows/ci.yml
+    with:
+      frozen: true
+
   build:
     strategy:
       matrix:
@@ -56,15 +62,18 @@ jobs:
 
   publish:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [build, qualify]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
           path: out
+      - name: Say what this is and what it passed, beside it
+        run: python3 scripts/qualification.py out > qualification.json && mv qualification.json out/
       - name: Publish the files, unsigned. A person signs each with `ferrum-site sign`, and no key is here.
         env:
           GH_TOKEN: ${{ github.token }}
