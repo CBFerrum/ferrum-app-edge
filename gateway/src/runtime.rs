@@ -105,6 +105,9 @@ const MAX_TRACES: usize = 1_000;
 /// How often what flows remember is written down. A crash loses this much of a window or a hold.
 const FLOW_SAVE_MS: i64 = 15_000;
 
+/// How many readings go in one exchange. The platform takes ten times this.
+const MEASUREMENTS_AT_ONCE: i64 = 5_000;
+
 pub struct Runtime {
     pub cfg: Config,
     pub journal: Arc<Journal>,
@@ -916,10 +919,12 @@ impl Runtime {
     }
 
     /// One exchange. Everything sent stays in the journal until the answer says it arrived.
-    pub async fn exchange(&self) -> Result<(), LinkError> {
+    /// Says whether there is more to send than one exchange carries.
+    pub async fn exchange(&self) -> Result<bool, LinkError> {
         let reports = self.journal.reports(500).unwrap_or_default();
         let facts = self.journal.facts(500).unwrap_or_default();
-        let (measurements, upto) = self.journal.samples(5000).unwrap_or_default();
+        let (measurements, upto) = self.journal.samples(MEASUREMENTS_AT_ONCE).unwrap_or_default();
+        let full = measurements.len() as i64 >= MEASUREMENTS_AT_ONCE;
         let held = self.journal.unconfirmed(500).unwrap_or_default();
         let counts = self.journal.counts().unwrap_or_default();
         let room = (self.cfg.max_queued - counts.queued).clamp(0, 100);
@@ -948,8 +953,9 @@ impl Runtime {
                 *self.heard.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
                 // It came up and reached the platform, so it stays.
                 let _ = self.journal.clear("update_pending");
+                let taken = !r.measurements_held;
                 self.absorb(r, &held, upto);
-                Ok(())
+                Ok(full && taken)
             }
             Err(LinkError::Clock(server)) => {
                 self.clock.correct(server);
@@ -1208,9 +1214,10 @@ impl Runtime {
             let mut failures = 0u32;
             loop {
                 let wait = match sync.exchange().await {
-                    Ok(()) => {
+                    // A backlog goes as fast as the platform takes it, which is what paces this.
+                    Ok(more) => {
                         failures = 0;
-                        sync.cfg.sync_secs * 1000
+                        if more { 0 } else { sync.cfg.sync_secs * 1000 }
                     }
                     Err(LinkError::Clock(_)) => 100,
                     Err(e) => {
