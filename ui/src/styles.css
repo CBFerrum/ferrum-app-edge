@@ -679,7 +679,8 @@ a.edge-row-main:hover strong {
   font-variant-numeric: tabular-nums;
 }
 
-.edge-table th:first-child {
+.edge-table th:first-child,
+.edge-table td:first-child {
   text-align: left;
 }
 
