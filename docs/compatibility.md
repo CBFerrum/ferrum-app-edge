@@ -105,7 +105,6 @@ real network, a gateway's own disk, and what happens as `op_measurement` grows a
 |---|---|
 | PROFINET, EtherCAT, CANopen as such | Not built. An external driver is the way, and PROFINET and EtherCAT belong to a controller anyway |
 | ROS 2 by DDS directly | Through rosbridge. A vendor-qualified adapter as a process of its own is the rule |
-| EPCIS | Not built |
 | ThingsBoard, Siemens, Rockwell, AVEVA, Ignition, Dematic, Blue Yonder, Manhattan | Coexist and integrate per contract. There is no universal adapter and none is claimed |
 
 [parity.md](parity.md) has the whole picture, reference by reference.
