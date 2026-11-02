@@ -1,0 +1,27 @@
+name: Energy meters
+about: Meters read over Modbus, with power worked out at the gateway and a watch on the peak.
+definitions:
+  - name: energy-meter
+    body: |
+      name: energy-meter
+      connect: modbus+tcp://{settings.host}:502?unit=1
+      poll:
+        - {every: 10s, read: holding, at: 0, count: 2}
+      read:
+        - values:
+            - {metric: volts, reg: 0, type: u16, scale: 0.1, unit: V}
+            - {metric: amps, reg: 1, type: u16, scale: 0.01, unit: A}
+      derive:
+        - {metric: power.kw, formula: "[volts] * [amps] / 1000", unit: kW}
+rules:
+  - rule_name: Peak demand
+    metric: power.kw
+    comparison: Above
+    limit_value: 100
+    clear_value: 90
+    hold_secs: 60
+    severity: Warning
+dashboards:
+  - name: Energy
+    body: |
+      {"widgets": [{"id": "alarms", "type": "alarms", "x": 0, "y": 0, "w": 6, "h": 4, "title": "What is wrong"}]}

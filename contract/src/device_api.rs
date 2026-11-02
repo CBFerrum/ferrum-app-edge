@@ -8,17 +8,31 @@
 use crate::driver::{Decoded, Ending};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 
 /// Values one message can carry. A device that sends more is at fault, and costs this much.
 pub const MAX_KEYS: usize = 1000;
 
 const DEVICES: &str = "v1/devices/";
 const GATEWAY: &str = "v1/gateway/";
+/// What a device says it can be claimed with. Only a hash goes on from here, and for how long: a
+/// day, unless it says otherwise.
+fn claim(said: &Value) -> Value {
+    let secret = said["secretKey"].as_str().unwrap_or_default();
+    json!({"secret_hash": hex::encode(Sha256::digest(secret.as_bytes())), "for_ms": said["durationMs"].as_i64().unwrap_or(86_400_000)})
+}
+
 /// What a server says about a session: `$session/PRESS-1/online`.
 const SESSION: &str = "$session/";
+/// Firmware by the piece. These carry no device's name, because a session is one device.
+const FIRMWARE_ASKED: &str = "v2/fw/request/";
+const FIRMWARE_ANSWER: &str = "v2/fw/response/";
 
 /// A topic as the device said it, with its own name where it said `me`.
 pub fn named(topic: &str, code: &str) -> String {
+    if let Some(rest) = topic.strip_prefix(FIRMWARE_ASKED) {
+        return format!("{DEVICES}{code}/fw/request/{rest}");
+    }
     if let Some(rest) = topic.strip_prefix("v1/devices/me/") {
         return format!("{DEVICES}{code}/{rest}");
     }
@@ -31,12 +45,39 @@ pub fn named(topic: &str, code: &str) -> String {
 /// A topic as a device hears it, the other way round.
 pub fn as_heard(topic: &str, code: &str) -> String {
     if let Some(rest) = topic.strip_prefix(DEVICES).and_then(|t| t.strip_prefix(code)).and_then(|t| t.strip_prefix('/')) {
-        return format!("v1/devices/me/{rest}");
+        return match rest.strip_prefix("fw/response/") {
+            Some(answer) => format!("{FIRMWARE_ANSWER}{answer}"),
+            None => format!("v1/devices/me/{rest}"),
+        };
     }
     if let Some(rest) = topic.strip_prefix(GATEWAY).and_then(|t| t.strip_prefix(code)).and_then(|t| t.strip_prefix('/')) {
         return format!("{GATEWAY}{rest}");
     }
     topic.to_string()
+}
+
+/// The command that asks a device to take new firmware.
+pub const FIRMWARE: &str = "firmware.update";
+
+/// A piece of firmware a device asked for: which request, and which chunk.
+pub fn firmware_asked(topic: &str) -> Option<(&str, usize)> {
+    let (_, tail) = split(topic, DEVICES)?;
+    let (request, chunk) = tail.strip_prefix("fw/request/")?.split_once("/chunk/")?;
+    Some((request, chunk.parse().ok()?))
+}
+
+/// How a firmware update ended, from what a device reports about it, which is the only way to know.
+pub fn firmware_ended(topic: &str, code: &str, body: &[u8]) -> Option<Ending> {
+    let (device, tail) = split(topic, DEVICES)?;
+    if device != code || tail != "telemetry" {
+        return None;
+    }
+    let said: Value = serde_json::from_slice(body).ok()?;
+    match said.get("fw_state").or_else(|| said.get("values")?.get("fw_state"))?.as_str()? {
+        "UPDATED" => Some(Ending::Done),
+        "FAILED" => Some(Ending::Failed),
+        _ => None,
+    }
 }
 
 /// What says a device added itself: `$joined/NEW-1`.
@@ -56,7 +97,7 @@ pub fn session(code: &str, online: bool) -> String {
 /// Which of a device's topics this is, by what the topic ends with: a code can have almost anything in it.
 fn split<'a>(topic: &'a str, prefix: &str) -> Option<(&'a str, &'a str)> {
     let rest = topic.strip_prefix(prefix)?;
-    ["/telemetry", "/attributes", "/rpc", "/claim", "/connect", "/disconnect"].iter().find_map(|tail| {
+    ["/telemetry", "/attributes", "/rpc", "/claim", "/connect", "/disconnect", "/fw"].iter().find_map(|tail| {
         let at = rest.rfind(tail)?;
         let after = &rest[at + 1..];
         (after == &tail[1..] || after.starts_with(&format!("{}/", &tail[1..]))).then(|| (&rest[..at], after))
@@ -126,7 +167,7 @@ pub fn decode(topic: &str, body: &[u8]) -> Vec<Decoded> {
         match tail {
             "telemetry" => telemetry(code, &v, &mut out),
             "attributes" => attributes(code, &v, &mut out),
-            "claim" => out.push(Decoded::Event { device: Some(code.to_string()), name: "claim".into(), value: v }),
+            "claim" => out.push(Decoded::Event { device: Some(code.to_string()), name: "claim".into(), value: claim(&v) }),
             _ => {
                 if let Some(id) = tail.strip_prefix("rpc/request/") {
                     out.push(Decoded::Event {
@@ -204,6 +245,17 @@ pub struct Sending {
 /// its next report says whether it took. Anything else is a call it answers. `via` is the gateway
 /// device it is reached through, if any.
 pub fn command(code: &str, via: Option<&str>, id: u64, operation: &str, payload: &Value) -> Sending {
+    // Firmware is announced as attributes, as ThingsBoard's clients expect, and they say how it went.
+    if operation == FIRMWARE {
+        let said = json!({
+            "fw_title": payload["title"],
+            "fw_version": payload["version"],
+            "fw_size": payload["size"],
+            "fw_checksum": payload["sha256"],
+            "fw_checksum_algorithm": "SHA256",
+        });
+        return Sending { topic: format!("{DEVICES}{code}/attributes"), body: said, answers: true };
+    }
     if let Some(key) = operation.strip_prefix("set.") {
         let mut said = Map::new();
         said.insert(key.to_string(), payload.get("value").cloned().unwrap_or(Value::Null));
@@ -224,17 +276,35 @@ pub fn command(code: &str, via: Option<&str>, id: u64, operation: &str, payload:
 
 /// Topic filters a device may hold. It hears what is for it and nothing else.
 pub fn may_hear(filter: &str) -> bool {
-    filter.starts_with("v1/devices/me/") || filter.starts_with(GATEWAY)
+    filter.starts_with("v1/devices/me/") || filter.starts_with(GATEWAY) || filter.starts_with(FIRMWARE_ANSWER)
 }
 
 /// Whether a device may say this: the device API, as itself.
 pub fn may_say(topic: &str) -> bool {
-    topic.starts_with("v1/devices/me/") || topic.starts_with(GATEWAY)
+    topic.starts_with("v1/devices/me/") || topic.starts_with(GATEWAY) || topic.starts_with(FIRMWARE_ASKED)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn firmware_goes_by_the_piece_under_its_own_names() {
+        assert_eq!(named("v2/fw/request/7/chunk/3", "PRESS-1"), "v1/devices/PRESS-1/fw/request/7/chunk/3");
+        assert_eq!(firmware_asked("v1/devices/PRESS-1/fw/request/7/chunk/3"), Some(("7", 3)));
+        assert_eq!(firmware_asked("v1/devices/PRESS-1/fw/request/7"), None);
+        assert_eq!(as_heard("v1/devices/PRESS-1/fw/response/7/chunk/3", "PRESS-1"), "v2/fw/response/7/chunk/3");
+        assert!(may_say("v2/fw/request/7/chunk/3") && may_hear("v2/fw/response/+/chunk/+"));
+        let told = command("A", None, 1, FIRMWARE, &json!({"title": "t", "version": "2", "size": 9, "sha256": "ab"}));
+        assert_eq!(told.topic, "v1/devices/A/attributes");
+        assert_eq!(told.body["fw_checksum_algorithm"], "SHA256");
+        assert!(told.answers, "it says how it went");
+        let topic = "v1/devices/A/telemetry";
+        assert_eq!(firmware_ended(topic, "A", br#"{"fw_state": "UPDATED"}"#), Some(Ending::Done));
+        assert_eq!(firmware_ended(topic, "A", br#"{"ts": 1, "values": {"fw_state": "FAILED"}}"#), Some(Ending::Failed));
+        assert_eq!(firmware_ended(topic, "A", br#"{"fw_state": "DOWNLOADING"}"#), None);
+        assert_eq!(firmware_ended(topic, "B", br#"{"fw_state": "UPDATED"}"#), None, "another device's news");
+    }
 
     fn metrics(topic: &str, body: &str) -> Vec<(Option<String>, String, f64, Option<DateTime<Utc>>)> {
         decode(topic, body.as_bytes())

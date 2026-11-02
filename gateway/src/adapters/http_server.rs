@@ -97,6 +97,13 @@ async fn handle(State(s): State<Served>, req: Request) -> Response {
             }
             None => StatusCode::REQUEST_TIMEOUT.into_response(),
         },
+        (&Method::GET, ["firmware"]) => {
+            let number = |key| query(q, key).and_then(|n| n.parse().ok()).unwrap_or(0);
+            match s.hub.firmware_chunk(&device, query(q, "title"), query(q, "version"), number("size"), number("chunk")) {
+                Some(piece) => (StatusCode::OK, [("content-type", "application/octet-stream")], piece).into_response(),
+                None => StatusCode::NOT_FOUND.into_response(),
+            }
+        }
         (&Method::POST, ["rpc", id]) => say(&format!("v1/devices/me/rpc/response/{id}"), body.to_vec()).await,
         (&Method::POST, ["rpc"]) if is_json() => match s.hub.asked(&s.tx, &device, body.to_vec(), patience(q)).await {
             Ok(Some(answer)) => (StatusCode::OK, [("content-type", "application/json")], answer).into_response(),

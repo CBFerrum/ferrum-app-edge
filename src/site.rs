@@ -8,6 +8,17 @@
 //! | `GET /templates` | Edge Viewer | definitions to start from |
 //! | `POST /definitions/try` | Edge Engineer | `{body, topic?, sample?, sample_hex?}`: checks a definition and reads a sample |
 //! | `POST /flows/try` | Edge Engineer or Reviewer | `{body, script?, until?}`: checks a flow and walks a script through it |
+//! | `GET /devices` | Edge Viewer | `?q=&site=&definition=&tag=&asset=`: what the gateways reach |
+//! | `POST /devices/claim` | Edge Engineer | `{code, secret}`: shows a person holds a device |
+//! | `GET /solutions` | Edge Viewer | what comes with this app |
+//! | `POST /solutions/install` | Edge Engineer | `{name}` or `{bundle}`, as drafts |
+//! | `GET /solutions/export` | Edge Engineer | what is here, as a bundle, with nothing secret in it |
+//! | `GET /rollouts/{id}` | Edge Viewer | how a rollout of firmware stands, device by device |
+//! | `GET /fleet` | Edge Viewer | how each definition and site stands, and the versions running |
+//! | `GET /devices/{id}/availability` | Edge Viewer | `?days=`: how much of each day it was heard |
+//! | `POST /devices/import` | Edge Engineer | `{csv, tokens?}`: many devices, each row on its own |
+//! | `POST /fleet/command` | who may ask one | `{select, operation, payload, expires_in_secs?}`: one command each, through the ledger |
+//! | `POST /fleet/desired` | who may ask one | `{select, key, value}`: the same for a setting |
 //! | `GET /flows/{id}/versions` | Edge Viewer | every version that ran, newest first |
 //! | `GET /flows/{id}/traces` | Edge Viewer | `?since=`: what passed through a flow being watched |
 //! | `POST /flows/{id}/simulate` | Edge Engineer | `{script, until?}`: the same for what is saved, which is what lets it go for review |
@@ -42,7 +53,7 @@
 //! | `POST /ingest` | a device, by token | `{values, state?, attributes?, at?}` |
 //! | `GET /shared/{token}` | anyone with the link | what a shared dashboard shows, and nothing it does not |
 
-use crate::config;
+use crate::{config, fleet};
 use async_trait::async_trait;
 use base64::Engine;
 use chrono::{DateTime, Utc};
@@ -66,6 +77,8 @@ pub struct EdgeSite;
 const READ: &[&str] = &["Edge Viewer", "Edge Engineer", "Edge Reviewer"];
 const ENGINEER: &[&str] = &["Edge Engineer"];
 const FLOWS: &[&str] = &["Edge Engineer", "Edge Reviewer"];
+/// Asking many devices at once takes a person who may ask one: the ledger checks each.
+const OPERATE: &[&str] = &["Edge Engineer", "Ops Manager", "Ops Operator"];
 
 /// What a device sends in one call, at most.
 const MAX_INGEST: usize = 256 << 10;
@@ -196,7 +209,7 @@ async fn device(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
 /// Asks for an attribute. This is a command like any other: the device's definition says what
 /// `set.{key}` means, it goes through the ledger, and the attribute stays out of step until the
 /// device itself reports the new value.
-async fn desire(k: &Kernel, ctx: &Ctx, id: Uuid, key: &str, value: &Value) -> Result<Value> {
+pub async fn desire(k: &Kernel, ctx: &Ctx, id: Uuid, key: &str, value: &Value) -> Result<Value> {
     ferrum_ops::site::device_site(k, ctx, id).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     sqlx::query(
@@ -403,27 +416,6 @@ async fn claim(k: &Kernel, ctx: &Ctx, b: &Value) -> Result<Value> {
     Ok(json!({"id": made.get("id")}))
 }
 
-async fn device_list(k: &Kernel, ctx: &Ctx, q: Option<&str>) -> Result<Value> {
-    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    let rows: Value = sqlx::query_scalar(
-        "select coalesce(jsonb_agg(r order by r.code), '[]') from ( \
-           select d.id, d.device_code as code, d.device_name as name, d.kind, d.lifecycle, s.site_name as site, g.device_name as gateway, f.definition_name as definition, \
-             (select count(*) from e_edge_alarm a where a.tenant_id = d.tenant_id and a.device = d.id and a.status <> 'Cleared') as alarms \
-           from e_device d left join e_site s on s.tenant_id = d.tenant_id and s.id = d.site \
-           left join e_device g on g.tenant_id = d.tenant_id and g.id = d.gateway \
-           left join e_device_definition f on f.tenant_id = d.tenant_id and f.id = d.edge_definition \
-           where d.tenant_id = $1 and d.lifecycle <> 'Retired' and d.kind <> 'Gateway' \
-             and ($2::text is null or d.device_code ilike '%' || $2 || '%' or d.device_name ilike '%' || $2 || '%') \
-           order by d.device_code limit 500) r",
-    )
-    .bind(ctx.tenant)
-    .bind(q)
-    .fetch_one(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    Ok(json!({"devices": rows}))
-}
-
 async fn alarm_list(k: &Kernel, ctx: &Ctx, all: bool) -> Result<Value> {
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let rows: Value = sqlx::query_scalar(
@@ -541,7 +533,54 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
         }
         ("GET", ["devices"]) => {
             may(ctx, READ)?;
-            device_list(k, ctx, req.query.get("q").and_then(Value::as_str).filter(|q| !q.is_empty())).await?
+            fleet::list(k, ctx, &fleet::Selection::from_query(&req.query)).await?
+        }
+        ("POST", ["devices", "claim"]) => {
+            may(ctx, ENGINEER)?;
+            let b = body(req)?;
+            fleet::claim(k, ctx, b["code"].as_str().unwrap_or_default(), b["secret"].as_str().unwrap_or_default()).await?
+        }
+        ("GET", ["solutions"]) => {
+            may(ctx, READ)?;
+            json!({"solutions": crate::bundles::shipped()})
+        }
+        ("POST", ["solutions", "install"]) => {
+            may(ctx, ENGINEER)?;
+            let b = body(req)?;
+            let bundle = match b["name"].as_str() {
+                Some(name) => crate::bundles::shipped().into_iter().find(|s| s.name == name).ok_or_else(|| Error::NotFound(format!("solution {name}")))?,
+                None => serde_json::from_value(b["bundle"].clone()).map_err(|e| Error::invalid(format!("that bundle: {e}")))?,
+            };
+            crate::bundles::install(k, ctx, &bundle).await?
+        }
+        ("GET", ["solutions", "export"]) => {
+            may(ctx, ENGINEER)?;
+            let name = req.query.get("name").and_then(Value::as_str).unwrap_or("Exported");
+            serde_json::to_value(crate::bundles::export(k, ctx, name).await?).map_err(|e| Error::internal(e.to_string()))?
+        }
+        ("GET", ["rollouts", id]) => {
+            may(ctx, READ)?;
+            crate::firmware::progress(k, ctx, uuid(id)?).await?
+        }
+        ("GET", ["fleet"]) => {
+            may(ctx, READ)?;
+            fleet::health(k, ctx).await?
+        }
+        ("GET", ["devices", id, "availability"]) => {
+            may(ctx, READ)?;
+            fleet::availability(k, ctx, uuid(id)?, req.query.get("days").and_then(Value::as_str).and_then(|d| d.parse().ok()).unwrap_or(7)).await?
+        }
+        ("POST", ["devices", "import"]) => {
+            may(ctx, ENGINEER)?;
+            fleet::import(k, ctx, &body(req)?).await?
+        }
+        ("POST", ["fleet", "command"]) => {
+            may(ctx, OPERATE)?;
+            fleet::command(k, ctx, &body(req)?).await?
+        }
+        ("POST", ["fleet", "desired"]) => {
+            may(ctx, OPERATE)?;
+            fleet::desire(k, ctx, &body(req)?).await?
         }
         ("GET", ["alarms"]) => {
             may(ctx, READ)?;

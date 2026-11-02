@@ -26,13 +26,14 @@
 
 use crate::sparkplug;
 use chrono::{DateTime, Utc};
+use ferrum_calc::formula::Formula;
 use regex::Regex;
 use serde::Deserialize;
 use serde::de::{self, Deserializer};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use std::cell::OnceCell;
-use std::collections::BTreeMap;
+use std::cell::{OnceCell, RefCell};
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 /// The schemes a site can open. Anything else is an error when the definition is saved, not when it
@@ -102,8 +103,28 @@ pub struct Definition {
     pub poll: Vec<Poll>,
     #[serde(default)]
     pub read: Vec<ReadRule>,
+    /// Numbers worked out from others, at the gateway, so that they work with the link down.
+    #[serde(default)]
+    pub derive: Vec<Derive>,
+    /// Devices of this kind can be sent new firmware. It has to be said, and it needs an `api`.
+    #[serde(default)]
+    pub firmware: bool,
     #[serde(default)]
     pub commands: BTreeMap<String, CommandDef>,
+}
+
+/// `{metric: power.kw, formula: "[volts] * [amps] / 1000", unit: kW}`. It is reported whenever one of
+/// its inputs is, once all of them have been heard, and each may use those listed before it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Derive {
+    pub metric: String,
+    pub formula: String,
+    #[serde(default)]
+    pub unit: Option<String>,
+    /// An input older than this does not count: a stale reading is not a reading.
+    #[serde(default, deserialize_with = "maybe_duration")]
+    pub fresh: Option<Duration>,
 }
 
 /// A protocol that needs no rules of its own.
@@ -810,6 +831,7 @@ pub struct Compiled {
     reads: Vec<CompiledRead>,
     /// By operation: the patterns of a status and of each of its `also`, in order.
     statuses: BTreeMap<String, Vec<Option<Regex>>>,
+    derived: Vec<(Formula, BTreeSet<String>)>,
 }
 
 /// What a decoder remembers between messages on one link.
@@ -1051,6 +1073,23 @@ impl Compiled {
         self.decode_with(topic, body, &mut Memory::default())
     }
 
+    /// What a new number makes possible. `newest` says a device's newest value of a metric, no older
+    /// than `fresh` if it is given, and nothing is worked out until all of a rule's inputs have one.
+    pub fn derive(&self, heard: &str, newest: impl Fn(&str, Option<Duration>) -> Option<f64>) -> Vec<(String, f64, Option<String>)> {
+        let mut out: Vec<(String, f64, Option<String>)> = Vec::new();
+        for (rule, (formula, inputs)) in self.definition.derive.iter().zip(&self.derived) {
+            if !inputs.contains(heard) && !out.iter().any(|(metric, ..)| inputs.contains(metric)) {
+                continue;
+            }
+            let value_of = |name: &String| out.iter().find(|(metric, ..)| metric == name).map(|(_, v, _)| *v).or_else(|| newest(name, rule.fresh));
+            let Some(row) = inputs.iter().map(|name| Some((name.clone(), json!(value_of(name)?)))).collect::<Option<Map<_, _>>>() else { continue };
+            if let Some(value) = formula.eval(&row).and_then(|d| rust_decimal::prelude::ToPrimitive::to_f64(&d)) {
+                out.push((rule.metric.clone(), value, rule.unit.clone()));
+            }
+        }
+        out
+    }
+
     /// As [`Self::decode`], for a link that keeps what earlier messages taught it.
     pub fn decode_with(&self, topic: &str, body: &[u8], memory: &mut Memory) -> Vec<Decoded> {
         let mut seen = Seen::new(topic, body);
@@ -1267,6 +1306,9 @@ pub fn parse(text: &str) -> Result<Compiled, String> {
     if d.name.trim().is_empty() {
         return Err("a definition needs a name".into());
     }
+    if d.firmware && d.api.is_none() {
+        return Err("firmware reaches devices through the device API: say api: device".into());
+    }
     let scheme_of = match &d.connect {
         Some(c) if !c.contains('{') => Some(scheme(c).ok_or_else(|| format!("connect: {c} is not an address this can open. Schemes: {}", SCHEMES.join(", ")))?),
         _ => None,
@@ -1348,8 +1390,21 @@ pub fn parse(text: &str) -> Result<Compiled, String> {
             chain.map(|s| s.pattern.as_deref().map(Regex::new).transpose()).collect::<Result<Vec<_>, _>>().map_err(|e| format!("{what}.status: {e}"))?;
         statuses.insert(name.clone(), patterns);
     }
+    let mut derived = Vec::new();
+    for rule in &definition.derive {
+        let inputs = RefCell::new(BTreeSet::new());
+        let formula = Formula::parse(&rule.formula, &|name| {
+            inputs.borrow_mut().insert(name.to_string());
+            Ok(name.to_string())
+        })
+        .map_err(|e| format!("{}: {e}", rule.metric))?;
+        if inputs.borrow().contains(&rule.metric) {
+            return Err(format!("{}: it cannot be worked out from itself", rule.metric));
+        }
+        derived.push((formula, inputs.into_inner()));
+    }
     let digest = hex::encode(Sha256::digest(text.as_bytes()));
-    Ok(Compiled { definition, digest, reads, statuses })
+    Ok(Compiled { definition, digest, reads, statuses, derived })
 }
 
 #[cfg(test)]
@@ -1739,6 +1794,29 @@ commands:
         fails("name: x\nread:\n  - {metric: 'no spaces', json: $.a}", "not a metric");
         fails("name: x\nconnect: modbus+tcp://a:502\npoll:\n  - {every: 1s, send: hi}", "Modbus takes");
         fails("name: x\nconnect: tcp://a:1\npoll:\n  - {every: 1s, read: holding, at: 1}", "are for Modbus");
+    }
+
+    #[test]
+    fn numbers_can_be_worked_out_from_others() {
+        let c = parse(
+            "name: a\nconnect: tcp://x:1\nderive:\n  - {metric: power.kw, formula: '[volts] * [amps] / 1000', unit: kW}\n  - {metric: cost, formula: '[power.kw] * 2'}\n  - {metric: left, formula: '[amps]', fresh: 5s}\n",
+        )
+        .unwrap();
+        let newest = |name: &str, fresh: Option<Duration>| match name {
+            "volts" => Some(230.0),
+            "amps" => fresh.is_none().then_some(10.0),
+            _ => None,
+        };
+        let out = c.derive("amps", newest);
+        assert_eq!(
+            out,
+            vec![("power.kw".to_string(), 2.3, Some("kW".to_string())), ("cost".to_string(), 4.6, None)],
+            "one follows from another, and a stale input does not count"
+        );
+        assert_eq!(c.derive("other", newest), vec![], "only what it depends on brings it up");
+        assert_eq!(c.derive("volts", |n, _| (n == "volts").then_some(230.0)), vec![], "it waits for everything it needs");
+        assert!(parse("name: a\nconnect: tcp://x:1\nderive:\n  - {metric: x, formula: '[x] + 1'}\n").err().unwrap().contains("from itself"));
+        assert!(parse("name: a\nconnect: tcp://x:1\nderive:\n  - {metric: x, formula: '[y] +'}\n").err().unwrap().starts_with("x:"));
     }
 
     #[test]

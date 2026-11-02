@@ -55,6 +55,8 @@ const router = createBrowserRouter(
         { path: "definitions/:id", lazy: () => import("./Definitions").then((m) => ({ Component: m.DefinitionPage })) },
         { path: "dashboards", lazy: () => import("./Boards").then((m) => ({ Component: m.Boards })) },
         { path: "dashboards/:id", lazy: () => import("./Boards").then((m) => ({ Component: m.BoardPage })) },
+        { path: "solutions", lazy: () => import("./Solutions").then((m) => ({ Component: m.Solutions })) },
+        { path: "updates", lazy: () => import("./Updates").then((m) => ({ Component: m.Updates })) },
         { path: "flows", lazy: () => import("./Flows").then((m) => ({ Component: m.Flows })) },
         { path: "flows/:id", lazy: () => import("./FlowEditor").then((m) => ({ Component: m.FlowEditor })) },
         { path: "e/:entity", lazy: page("ListView") },

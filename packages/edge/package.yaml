@@ -10,7 +10,7 @@ modules:
     label: IoT Edge
     icon: factory
     order: 61
-    items: [DeviceDefinition, EdgeRule, EdgeFlow, EdgeAlarm, EdgeNotifyRule, EdgeExport, EdgeRelease, EdgeDashboard]
+    items: [DeviceDefinition, EdgeRule, EdgeFlow, EdgeAlarm, EdgeNotifyRule, EdgeExport, EdgeRelease, EdgeDashboard, EdgeAsset, EdgeFirmware, EdgeRollout, EdgeSchedule]
 
 overlays:
   - entity: Device
@@ -25,6 +25,8 @@ overlays:
       - {op: add_field, column: true, field: {name: edge_password_hash, type: data, read_only: true, no_copy: true, hidden: true}}
       - {op: add_field, column: true, field: {name: edge_certificate, type: data, read_only: true, no_copy: true, label: Certificate Fingerprint}}
       - {op: add_field, column: true, field: {name: edge_via, type: link, to: Device, label: Reached Through, description: "A gateway of its own, for a device that sits behind one"}}
+      - {op: add_field, column: true, field: {name: edge_tags, type: data, label: Tags, in_list: true, description: "Comma separated: what lets many devices be found and asked at once"}}
+      - {op: add_field, column: true, field: {name: edge_asset, type: link, to: EdgeAsset, label: Belongs To, description: "Where it sits among the things that matter here"}}
 
 roles:
   - name: Edge Viewer
@@ -38,6 +40,10 @@ roles:
       - {entity: EdgeRelease, read: true}
       - {entity: EdgeDashboard, read: true}
       - {entity: EdgeNotifyRule, read: true}
+      - {entity: EdgeAsset, read: true}
+      - {entity: EdgeFirmware, read: true}
+      - {entity: EdgeRollout, read: true}
+      - {entity: EdgeSchedule, read: true}
       - {entity: Device, read: true}
       - {entity: Site, read: true}
   - name: Edge Engineer
@@ -51,6 +57,10 @@ roles:
       - {entity: EdgeRelease, read: true, write: true, create: true}
       - {entity: EdgeDashboard, read: true, write: true, create: true, delete: true, export: true, import: true}
       - {entity: EdgeNotifyRule, read: true, write: true, create: true, delete: true}
+      - {entity: EdgeAsset, read: true, write: true, create: true, delete: true, export: true, import: true}
+      - {entity: EdgeFirmware, read: true, write: true, create: true, delete: true}
+      - {entity: EdgeRollout, read: true, write: true, create: true, delete: true}
+      - {entity: EdgeSchedule, read: true, write: true, create: true, delete: true}
       - {entity: Device, read: true, write: true, create: true, export: true, import: true}
       - {entity: DeviceProfile, read: true}
       - {entity: Site, read: true}

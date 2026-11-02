@@ -126,6 +126,8 @@ pub struct Limits {
     pub listen: Vec<String>,
     /// Certificates a definition can name, and OPC UA's own store.
     pub tls_dir: Option<PathBuf>,
+    /// Where firmware waits for devices to fetch it.
+    pub firmware_dir: Option<PathBuf>,
 }
 
 impl Limits {

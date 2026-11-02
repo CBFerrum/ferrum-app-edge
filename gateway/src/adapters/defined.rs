@@ -9,7 +9,7 @@
 //! only when its status says so, and a write that was not answered leaves it unknown.
 
 use crate::adapter::{Adapter, Dispatched, Failure, Observation, Reading};
-use crate::adapters::hub::Hub;
+use crate::adapters::hub::{Hub, Offered};
 use crate::adapters::transport::{self, Limits, Message, Out, Transport};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -20,10 +20,13 @@ use ferrum_ops_contract::telemetry::Class;
 use ferrum_ops_contract::{Command, sync::SiteDevice};
 use serde::Serialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
@@ -79,6 +82,7 @@ pub struct Link {
     stop: watch::Sender<bool>,
     /// Who may call, and who is connected, where devices call in.
     hub: Arc<Hub>,
+    limits: Limits,
 }
 
 fn locked<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -154,6 +158,57 @@ fn body_of(template: &Value, vars: &Value) -> Result<Vec<u8>, String> {
     })
 }
 
+/// The most firmware this will fetch for a device.
+const MAX_FIRMWARE: u64 = 512 << 20;
+
+/// Fetches firmware once for a whole site and keeps it by what is in it, so that a thousand devices
+/// cost one download, and only what matches its hash is ever offered to a device.
+// ponytail: this holds up the command it is for while it downloads, which is the first of a rollout
+// and not the rest. A batch that must not wait belongs behind a file already here.
+async fn fetched(limits: &Limits, payload: &Value) -> Result<PathBuf, String> {
+    let (Some(url), Some(sha256)) = (payload["url"].as_str(), payload["sha256"].as_str()) else { return Err("this firmware does not say where it is".into()) };
+    let dir = limits.firmware_dir.as_ref().ok_or("this site keeps no firmware")?;
+    if !sha256.chars().all(|c| c.is_ascii_hexdigit()) || sha256.len() != 64 {
+        return Err("that is not a SHA-256".into());
+    }
+    let path = dir.join(sha256.to_lowercase());
+    if path.exists() {
+        return Ok(path);
+    }
+    if !limits.reaches(url) {
+        return Err(format!("{url} is not in this site's allow list"));
+    }
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let client = reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10)).build().map_err(|e| e.to_string())?;
+    let mut response = client.get(url).send().await.map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("{url} answered {}", response.status()));
+    }
+    let part = dir.join(format!("{}.part", Uuid::now_v7()));
+    let mut file = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;
+    let (mut hash, mut size) = (Sha256::new(), 0u64);
+    let outcome = async {
+        while let Some(piece) = response.chunk().await.map_err(|e| e.to_string())? {
+            size += piece.len() as u64;
+            if size > MAX_FIRMWARE {
+                return Err("that is more firmware than a device should need".to_string());
+            }
+            hash.update(&piece);
+            file.write_all(&piece).await.map_err(|e| e.to_string())?;
+        }
+        file.flush().await.map_err(|e| e.to_string())?;
+        if hex::encode(hash.finalize()) != sha256.to_lowercase() {
+            return Err(format!("{url} is not what it should be: its hash differs"));
+        }
+        tokio::fs::rename(&part, &path).await.map_err(|e| e.to_string())
+    }
+    .await;
+    if outcome.is_err() {
+        let _ = tokio::fs::remove_file(&part).await;
+    }
+    outcome.map(|()| path)
+}
+
 impl Link {
     fn start(compiled: Arc<Compiled>, address: String, devices: Vec<DeviceLink>, secrets: Value, limits: &Limits) -> Result<Arc<Link>, String> {
         let d = &compiled.definition;
@@ -194,6 +249,7 @@ impl Link {
             seq: AtomicU64::new(Utc::now().timestamp().unsigned_abs()),
             stop,
             hub,
+            limits: limits.clone(),
         });
         link.clone().spawn();
         Ok(link)
@@ -419,7 +475,23 @@ impl Link {
                         _ => {}
                     }
                     s.reported.insert(key, (value, now));
-                    Reading::Value { device: code, metric, value, unit, class: class_of(class.as_deref()), source_time: at }
+                    let newest = |name: &str, fresh: Option<Duration>| {
+                        s.reported
+                            .get(&(code.clone(), name.to_string()))
+                            .filter(|(_, when)| fresh.is_none_or(|f| now.duration_since(*when) <= f))
+                            .map(|(v, _)| *v)
+                    };
+                    let worked_out = self.compiled.derive(&metric, newest);
+                    for (name, v, _) in &worked_out {
+                        s.reported.insert((code.clone(), name.clone()), (*v, now));
+                    }
+                    let class = class_of(class.as_deref());
+                    let extra: Vec<Reading> = worked_out
+                        .into_iter()
+                        .map(|(name, v, u)| Reading::Value { device: code.clone(), metric: name, value: v, unit: u, class, source_time: at })
+                        .collect();
+                    s.readings.extend(extra);
+                    Reading::Value { device: code, metric, value, unit, class, source_time: at }
                 }
                 Decoded::State { state, .. } => Reading::State { device: code, state, reason: None },
                 Decoded::Attribute { key, value, .. } => {
@@ -441,7 +513,9 @@ impl Link {
             let Some(f) = s.inflight.get_mut(&id) else { continue };
             let text = id.to_string();
             let names: Vec<&str> = std::iter::once(text.as_str()).chain(f.external.as_deref()).collect();
-            let said = if self.device_api() {
+            let said = if f.operation == device_api::FIRMWARE {
+                device_api::firmware_ended(&m.topic, &f.device, body)
+            } else if self.device_api() {
                 device_api::status(&m.topic, body, &names)
             } else if self.native() {
                 native_status(body, &names)
@@ -461,6 +535,11 @@ impl Link {
     /// A command for a device that called in: it hears it if it is connected and listening, and
     /// that being said out loud is what a retry depends on.
     async fn dispatch_to_device(&self, c: &Command, device: &SiteDevice, link: Option<&DeviceLink>) -> Result<Dispatched, Failure> {
+        if c.operation == device_api::FIRMWARE {
+            let path = fetched(&self.limits, &c.payload).await.map_err(Failure::NotSent)?;
+            let text = |key: &str| c.payload[key].as_str().unwrap_or_default().to_string();
+            self.hub.offer_firmware(&device.code, Offered { title: text("title"), version: text("version"), path });
+        }
         let id = self.seq.fetch_add(1, Ordering::Relaxed);
         let sending = device_api::command(&device.code, link.and_then(|l| l.via.as_deref()), id, &c.operation, &c.payload);
         if let Some(key) = c.operation.strip_prefix("set.") {

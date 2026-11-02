@@ -859,7 +859,7 @@ function Watching({ doc, writable, chosen, choose }: { doc: FlowDoc; writable: b
                 <tr key={t.id} className={chosen === t.node ? "edge-on" : undefined}>
                   <td>{new Date(t.at).toLocaleTimeString()}</td>
                   <td>
-                    <button type="button" className="edge-link" onClick={() => choose(chosen === t.node ? null : t.node)}>
+                    <button type="button" className="edge-step-link" onClick={() => choose(chosen === t.node ? null : t.node)}>
                       {t.node}
                     </button>
                   </td>

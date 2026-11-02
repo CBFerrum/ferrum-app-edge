@@ -14,6 +14,8 @@ export function Tabs({ alarms }: { alarms?: number }) {
       <NavLink to="/robots">Robots</NavLink>
       <NavLink to="/flows">Flows</NavLink>
       <NavLink to="/definitions">Definitions</NavLink>
+      <NavLink to="/updates">Updates</NavLink>
+      <NavLink to="/solutions">Solutions</NavLink>
     </nav>
   );
 }

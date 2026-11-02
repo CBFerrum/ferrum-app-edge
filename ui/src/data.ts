@@ -53,6 +53,9 @@ export interface DeviceRow {
   gateway: string | null;
   definition: string | null;
   alarms: number;
+  tags: string | null;
+  last_seen: string | null;
+  active: boolean | null;
 }
 
 export interface Attribute {
@@ -182,7 +185,47 @@ export interface History {
 }
 
 export const overview = () => api.get<Overview>(`${base}/overview`);
-export const devices = (q: string) => api.get<{ devices: DeviceRow[] }>(`${base}/devices`, q ? { q } : {});
+export interface Selection {
+  ids?: string[];
+  q?: string;
+  site?: string;
+  definition?: string;
+  tag?: string;
+  asset?: string;
+}
+
+export interface Outcome {
+  device: string;
+  command?: string;
+  state?: string;
+  refused?: string;
+}
+
+export interface Imported {
+  created: number;
+  failed: { line: number; code?: string; why: string }[];
+  tokens: { code: string; token: string }[];
+}
+
+export interface FleetGroup {
+  name: string;
+  devices: number;
+  heard: number;
+  in_service: number;
+  alarms: number;
+}
+
+export interface Fleet {
+  definitions: FleetGroup[];
+  sites: FleetGroup[];
+  versions: { version: string; devices: number }[];
+}
+
+export const devices = (s: Omit<Selection, "ids">) => api.get<{ devices: DeviceRow[] }>(`${base}/devices`, { ...s });
+export const fleet = () => api.get<Fleet>(`${base}/fleet`);
+export const askAll = (select: Selection, operation: string, payload: unknown) => api.post<{ batch: string; outcomes: Outcome[] }>(`${base}/fleet/command`, { select, operation, payload });
+export const setAll = (select: Selection, key: string, value: unknown) => api.post<{ outcomes: Outcome[] }>(`${base}/fleet/desired`, { select, key, value });
+export const importDevices = (csv: string, tokens: boolean) => api.post<Imported>(`${base}/devices/import`, { csv, tokens });
 export const device = (id: string) => api.get<DeviceDetail>(`${base}/devices/${id}`);
 export const history = (id: string, metrics: string[], from: string, to: string, points: number) => api.get<History>(`${base}/devices/${id}/history`, { metrics: metrics.join(","), from, to, points });
 export const desire = (id: string, key: string, value: unknown) => api.put<{ command: string }>(`${base}/devices/${id}/desired`, { key, value });
@@ -251,6 +294,31 @@ export const definitionDoc = (id: string) => api.get<DefinitionDoc>(docPath("Dev
 export const newDefinition = (name: string, body: string) => api.post<{ id: string }>("/api/v1/DeviceDefinition", { definition_name: name, body });
 export const saveDefinition = (id: string, version: number, patch: Partial<DefinitionDoc>) => api.patch<DefinitionDoc>(docPath("DeviceDefinition", id), patch, { ifMatch: version });
 export const publishDefinition = (id: string) => api.post<{ revision: number }>(docPath("DeviceDefinition", id, "actions", "publish"), {});
+
+export interface RolloutDoc {
+  id: string;
+  rollout_name: string;
+  firmware: string;
+  status: "Draft" | "Running" | "Paused" | "Done";
+  note: string | null;
+  _titles?: Record<string, string>;
+}
+
+export const rolloutList = () => api.get<{ rows: RolloutDoc[] }>("/api/v1/EdgeRollout", { fields: "rollout_name,firmware,status,note", limit: 200, order_by: "rollout_name asc", titles: true });
+export const rolloutProgress = (id: string) => api.get<{ devices: { code: string; status: string; error: string | null; at: string }[] }>(`${base}/rollouts/${id}`);
+export const rolloutAction = (id: string, name: string) => api.post(docPath("EdgeRollout", id, "actions", name), {});
+
+export interface Installed {
+  what: string;
+  name: string;
+  added: boolean;
+  why?: string;
+}
+
+export const solutions = () => api.get<{ solutions: { name: string; about: string }[] }>(`${base}/solutions`);
+export const installSolution = (name: string) => api.post<{ items: Installed[] }>(`${base}/solutions/install`, { name });
+export const installBundle = (bundle: unknown) => api.post<{ items: Installed[] }>(`${base}/solutions/install`, { bundle });
+export const exportSolution = (name: string) => api.get<unknown>(`${base}/solutions/export`, { name });
 
 export interface BoardDoc {
   id: string;

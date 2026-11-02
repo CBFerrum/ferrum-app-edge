@@ -182,8 +182,13 @@ impl Runtime {
             }
             adapters.push((format!("peer {}", p.name), adapter));
         }
-        let limits =
-            OpenLimits { drivers_dir: cfg.drivers_dir.clone(), allow: cfg.allow.clone(), listen: cfg.listen.clone(), tls_dir: Some(cfg.state_dir.join("tls")) };
+        let limits = OpenLimits {
+            drivers_dir: cfg.drivers_dir.clone(),
+            allow: cfg.allow.clone(),
+            listen: cfg.listen.clone(),
+            tls_dir: Some(cfg.state_dir.join("tls")),
+            firmware_dir: Some(cfg.state_dir.join("firmware")),
+        };
         let exporting = OpenLimits { allow: cfg.allow.clone(), tls_dir: Some(cfg.state_dir.join("tls")), ..OpenLimits::default() };
         let defined = Arc::new(Defined::new(limits, json!(cfg.secrets)));
         adapters.push(("definitions".to_string(), defined.clone()));

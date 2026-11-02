@@ -1,0 +1,35 @@
+name: Cold rooms
+about: Temperature and door sensors calling a gateway. An alarm when a room stays warm, and word to someone when a door is left open.
+definitions:
+  - name: cold-room-sensor
+    body: |
+      name: cold-room-sensor
+      connect: listen+mqtt://0.0.0.0:1883
+      api: device
+rules:
+  - rule_name: Cold room too warm
+    metric: temp.c
+    comparison: Above
+    limit_value: 8
+    clear_value: 6
+    hold_secs: 300
+    severity: Major
+flows:
+  - name: Cold room door left open
+    body: |
+      {"nodes": [
+        {"id": "door", "kind": "metric", "metric": "door.open"},
+        {"id": "open", "kind": "compare", "op": ">", "value": 0},
+        {"id": "held", "kind": "hold", "for": "5m"},
+        {"id": "alarm", "kind": "alarm", "name": "A door has been left open", "severity": "Warning"}
+      ], "edges": [
+        {"from": "door", "to": "open"},
+        {"from": "open", "port": "yes", "to": "held"},
+        {"from": "open", "port": "no", "to": "held", "input": "reset"},
+        {"from": "held", "to": "alarm"},
+        {"from": "open", "port": "no", "to": "alarm", "input": "clear"}
+      ]}
+dashboards:
+  - name: Cold rooms
+    body: |
+      {"widgets": [{"id": "alarms", "type": "alarms", "x": 0, "y": 0, "w": 6, "h": 4, "title": "What is wrong"}]}

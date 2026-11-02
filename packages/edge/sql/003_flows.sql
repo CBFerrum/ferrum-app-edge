@@ -34,6 +34,18 @@ create table edge_flow_version (
   primary key (tenant_id, flow_id, revision)
 );
 
+-- Each device a rollout has reached, and how that went.
+create table edge_rollout_device (
+  tenant_id uuid not null,
+  rollout_id uuid not null,
+  device_id uuid not null,
+  command_id uuid,
+  status text not null default 'Sent' check (status in ('Sent', 'Done', 'Failed')),
+  error text,
+  at timestamptz not null default now(),
+  primary key (tenant_id, rollout_id, device_id)
+);
+
 -- When a thing arrived, which is not when it happened: a gateway back from an outage sends days of it.
 alter table edge_event add column received_at timestamptz not null default now();
 create index edge_event_received on edge_event (tenant_id, received_at);
@@ -43,7 +55,7 @@ create index edge_attribute_received on edge_attribute (tenant_id, received_at);
 do $$
 declare t text;
 begin
-  foreach t in array array['edge_flow_trace', 'edge_flow_state', 'edge_flow_version'] loop
+  foreach t in array array['edge_flow_trace', 'edge_flow_state', 'edge_flow_version', 'edge_rollout_device'] loop
     execute format('alter table %I enable row level security', t);
     execute format('alter table %I force row level security', t);
     execute format(

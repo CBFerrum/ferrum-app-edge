@@ -135,7 +135,7 @@ async fn request(ctx: &Ctx, tx: &mut Tx, payload: &Value, at: DateTime<Utc>) -> 
         };
         match commands::issue(tx, ctx, cmd).await {
             Ok(_) => None,
-            Err(e @ (Error::Validation(_) | Error::Forbidden(_) | Error::NotFound(_))) => Some(e.to_string()),
+            Err(e @ (Error::Validation(_) | Error::Invalid(_) | Error::Forbidden(_) | Error::NotFound(_))) => Some(e.to_string()),
             Err(e) => return Err(e),
         }
     };
