@@ -236,8 +236,9 @@ impl Site {
         }
     }
 
+    /// What the simulator has written so far. It may be part way through a line right now.
     fn missions(&self) -> Vec<Value> {
-        std::fs::read_to_string(self.dir.join("fleet.sim")).unwrap_or_default().lines().map(|l| serde_json::from_str(l).unwrap()).collect()
+        std::fs::read_to_string(self.dir.join("fleet.sim")).unwrap_or_default().lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
     }
 
     fn missions_for(&self, id: Uuid) -> usize {
