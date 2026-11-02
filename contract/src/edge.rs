@@ -143,6 +143,8 @@ pub const EXPORT_SCHEMES: &[&str] = &[
     "pubsub",
     "azure",
     "eventhub",
+    "sparkplug",
+    "sparkplugs",
 ];
 
 /// Whether an export's address can work, for saying so when it is saved. A password has no place

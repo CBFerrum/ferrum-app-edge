@@ -7,6 +7,7 @@
 
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 /// Datatypes from the specification, by the numbers on the wire.
 const NAMES: [(&str, u64); 12] = [
@@ -148,7 +149,7 @@ fn put_bytes(out: &mut Vec<u8>, number: u64, bytes: &[u8]) {
     out.extend_from_slice(bytes);
 }
 
-/// A command's payload: `{timestamp, metrics: [{name, value, type}]}`. `type` is `int32`, `double`
+/// A payload: `{timestamp, seq?, metrics: [{name, value, type}]}`. `type` is `int32`, `double`
 /// and so on, and defaults to what the value looks like; a device checks it against its birth.
 pub fn encode(payload: &Value) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
@@ -197,16 +198,105 @@ pub fn encode(payload: &Value) -> Result<Vec<u8>, String> {
         }
         put_bytes(&mut out, 2, &one);
     }
+    if let Some(seq) = payload["seq"].as_u64() {
+        put(&mut out, 3, 0);
+        put_varint(&mut out, seq);
+    }
     Ok(out)
 }
 
-/// What each node's aliases stood for at its last birth.
+/// Where a primary host says whether it is there.
+pub fn state_topic(host: &str) -> String {
+    format!("spBv1.0/STATE/{host}")
+}
+
+pub fn state_body(online: bool, timestamp_ms: i64) -> Vec<u8> {
+    json!({"online": online, "timestamp": timestamp_ms}).to_string().into_bytes()
+}
+
+/// What asks a node to say everything again. `group/node`, as [`Aliases::rebirths`] gives it.
+pub fn rebirth(node: &str, timestamp_ms: i64) -> Result<(String, Vec<u8>), String> {
+    let (group, node) = node.split_once('/').ok_or("that is not a group and a node")?;
+    let body = encode(&json!({"timestamp": timestamp_ms, "metrics": [{"name": "Node Control/Rebirth", "value": true, "type": "boolean"}]}))?;
+    Ok((format!("spBv1.0/{group}/NCMD/{node}"), body))
+}
+
+/// A node as a primary host follows it.
+#[derive(Debug)]
+struct Followed {
+    seq: u64,
+    birth_seq: Option<u64>,
+}
+
+/// What each node's aliases stood for at its last birth, and, for a primary host, where each stands.
 #[derive(Debug, Default)]
 pub struct Aliases {
     nodes: HashMap<String, HashMap<u64, String>>,
+    followed: HashMap<String, Followed>,
+    wanted: Vec<String>,
+    asked: HashMap<String, Instant>,
 }
 
+/// A node has this long to answer before it is asked again.
+const REBIRTH_EVERY: Duration = Duration::from_secs(10);
+
 impl Aliases {
+    /// Follows a message as a primary host does, and says what is now online or offline. A node or
+    /// device whose sequence has a gap, or that speaks with no birth, is asked to start again,
+    /// because what it says from now on might be filed under the wrong name.
+    pub fn follow(&mut self, topic: &str, payload: &Value) -> Vec<(String, &'static str)> {
+        let levels: Vec<&str> = topic.split('/').collect();
+        let (Some(group), Some(kind), Some(node)) = (levels.get(1), levels.get(2), levels.get(3)) else { return vec![] };
+        let key = format!("{group}/{node}");
+        let device = levels.get(4).copied();
+        let seq = payload["seq"].as_u64();
+        let birth_seq = payload["metrics"].as_array().into_iter().flatten().find(|m| m["name"] == "bdSeq").and_then(|m| m["value"].as_u64());
+        let mut changed = Vec::new();
+        match *kind {
+            "NBIRTH" => {
+                self.followed.insert(key.clone(), Followed { seq: seq.unwrap_or(0), birth_seq });
+                self.asked.remove(&key);
+                changed.push((node.to_string(), "Online"));
+            }
+            "NDEATH" => {
+                // A will can arrive after a node has already come back, and then it is old news.
+                if self.followed.get(&key).is_none_or(|f| f.birth_seq == birth_seq) {
+                    self.followed.remove(&key);
+                    changed.push((node.to_string(), "Offline"));
+                }
+            }
+            "DBIRTH" | "DDEATH" | "NDATA" | "DDATA" => {
+                let expected = self.followed.get(&key).map(|f| (f.seq + 1) % 256);
+                match (expected, seq) {
+                    (Some(want), Some(got)) if want == got => {
+                        if let Some(f) = self.followed.get_mut(&key) {
+                            f.seq = got;
+                        }
+                    }
+                    _ => {
+                        if self.asked.get(&key).is_none_or(|at| at.elapsed() >= REBIRTH_EVERY) {
+                            self.asked.insert(key.clone(), Instant::now());
+                            self.wanted.push(key);
+                        }
+                        return changed;
+                    }
+                }
+                match (*kind, device) {
+                    ("DBIRTH", Some(device)) => changed.push((device.to_string(), "Online")),
+                    ("DDEATH", Some(device)) => changed.push((device.to_string(), "Offline")),
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        changed
+    }
+
+    /// The nodes to ask to start again, once each.
+    pub fn rebirths(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.wanted)
+    }
+
     /// Gives each metric the name its alias stands for. A birth teaches them, and a metric still
     /// without a name stays that way, so a rule cannot file it under the wrong one.
     pub fn resolve(&mut self, topic: &str, payload: &mut Value) {
@@ -239,6 +329,53 @@ impl Aliases {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn says(seq: u64) -> Value {
+        json!({"seq": seq, "metrics": []})
+    }
+
+    #[test]
+    fn a_host_follows_a_node_and_asks_again_after_a_gap() {
+        let mut a = Aliases::default();
+        let birth = json!({"seq": 0, "metrics": [{"name": "bdSeq", "value": 3}]});
+        assert_eq!(a.follow("spBv1.0/g/NBIRTH/n", &birth), [("n".to_string(), "Online")]);
+        assert!(a.follow("spBv1.0/g/DBIRTH/n/d", &says(1)).contains(&("d".to_string(), "Online")));
+        a.follow("spBv1.0/g/DDATA/n/d", &says(2));
+        assert!(a.rebirths().is_empty(), "in order is in order");
+        a.follow("spBv1.0/g/DDATA/n/d", &says(9));
+        assert_eq!(a.rebirths(), ["g/n"], "a gap is a reason to start again");
+        a.follow("spBv1.0/g/DDATA/n/d", &says(10));
+        assert!(a.rebirths().is_empty(), "and it is asked once");
+        a.follow("spBv1.0/g/NBIRTH/n", &birth);
+        assert_eq!(a.follow("spBv1.0/g/DDEATH/n/d", &says(1)), [("d".to_string(), "Offline")]);
+
+        let mut wrapped = Aliases::default();
+        wrapped.follow("spBv1.0/g/NBIRTH/n", &json!({"seq": 255, "metrics": []}));
+        wrapped.follow("spBv1.0/g/NDATA/n", &says(0));
+        assert!(wrapped.rebirths().is_empty(), "after 255 comes 0");
+    }
+
+    #[test]
+    fn a_host_asks_a_node_it_has_not_met() {
+        let mut a = Aliases::default();
+        a.follow("spBv1.0/g/NDATA/n", &says(4));
+        assert_eq!(a.rebirths(), ["g/n"]);
+        let (topic, body) = rebirth("g/n", 5).unwrap();
+        assert_eq!(topic, "spBv1.0/g/NCMD/n");
+        let said = decode(&body).unwrap();
+        assert_eq!(said["metrics"][0]["name"], "Node Control/Rebirth");
+        assert_eq!(said["metrics"][0]["value"], true);
+    }
+
+    #[test]
+    fn a_death_counts_only_for_the_birth_it_belongs_to() {
+        let mut a = Aliases::default();
+        a.follow("spBv1.0/g/NBIRTH/n", &json!({"seq": 0, "metrics": [{"name": "bdSeq", "value": 4}]}));
+        let old = json!({"metrics": [{"name": "bdSeq", "value": 3}]});
+        assert_eq!(a.follow("spBv1.0/g/NDEATH/n", &old), vec![], "it came back before its will arrived");
+        let current = json!({"metrics": [{"name": "bdSeq", "value": 4}]});
+        assert_eq!(a.follow("spBv1.0/g/NDEATH/n", &current), [("n".to_string(), "Offline")]);
+    }
 
     fn metrics(v: &Value) -> &Vec<Value> {
         v["metrics"].as_array().unwrap()

@@ -38,6 +38,7 @@ templates![
     "modbus-tcp-plc.yaml",
     "modbus-rtu-meters.yaml",
     "sparkplug-node.yaml",
+    "sparkplug-host.yaml",
     "mtconnect.yaml",
     "mqtt-json.yaml",
     "http-poll.yaml",

@@ -5,7 +5,7 @@
 
 use crate::adapter::Failure;
 use crate::adapters::transport::{self, Limits, Message, Out, Transport};
-use crate::sinks;
+use crate::sinks::{self, EdgeNode};
 use chrono::Utc;
 use ferrum_edge_contract::edge::Export;
 use hmac::{Hmac, Mac};
@@ -41,6 +41,7 @@ fn signature(secret: &str, body: &[u8]) -> Option<String> {
 pub struct Sender {
     http: reqwest::Client,
     brokers: Mutex<HashMap<String, Arc<dyn Transport>>>,
+    edge_nodes: Mutex<HashMap<String, (Arc<dyn Transport>, Arc<EdgeNode>)>>,
     #[cfg(feature = "kafka")]
     kafka: sinks::Kafka,
     limits: Limits,
@@ -73,6 +74,36 @@ impl Sender {
             }
         });
         Ok(broker)
+    }
+
+    /// A gateway as a Sparkplug edge node: its connection, its will, and what it listens for.
+    fn edge_node(&self, url: &Url) -> Result<(Arc<dyn Transport>, Arc<EdgeNode>), String> {
+        let mut nodes = self.edge_nodes.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(found) = nodes.get(url.as_str()) {
+            return Ok(found.clone());
+        }
+        let node = Arc::new(EdgeNode::new(url)?);
+        let scheme = if url.scheme() == "sparkplugs" { "mqtts" } else { "mqtt" };
+        let address = format!("{scheme}://{}:{}", url.host_str().ok_or("it names no host")?, url.port().unwrap_or(1883));
+        let commands = vec![node.topic("NCMD", None)];
+        let options = transport::Options { subscribe: &commands, will: Some(node.will()?), ..Default::default() };
+        let broker = transport::open(&address, options, &self.limits)?;
+        let (runner, listener) = (broker.clone(), node.clone());
+        tokio::spawn(async move {
+            let (tx, mut rx) = mpsc::channel::<Message>(8);
+            tokio::spawn(async move {
+                while let Some(m) = rx.recv().await {
+                    listener.heard(&m.body);
+                }
+            });
+            loop {
+                let (ready, _keep) = mpsc::channel::<()>(1);
+                let _ = runner.run(tx.clone(), ready).await;
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        });
+        nodes.insert(url.to_string(), (broker.clone(), node.clone()));
+        Ok((broker, node))
     }
 
     /// A release's file.
@@ -108,6 +139,10 @@ impl Sender {
             "sns" => return sinks::sns(http, &url, bodies, secret, now).await,
             "pubsub" => return sinks::pubsub(http, &url, bodies, secret, now).await,
             "azure" | "eventhub" => return sinks::azure(http, &url, bodies, secret, now).await,
+            "sparkplug" | "sparkplugs" => {
+                let (broker, node) = self.edge_node(&url)?;
+                return node.send(broker.as_ref(), bodies).await;
+            }
             _ => {}
         }
         if export.to.starts_with("mqtt") {
