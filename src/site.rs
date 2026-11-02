@@ -8,6 +8,8 @@
 //! | `GET /templates` | Edge Viewer | definitions to start from |
 //! | `POST /definitions/try` | Edge Engineer | `{body, topic?, sample?, sample_hex?}`: checks a definition and reads a sample |
 //! | `POST /flows/try` | Edge Engineer or Reviewer | `{body, script?, until?}`: checks a flow and walks a script through it |
+//! | `GET /flows/{id}/versions` | Edge Viewer | every version that ran, newest first |
+//! | `GET /flows/{id}/traces` | Edge Viewer | `?since=`: what passed through a flow being watched |
 //! | `POST /flows/{id}/simulate` | Edge Engineer | `{script, until?}`: the same for what is saved, which is what lets it go for review |
 //! | `GET /devices` | Edge Viewer | `?q=`: what is reached, by what and from where |
 //! | `GET /devices/{id}` | Edge Viewer | attributes, newest values, open alarms, recent events |
@@ -524,6 +526,15 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
             let b = body(req)?;
             return Ok(ok(try_flow(b["body"].as_str().unwrap_or_default(), &b)));
         }
+        ("GET", ["flows", id, "versions"]) => {
+            may(ctx, READ)?;
+            crate::platform_flows::versions(k, ctx, uuid(id)?).await?
+        }
+        ("GET", ["flows", id, "traces"]) => {
+            may(ctx, READ)?;
+            let since = req.query.get("since").and_then(Value::as_str).and_then(|t| t.parse::<DateTime<Utc>>().ok());
+            crate::platform_flows::traces(k, ctx, uuid(id)?, since).await?
+        }
         ("POST", ["flows", id, "simulate"]) => {
             may(ctx, ENGINEER)?;
             return simulate_flow(k, ctx, uuid(id)?, &body(req)?).await.map(ok);
@@ -695,6 +706,7 @@ async fn gateway_config(k: &Kernel, req: &SiteRequest) -> Result<SiteResponse> {
     .bind(json!(request.problems))
     .execute(&mut *tx)
     .await?;
+    crate::platform_flows::keep_traces(&mut tx, req.tenant, Some(gateway), &request.traces).await?;
     for code in request.strangers.iter().take(200) {
         sqlx::query("insert into edge_stranger (tenant_id, gateway_id, code) values ($1, $2, $3) on conflict (tenant_id, gateway_id, code) do update set last_seen_at = now()")
             .bind(req.tenant)

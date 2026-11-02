@@ -822,6 +822,13 @@ impl Defined {
         }
     }
 
+    /// Answers a device that asked something, on the link it came in by.
+    pub fn reply(&self, code: &str, id: &str, value: &Value) {
+        if let Some(link) = self.link_of(code) {
+            link.hub.deliver(&format!("v1/devices/{code}/rpc/response/{id}"), value.to_string().as_bytes());
+        }
+    }
+
     pub fn reaches(&self, code: &str) -> bool {
         self.by_device.read().unwrap_or_else(|e| e.into_inner()).contains_key(code)
     }

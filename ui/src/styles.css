@@ -1016,3 +1016,45 @@ a.edge-row-main:hover strong {
   border-left: 2px solid var(--border);
   font-size: 0.8125rem;
 }
+
+.edge-fields {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.edge-scroll {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.edge-said {
+  font-family: var(--font-mono);
+  max-width: 320px;
+  overflow-wrap: anywhere;
+}
+
+.edge-link {
+  background: none;
+  border: 0;
+  color: var(--primary);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.edge-versions {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.edge-versions li {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

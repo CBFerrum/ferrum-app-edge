@@ -137,6 +137,8 @@ export interface FlowDoc {
   live: boolean | null;
   revision: number | null;
   site: string | null;
+  runs_at: "Gateway" | "Platform";
+  debug_until: string | null;
   body: string | null;
   published_body: string | null;
   simulated_digest: string | null;
@@ -216,6 +218,26 @@ export const templates = () => api.get<{ templates: Template[] }>(`${base}/templ
 export const tryDefinition = (body: string, topic: string, sample: string, hex: boolean) => api.post<Tried>(`${base}/definitions/try`, hex ? { body, topic, sample_hex: sample } : { body, topic, sample });
 export const tryFlow = (body: string, script: unknown[] = [], until = 0) => api.post<Simulated>(`${base}/flows/try`, { body, script, until });
 export const simulateFlow = (id: string, script: unknown[], until: number) => api.post<Simulated>(`${base}/flows/${id}/simulate`, { script, until });
+
+export interface Traced {
+  id: string;
+  node: string;
+  device: string | null;
+  value: unknown;
+  ports: string[];
+  at: string;
+}
+
+export const flowTraces = (id: string, since: string | null) => api.get<{ traces: Traced[] }>(`${base}/flows/${id}/traces`, since ? { since } : {});
+
+export interface FlowVersion {
+  revision: number;
+  body: string;
+  by: string;
+  at: string;
+}
+
+export const flowVersions = (id: string) => api.get<{ versions: FlowVersion[] }>(`${base}/flows/${id}/versions`);
 
 export const flowList = () =>
   api.get<{ rows: FlowDoc[] }>("/api/v1/EdgeFlow", { fields: "flow_name,status,live,revision,site,submitted_by,approved_by,activated_at", limit: 200, order_by: "flow_name asc", titles: true });

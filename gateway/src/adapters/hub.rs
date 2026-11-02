@@ -284,6 +284,18 @@ impl Hub {
         tx.send(Message { topic, body, status: None, from: Some(device.to_string()) }).await.is_ok()
     }
 
+    /// Asks something for a device that cannot stay to listen, and waits for the answer. `Err` means
+    /// nothing is taking what devices say any more; `None`, that nothing answered in time.
+    pub async fn asked(&self, tx: &mpsc::Sender<Message>, device: &str, body: Vec<u8>, patience: Duration) -> Result<Option<Vec<u8>>, ()> {
+        let id = self.next_request();
+        let (session, mut mailbox) = self.open(device, "");
+        self.listen(session, &format!("v1/devices/me/rpc/response/{id}"));
+        let taken = self.said(tx, device, &format!("v1/devices/me/rpc/request/{id}"), body).await;
+        let answer = if taken { tokio::time::timeout(patience, mailbox.recv()).await.ok().flatten().map(|d| d.body) } else { None };
+        self.close(session);
+        if taken { Ok(answer) } else { Err(()) }
+    }
+
     /// Sends what a definition published to whoever is listening for it. Nobody listening means it
     /// did not go, which is what makes it safe to try again.
     pub fn publish(&self, out: Out) -> Result<Option<Message>, Failure> {
