@@ -258,12 +258,10 @@ impl Aliases {
                 self.asked.remove(&key);
                 changed.push((node.to_string(), "Online"));
             }
-            "NDEATH" => {
-                // A will can arrive after a node has already come back, and then it is old news.
-                if self.followed.get(&key).is_none_or(|f| f.birth_seq == birth_seq) {
-                    self.followed.remove(&key);
-                    changed.push((node.to_string(), "Offline"));
-                }
+            // A will can arrive after a node has already come back, and then it is old news.
+            "NDEATH" if self.followed.get(&key).is_none_or(|f| f.birth_seq == birth_seq) => {
+                self.followed.remove(&key);
+                changed.push((node.to_string(), "Offline"));
             }
             "DBIRTH" | "DDEATH" | "NDATA" | "DDATA" => {
                 let expected = self.followed.get(&key).map(|f| (f.seq + 1) % 256);
