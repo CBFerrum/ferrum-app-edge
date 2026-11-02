@@ -80,12 +80,13 @@ impl Plant {
     async fn reading(&self, want: impl Fn(&Reading) -> bool) -> Reading {
         for _ in 0..400 {
             let more = self.d.read().await.unwrap();
-            let mut seen = self.seen.lock().unwrap();
-            seen.extend(more);
-            if let Some(i) = seen.iter().position(&want) {
-                return seen.remove(i);
+            {
+                let mut seen = self.seen.lock().unwrap();
+                seen.extend(more);
+                if let Some(i) = seen.iter().position(&want) {
+                    return seen.remove(i);
+                }
             }
-            drop(seen);
             tokio::time::sleep(Wait::from_millis(25)).await;
         }
         panic!("gave up waiting; saw {:?}", self.seen.lock().unwrap());

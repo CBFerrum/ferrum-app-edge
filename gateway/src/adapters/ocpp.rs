@@ -1,7 +1,10 @@
 //! A central system for EV chargers: they call in over a WebSocket, as OCPP has it, and each stays
 //! connected. Which charger it is comes from the address it calls, as OCPP says, and a charger with
 //! a token proves it by Basic authentication, OCPP's security profile 1, which `listen+ocpps` makes
-//! profile 2. One with no token on its record is let in only if the address says `?open=1`.
+//! profile 2. A certificate on its record, presented over `listen+ocpps`, is profile 3. One with
+//! none of these is let in only if the address says `?open=1`.
+//!
+//! Anything OCPP can ask goes as a command, `ocpp.SetChargingProfile` with its payload for one.
 //!
 //! `listen+ocpp://0.0.0.0:9000/ocpp`, for chargers set to `ws://gateway:9000/ocpp/CP-1`.
 
@@ -40,7 +43,7 @@ pub struct OcppServer {
 }
 
 /// Who may be on the other end of this request, and in which version of OCPP.
-fn admitted(hub: &Hub, open: bool, request: &Request) -> Result<(String, String), &'static str> {
+fn admitted(hub: &Hub, open: bool, request: &Request, certificate: Option<&str>) -> Result<(String, String), &'static str> {
     let station =
         request.uri().path().trim_end_matches('/').rsplit('/').next().filter(|s| !s.is_empty()).ok_or("say which charger in the address")?.to_string();
     let offered = request.headers().get("sec-websocket-protocol").and_then(|v| v.to_str().ok()).unwrap_or_default();
@@ -53,19 +56,20 @@ fn admitted(hub: &Hub, open: bool, request: &Request) -> Result<(String, String)
         .and_then(|v| v.strip_prefix("Basic "))
         .and_then(|t| String::from_utf8(crate::sinks::base64(t)?).ok())
         .and_then(|pair| pair.split_once(':').map(|(_, p)| p.to_string()));
-    let proved = password.as_deref().and_then(|p| hub.who(&Proof { username: Some(p), ..Default::default() })).is_some_and(|code| code == station);
+    let proof = Proof { username: password.as_deref(), certificate, ..Default::default() };
+    let proved = hub.who(&proof).is_some_and(|who| who == station);
     if proved || (open && hub.known(&station)) {
         return Ok((station, version));
     }
     Err("that charger is not known here")
 }
 
-async fn serve(stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static, s: Shared) {
+async fn serve(stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static, s: Shared, certificate: Option<String>) {
     let mut who = None;
     // The shape of this is the WebSocket library's.
     #[allow(clippy::result_large_err)]
     let check = |request: &Request, mut response: Response| -> Result<Response, ErrorResponse> {
-        match admitted(&s.hub, s.open, request) {
+        match admitted(&s.hub, s.open, request, certificate.as_deref()) {
             Ok((station, version)) => {
                 if let Ok(value) = HeaderValue::from_str(&version) {
                     response.headers_mut().insert("sec-websocket-protocol", value);
@@ -181,10 +185,11 @@ impl Transport for OcppServer {
                 match tls {
                     Some(tls) => {
                         if let Ok(stream) = tls.accept(stream).await {
-                            serve(stream, s).await;
+                            let certificate = crate::adapters::mqtt_server::fingerprint(&stream);
+                            serve(stream, s, certificate).await;
                         }
                     }
-                    None => serve(stream, s).await,
+                    None => serve(stream, s, None).await,
                 }
             });
         }

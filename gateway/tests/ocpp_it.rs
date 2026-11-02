@@ -13,7 +13,7 @@ use ferrum_site::adapters::transport::Limits;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration as Wait;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -239,9 +239,80 @@ async fn a_charger_written_by_someone_else() {
         tokio::time::sleep(Wait::from_millis(10)).await;
     }
     assert!(matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Completed(_))), "it said it would");
+    // Smart charging is a command like any other, and the library holds it to OCPP's own schema.
+    let profile = json!({"connectorId": 1, "csChargingProfiles": {"chargingProfileId": 1, "stackLevel": 0, "chargingProfilePurpose": "TxDefaultProfile", "chargingProfileKind": "Relative",
+        "chargingSchedule": {"chargingRateUnit": "A", "chargingSchedulePeriod": [{"startPeriod": 0, "limit": 16.0}]}}});
+    let c = command("ocpp.SetChargingProfile", profile);
+    let Ok(Dispatched::Accepted { external: Some(external) }) = plant.d.dispatch(&c, &site_device("CP_1")).await else { panic!("not accepted") };
+    for _ in 0..200 {
+        let _ = plant.d.read().await;
+        if matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Completed(_))) {
+            break;
+        }
+        tokio::time::sleep(Wait::from_millis(10)).await;
+    }
+    assert!(matches!(plant.d.observe(&c, Some(&external)).await, Ok(Observation::Completed(_))), "it took the limit");
     let _ = run.wait().await;
     let out = run.wait_with_output().await.unwrap();
     let said = String::from_utf8_lossy(&out.stdout);
     assert!(said.contains("boot RegistrationStatus.accepted") || said.contains("boot Accepted"), "{said}\n{}", String::from_utf8_lossy(&out.stderr));
     assert!(said.contains("remote start A1"), "{said}");
+    assert!(said.contains("limit 16"), "{said}");
+}
+
+/// Security profile 3: TLS with a certificate of the charger's own, and no password.
+#[tokio::test]
+async fn a_charger_can_be_known_by_its_certificate() {
+    use tokio_rustls::rustls;
+    use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+    use tokio_tungstenite::Connector;
+
+    let dir = std::env::temp_dir().join(format!("ferrum-ocpp-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let server = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
+    std::fs::write(dir.join("server.pem"), server.cert.pem()).unwrap();
+    std::fs::write(dir.join("server.key"), server.key_pair.serialize_pem()).unwrap();
+    let ours = rcgen::generate_simple_self_signed(vec!["cp-1.local".to_string()]).unwrap();
+    let stranger = rcgen::generate_simple_self_signed(vec!["cp-9.local".to_string()]).unwrap();
+
+    let port = free_port();
+    let body = format!("name: chargers\nconnect: listen+ocpps://127.0.0.1:{port}/ocpp\napi: ocpp\ntls: {{cert: server.pem, key: server.key}}\n");
+    let definitions = BTreeMap::from([("chargers".to_string(), body)]);
+    let mut link = charger("CP_1", None, json!([]));
+    link.credentials.certificate = Some(hash(ours.cert.der()));
+    let limits = Limits { listen: vec![format!("127.0.0.1:{port}/ocpp"), format!("127.0.0.1:{port}")], tls_dir: Some(dir.clone()), ..Default::default() };
+    let d = Defined::new(limits, json!({}));
+    assert_eq!(d.apply(&definitions, &[link]), Vec::<String>::new());
+    for _ in 0..200 {
+        if d.links().iter().all(|l| l.up) {
+            break;
+        }
+        tokio::time::sleep(Wait::from_millis(10)).await;
+    }
+
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let call = async |who: Option<&rcgen::CertifiedKey>, station: &str| {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(server.cert.der().clone()).unwrap();
+        let builder =
+            rustls::ClientConfig::builder_with_provider(provider.clone()).with_safe_default_protocol_versions().unwrap().with_root_certificates(roots);
+        let config = match who {
+            Some(c) => {
+                let chain = vec![CertificateDer::from_pem_slice(c.cert.pem().as_bytes()).unwrap()];
+                builder.with_client_auth_cert(chain, PrivateKeyDer::from_pem_slice(c.key_pair.serialize_pem().as_bytes()).unwrap()).unwrap()
+            }
+            None => builder.with_no_client_auth(),
+        };
+        let mut request = format!("wss://127.0.0.1:{port}/ocpp/{station}").into_client_request().unwrap();
+        request.headers_mut().insert("sec-websocket-protocol", "ocpp1.6".parse().unwrap());
+        tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(Connector::Rustls(Arc::new(config))))
+            .await
+            .map(drop)
+            .map_err(|e| e.to_string())
+    };
+    call(Some(&ours), "CP_1").await.expect("its own certificate is all it needs");
+    assert!(call(Some(&ours), "CP_2").await.is_err(), "it proves one charger, and not another");
+    assert!(call(Some(&stranger), "CP_1").await.is_err(), "a certificate proves a key, and only a known one proves a charger");
+    assert!(call(None, "CP_1").await.is_err(), "and without one, nothing");
+    let _ = std::fs::remove_dir_all(dir);
 }
