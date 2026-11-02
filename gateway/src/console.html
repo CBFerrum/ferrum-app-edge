@@ -142,7 +142,7 @@ function reading(r) {
   line.setAttribute('points', values.map((v, i) => `${i * 300 / Math.max(values.length - 1, 1)},${36 - (v - low) / span * 32}`).join(' '));
   line.setAttribute('fill', 'none'); line.setAttribute('stroke', 'currentColor'); line.setAttribute('stroke-width', '1.5');
   const chart = document.createElementNS(NS, 'svg');
-  chart.setAttribute('viewBox', '0 0 300 40'); chart.setAttribute('width', '100%'); chart.setAttribute('height', '40');
+  chart.setAttribute('viewBox', '0 0 300 40'); chart.setAttribute('preserveAspectRatio', 'none'); chart.setAttribute('width', '100%'); chart.setAttribute('height', '40');
   chart.setAttribute('role', 'img'); chart.setAttribute('aria-label', `${r.metric} lately, now ${now}`);
   chart.append(line); b.append(chart);
   return b;
