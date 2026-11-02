@@ -8,6 +8,7 @@ import { refusal, relativeTime } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { LinkInput } from "@ferrum/records";
 import { claim, fleet, type Gateway, type LinkHealth, overview, type Stranger } from "./data";
+import { SLOW_POLL_MS } from "./live";
 import { Tabs } from "./Tabs";
 
 const count = (n: number) => n.toLocaleString();
@@ -170,12 +171,17 @@ function FleetHealth() {
 
 export function Home() {
   useShellTitle("IoT Edge");
-  const q = useQuery({ queryKey: ["edge", "overview"], queryFn: overview, refetchInterval: 15_000 });
+  const q = useQuery({ queryKey: ["edge", "overview"], queryFn: overview, refetchInterval: SLOW_POLL_MS });
   const raised = Object.values(q.data?.alarms ?? {}).reduce((n, c) => n + c, 0);
   const critical = q.data?.alarms.Critical ?? 0;
   return (
     <div className="edge-page">
       <Tabs alarms={raised} />
+      {q.data?.allowance && q.data.allowance.today >= q.data.allowance.per_day ? (
+        <Alert tone="warning">
+          This workspace has stored today&apos;s {q.data.allowance.per_day.toLocaleString()} readings, so gateways are holding new ones until tomorrow or until its allowance is raised.
+        </Alert>
+      ) : null}
       {q.isPending ? (
         <PageLoading />
       ) : q.isError ? (

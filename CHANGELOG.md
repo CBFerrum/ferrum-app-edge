@@ -1,7 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
+- Customers who own devices: their people see those devices, their alarms and the dashboards given to
+  them in the workspace's portal, and nothing else.
+- Relations between devices, by any name, shown on both and usable to choose them.
+- Reports by the clock, by email, as CSV or PDF.
+- Pages hear on the platform's socket that readings landed, and ask again at once.
+- A workspace's allowance of measurements a day: past it, gateways hold readings until there is room.
 - A gateway as an OPC UA server, by an export to `listen+opcua://`: each device a folder, each metric a
   variable, read only, with a login over encryption if a secret is named.
 - OPC UA history with `history:`, and events carrying `EventId` and `ConditionId`, met against asyncua.

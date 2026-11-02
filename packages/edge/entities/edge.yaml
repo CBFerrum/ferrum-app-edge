@@ -155,7 +155,8 @@
     - {name: body, type: code, label: Layout, description: "What was laid out, as JSON"}
     - {name: shared_hash, type: data, read_only: true, no_copy: true, hidden: true}
     - {name: shared_at, type: datetime, read_only: true, no_copy: true, in_list: true, label: Shared Since}
-  list: {columns: [dashboard_name, description, shared_at], sort: dashboard_name asc}
+    - {name: customer, type: link, to: EdgeCustomer, in_list: true, in_filter: true, description: "Whose people see this one in the workspace's portal"}
+  list: {columns: [dashboard_name, description, customer, shared_at], sort: dashboard_name asc}
 
 - name: EdgeNotifyStep
   label: Notify Step
@@ -268,3 +269,67 @@
     - {name: last_run, type: datetime, read_only: true, no_copy: true, in_list: true}
     - {name: last_result, type: text, read_only: true, no_copy: true}
   list: {columns: [schedule_name, enabled, every_minutes, at_time, operation, last_run], sort: schedule_name asc}
+
+- name: EdgeCustomerPerson
+  label: Customer Person
+  kind: child
+  fields:
+    - {name: user_email, type: email, required: true, in_list: true}
+
+- name: EdgeCustomer
+  label: Edge Customer
+  label_plural: Edge Customers
+  kind: master
+  module: edge
+  title_field: customer_name
+  search_fields: [customer_name]
+  description: Someone who owns devices here. The people named sign in to the workspace's portal and see those devices, their alarms and the dashboards given to them, and nothing else of the workspace.
+  fields:
+    - {name: customer_name, type: data, required: true, unique: true, in_list: true, max_length: 140}
+    - {name: people, type: table, of: EdgeCustomerPerson, description: "By the address they sign in with. Add them to the workspace as portal people"}
+  list: {columns: [customer_name], sort: customer_name asc}
+
+- name: EdgeRelation
+  label: Edge Relation
+  label_plural: Edge Relations
+  kind: master
+  module: edge
+  title_field: relation
+  search_fields: [relation]
+  description: Any way two devices belong together beyond what is inside what, which assets say. This pump feeds that tank, this meter measures that line. It can be used to find devices, and it moves nothing.
+  fields:
+    - {name: from_device, type: link, to: Device, required: true, in_list: true, in_filter: true, label: From}
+    - {name: relation, type: data, required: true, in_list: true, in_filter: true, max_length: 60, description: "Feeds, measures, backs up"}
+    - {name: to_device, type: link, to: Device, required: true, in_list: true, in_filter: true, label: To}
+  list: {columns: [from_device, relation, to_device], sort: relation asc}
+
+- name: EdgeReportRecipient
+  label: Report Recipient
+  kind: child
+  fields:
+    - {name: email, type: email, required: true, in_list: true}
+
+- name: EdgeReportSchedule
+  label: Edge Report Schedule
+  label_plural: Edge Report Schedules
+  kind: master
+  module: edge
+  title_field: schedule_name
+  search_fields: [schedule_name]
+  description: A report that goes out by itself. It runs at a time of day, and each person named gets it by email, attached if the mailer can do that.
+  fields:
+    - {name: schedule_name, type: data, required: true, unique: true, in_list: true, max_length: 140}
+    - {name: enabled, type: check, default: true, in_list: true, in_filter: true}
+    - {name: report, type: select, options: [edge_availability, edge_alarm_history, edge_readings], required: true, in_list: true, in_filter: true}
+    - {name: format, type: select, options: [CSV, PDF], default: CSV, in_list: true, description: "A PDF needs this server's renderer"}
+    - {name: days_back, type: int, min: "1", max: "366", default: 7, label: Days Back, description: "How far back it looks when it runs"}
+    - {name: at_time, type: data, required: true, default: "07:00", label: At, in_list: true, description: "A time of day, written 08:30"}
+    - {name: days, type: data, description: "1 is Monday: 1,2,3,4,5. Every day, if empty"}
+    - {name: offset_minutes, type: int, default: 0, label: Minutes From UTC, description: "The site's time zone: 330 for India"}
+    - {name: site, type: link, to: Site, in_filter: true}
+    - {name: device, type: link, to: Device, in_filter: true, description: "Readings by the hour are of one device"}
+    - {name: metric, type: data}
+    - {name: recipients, type: table, of: EdgeReportRecipient}
+    - {name: last_run, type: datetime, read_only: true, no_copy: true, in_list: true}
+    - {name: last_result, type: text, read_only: true, no_copy: true, in_list: true}
+  list: {columns: [schedule_name, enabled, report, at_time, last_run, last_result], sort: schedule_name asc}

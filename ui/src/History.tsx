@@ -6,6 +6,7 @@ import { Button, ErrorState } from "@ferrum/kit";
 import { Chart, COLORS } from "./Chart";
 import { csv, type Line, summary } from "./plotting";
 import { history, type HistoryPoint } from "./data";
+import { SLOW_POLL_MS } from "./live";
 
 const RANGES: [string, number][] = [
   ["15 min", 900],
@@ -27,7 +28,7 @@ function save(name: string, text: string) {
   URL.revokeObjectURL(url);
 }
 
-export function History({ id, code, metrics }: { id: string; code: string; metrics: string[] }) {
+export function History({ id, code, metrics, root }: { id: string; code: string; metrics: string[]; root?: string }) {
   const [secs, setSecs] = useState(3600);
   const [picked, setPicked] = useState<string[] | null>(null);
   const chosen = (picked ?? metrics.slice(0, 3)).filter((m) => metrics.includes(m));
@@ -35,10 +36,10 @@ export function History({ id, code, metrics }: { id: string; code: string; metri
   const q = useQuery({
     queryKey: ["edge", "history", id, key, secs],
     enabled: chosen.length > 0,
-    refetchInterval: secs <= 21600 ? 15_000 : 60_000,
+    refetchInterval: secs <= 21600 ? SLOW_POLL_MS : 60_000,
     queryFn: () => {
       const to = new Date();
-      return history(id, chosen, new Date(to.getTime() - secs * 1000).toISOString(), to.toISOString(), 400);
+      return history(id, chosen, new Date(to.getTime() - secs * 1000).toISOString(), to.toISOString(), 400, root);
     },
   });
   const lines: Line[] = useMemo(() => (q.data?.series ?? []).map((s) => ({ label: s.metric, unit: s.unit, points: toPoints(s.points) })), [q.data]);

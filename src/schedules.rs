@@ -15,7 +15,7 @@ use uuid::Uuid;
 const LATE_MINUTES: i32 = 30;
 const EXPIRES_SECS: i64 = 3600;
 
-fn days_of(text: &str) -> Option<Vec<u32>> {
+pub(crate) fn days_of(text: &str) -> Option<Vec<u32>> {
     text.split(',').map(str::trim).filter(|d| !d.is_empty()).map(|d| d.parse().ok().filter(|n| (1..=7).contains(n))).collect()
 }
 

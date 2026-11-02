@@ -41,6 +41,8 @@ export interface Overview {
   alarms: Record<string, number>;
   devices: { active: number; defined: number; definitions: number } | Record<string, number>;
   strangers: Stranger[];
+  /** Today's measurements against what the workspace may store, if it has a limit. */
+  allowance?: { today: number; per_day: number } | null;
 }
 
 export interface DeviceRow {
@@ -90,6 +92,7 @@ export interface DeviceDetail {
   attributes: Attribute[];
   alarms: AlarmRow[];
   events: { name: string; value: unknown; at: string }[];
+  related?: { id: string; relation: string; to: string; code: string; name: string; out: boolean }[];
 }
 
 export interface Robot {
@@ -167,6 +170,7 @@ export interface DefinitionDoc {
 }
 
 const base = "/api/app/edge";
+export const portalBase = `${base}/portal`;
 
 export interface HistoryPoint {
   at: string;
@@ -227,7 +231,7 @@ export const askAll = (select: Selection, operation: string, payload: unknown) =
 export const setAll = (select: Selection, key: string, value: unknown) => api.post<{ outcomes: Outcome[] }>(`${base}/fleet/desired`, { select, key, value });
 export const importDevices = (csv: string, tokens: boolean) => api.post<Imported>(`${base}/devices/import`, { csv, tokens });
 export const device = (id: string) => api.get<DeviceDetail>(`${base}/devices/${id}`);
-export const history = (id: string, metrics: string[], from: string, to: string, points: number) => api.get<History>(`${base}/devices/${id}/history`, { metrics: metrics.join(","), from, to, points });
+export const history = (id: string, metrics: string[], from: string, to: string, points: number, root = base) => api.get<History>(`${root}/devices/${id}/history`, { metrics: metrics.join(","), from, to, points });
 export const desire = (id: string, key: string, value: unknown) => api.put<{ command: string }>(`${base}/devices/${id}/desired`, { key, value });
 export const deviceRecord = (id: string) => api.get<{ device_name: string; device_code: string; kind: string; operations?: { operation: string }[] }>(docPath("Device", id));
 export const sendCommand = (target: string, operation: string, payload: unknown, expires_in_secs: number) =>
