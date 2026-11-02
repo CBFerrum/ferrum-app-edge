@@ -161,9 +161,26 @@ export interface DefinitionDoc {
 
 const base = "/api/app/edge";
 
+export interface HistoryPoint {
+  at: string;
+  samples: number;
+  bad: number;
+  min: number | null;
+  max: number | null;
+  avg: number | null;
+}
+
+export interface History {
+  from: string;
+  to: string;
+  bucket_secs: number;
+  series: { metric: string; unit: string | null; points: HistoryPoint[] }[];
+}
+
 export const overview = () => api.get<Overview>(`${base}/overview`);
 export const devices = (q: string) => api.get<{ devices: DeviceRow[] }>(`${base}/devices`, q ? { q } : {});
 export const device = (id: string) => api.get<DeviceDetail>(`${base}/devices/${id}`);
+export const history = (id: string, metrics: string[], from: string, to: string, points: number) => api.get<History>(`${base}/devices/${id}/history`, { metrics: metrics.join(","), from, to, points });
 export const desire = (id: string, key: string, value: unknown) => api.put<{ command: string }>(`${base}/devices/${id}/desired`, { key, value });
 export const deviceRecord = (id: string) => api.get<{ device_name: string; device_code: string; kind: string; operations?: { operation: string }[] }>(docPath("Device", id));
 export const sendCommand = (target: string, operation: string, payload: unknown, expires_in_secs: number) =>
@@ -190,3 +207,20 @@ export const definitionDoc = (id: string) => api.get<DefinitionDoc>(docPath("Dev
 export const newDefinition = (name: string, body: string) => api.post<{ id: string }>("/api/v1/DeviceDefinition", { definition_name: name, body });
 export const saveDefinition = (id: string, version: number, patch: Partial<DefinitionDoc>) => api.patch<DefinitionDoc>(docPath("DeviceDefinition", id), patch, { ifMatch: version });
 export const publishDefinition = (id: string) => api.post<{ revision: number }>(docPath("DeviceDefinition", id, "actions", "publish"), {});
+
+export interface BoardDoc {
+  id: string;
+  version: number;
+  dashboard_name: string;
+  description: string | null;
+  body: string | null;
+  shared_at: string | null;
+}
+
+export const boardList = () => api.get<{ rows: BoardDoc[] }>("/api/v1/EdgeDashboard", { fields: "dashboard_name,description,shared_at", limit: 200, order_by: "dashboard_name asc" });
+export const boardDoc = (id: string) => api.get<BoardDoc>(docPath("EdgeDashboard", id));
+export const newBoard = (name: string, body: string) => api.post<{ id: string }>("/api/v1/EdgeDashboard", { dashboard_name: name, body });
+export const saveBoard = (id: string, version: number, patch: Partial<BoardDoc>) => api.patch<BoardDoc>(docPath("EdgeDashboard", id), patch, { ifMatch: version });
+export const boardData = (body: string, vars: Record<string, string>, last_secs: number) => api.post<Record<string, { data?: unknown; error?: string }>>(`${base}/boards/data`, { body, vars, last_secs });
+export const shareBoard = (id: string) => api.post<{ token: string }>(`${base}/boards/${id}/share`, {});
+export const unshareBoard = (id: string) => api.del(`${base}/boards/${id}/share`);
