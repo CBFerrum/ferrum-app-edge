@@ -1490,7 +1490,7 @@ dependencies = [
 [[package]]
 name = "ferrum-calc"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#8ffb686e8972346a60b173f4c511dc189058478b"
+source = "git+https://github.com/CBFerrum/Ferrum?branch=platform%2Fw10-hardening#de8372af0cbeb874aaf3a840e479607af53d8cb7"
 dependencies = [
  "rust_decimal",
  "serde",
@@ -1501,7 +1501,7 @@ dependencies = [
 [[package]]
 name = "ferrum-domain"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#8ffb686e8972346a60b173f4c511dc189058478b"
+source = "git+https://github.com/CBFerrum/Ferrum?branch=platform%2Fw10-hardening#de8372af0cbeb874aaf3a840e479607af53d8cb7"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1536,7 +1536,7 @@ dependencies = [
 [[package]]
 name = "ferrum-kernel"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#8ffb686e8972346a60b173f4c511dc189058478b"
+source = "git+https://github.com/CBFerrum/Ferrum?branch=platform%2Fw10-hardening#de8372af0cbeb874aaf3a840e479607af53d8cb7"
 dependencies = [
  "argon2",
  "async-trait",
@@ -1574,7 +1574,7 @@ dependencies = [
 [[package]]
 name = "ferrum-mcp"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#8ffb686e8972346a60b173f4c511dc189058478b"
+source = "git+https://github.com/CBFerrum/Ferrum?branch=platform%2Fw10-hardening#de8372af0cbeb874aaf3a840e479607af53d8cb7"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1591,7 +1591,7 @@ dependencies = [
 [[package]]
 name = "ferrum-meta"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#8ffb686e8972346a60b173f4c511dc189058478b"
+source = "git+https://github.com/CBFerrum/Ferrum?branch=platform%2Fw10-hardening#de8372af0cbeb874aaf3a840e479607af53d8cb7"
 dependencies = [
  "cel",
  "chrono",
@@ -1608,7 +1608,7 @@ dependencies = [
 [[package]]
 name = "ferrum-ops"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#8ffb686e8972346a60b173f4c511dc189058478b"
+source = "git+https://github.com/CBFerrum/Ferrum?branch=platform%2Fw10-hardening#de8372af0cbeb874aaf3a840e479607af53d8cb7"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1631,7 +1631,7 @@ dependencies = [
 [[package]]
 name = "ferrum-ops-contract"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#8ffb686e8972346a60b173f4c511dc189058478b"
+source = "git+https://github.com/CBFerrum/Ferrum?branch=platform%2Fw10-hardening#de8372af0cbeb874aaf3a840e479607af53d8cb7"
 dependencies = [
  "chrono",
  "hex",
@@ -3337,7 +3337,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -3375,7 +3375,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tracing",
  "windows-sys 0.61.2",
 ]

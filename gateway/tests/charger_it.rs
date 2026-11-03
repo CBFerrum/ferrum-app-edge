@@ -245,6 +245,8 @@ impl World {
     }
 
     async fn sessions(&self) -> Value {
+        // What a server's own worker does with what gateways report.
+        while self.first.dispatch_outbox_once().await.unwrap() > 0 {}
         let request = SiteRequest {
             tenant: self.tenant,
             user: Some(self.admin.clone()),
@@ -355,8 +357,9 @@ async fn scenario() {
     let mut station = Charger::calling(port).await;
     w.connected_to(three.id).await;
     let second_start = w.asks(&first, "session-2", 120).await;
-    let asked = station.hears(Duration::from_secs(15)).await.expect("it was sent");
-    assert_eq!(asked[2], json!("RemoteStartTransaction"));
+    // It dies having handed the call to its socket, so the charger may or may not have heard. Nobody can say.
+    let heard = station.hears(Duration::from_secs(15)).await;
+    assert!(heard.as_ref().is_none_or(|asked| asked[2] == json!("RemoteStartTransaction")), "{heard:?}");
     three.crashed().await;
     drop(station);
 
