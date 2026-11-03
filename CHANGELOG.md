@@ -13,6 +13,9 @@
   It is charging only once a register has moved, because a charger accepting a start has only said it will
   try. A reset, late, missing, unconverted or unverified reading gives no figure to bill on, and only a person
   can settle such a session, with a reason that stays on it.
+- **Reconnecting is paced.** Charger and MQTT ports let in 100 new connections a second unless `rate=`
+  says otherwise, so after an outage those already in are not held up behind everyone else's handshake.
+  A charger's handshake that stalls is closed after ten seconds, where before it held its place forever.
 - **A gateway says who is connected to it,** for the platform to give that gateway the device's work. A
   domain shared by several gateways still needs its devices given to each: that waits for the platform change.
 
