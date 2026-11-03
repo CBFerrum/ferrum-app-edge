@@ -105,6 +105,7 @@ jobs:
       - run: cargo test --workspace ${{ inputs.frozen && '--locked' || '' }}
       # The gateway killed at each named point. Failpoints never reach a release build.
       - run: cargo test -p ferrum-site --features failpoints --test recovery_it ${{ inputs.frozen && '--locked' || '' }}
+      - run: cargo test -p ferrum-site --features failpoints --test charger_it ${{ inputs.frozen && '--locked' || '' }}
 
   audit:
     runs-on: ubuntu-latest
