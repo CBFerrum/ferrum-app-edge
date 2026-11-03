@@ -452,10 +452,12 @@ async fn held_by(k: &Arc<Kernel>, tenant: Uuid, gateway: Uuid) -> i64 {
 /// gets there, and work asked for in the middle of it gets through.
 async fn many_at_once(first: &Arc<Kernel>, second: &Arc<Kernel>, api: &str, admin: &Ctx, tenant: Uuid) {
     const MANY: usize = 100;
+    const RATE: usize = 25;
     const DOMAIN: &str = "yard";
     let site = id_of(&first.insert(admin, "Site", obj(json!({"site_name": DOMAIN, "site_code": DOMAIN}))).await.unwrap());
     let port = free_port();
-    let body = format!("name: yard\nconnect: listen+ocpp://127.0.0.1:{port}/ocpp?open=1\napi: ocpp\n");
+    // Twenty-five new chargers a second, so that the burst below takes its time getting in.
+    let body = format!("name: yard\nconnect: listen+ocpp://127.0.0.1:{port}/ocpp?open=1&rate={RATE}\napi: ocpp\n");
     let definition = id_of(&first.insert(admin, "DeviceDefinition", obj(json!({"definition_name": "yard", "body": body}))).await.unwrap());
     first.run_action(admin, "DeviceDefinition", definition, "publish", json!({})).await.expect("published");
     let mut five = Gateway::enrolled(first, admin, site, api, "charge", "GW-5", port).await;
@@ -529,11 +531,21 @@ async fn many_at_once(first: &Arc<Kernel>, second: &Arc<Kernel>, api: &str, admi
     stations.clear();
     let waiting = w(chargers[50]).asks(second, "burst-waiting", 300).await;
 
-    // They all call the next one together.
+    // They all call the next one together, and are let in at its rate. One already in is answered at
+    // once, and so is what it does, while the rest still wait their turn.
     six.start(None);
     let started = Instant::now();
-    let mut stations = all_call().await;
+    let mut first_in = Charger::calling_as(port, "Y-0".into()).await;
+    let rest = tokio::spawn(async move { futures_util::future::join_all((1..MANY).map(|i| Charger::calling_as(port, format!("Y-{i}")))).await });
+    let asked = Instant::now();
+    first_in.says("Heartbeat", json!({})).await;
+    let beat = asked.elapsed();
+    assert!(beat < Duration::from_secs(1) && !rest.is_finished(), "answered in {beat:?} while the others were still coming in");
+    let mut stations = vec![first_in];
+    stations.extend(rest.await.unwrap());
     let answering = started.elapsed();
+    let least = Duration::from_secs(((MANY - RATE) / RATE) as u64);
+    assert!(answering >= least - Duration::from_millis(200), "{MANY} at {RATE} a second take {least:?} or so, not {answering:?}");
     until("every charger to be known on the next gateway", 30, async || held_by(first, tenant, six.id).await == MANY as i64).await;
     let known = started.elapsed();
 
@@ -557,6 +569,6 @@ async fn many_at_once(first: &Arc<Kernel>, second: &Arc<Kernel>, api: &str, admi
     stations[99].answers(&asked, json!({"status": "Accepted"})).await;
     w(chargers[0]).reaches(new.id, "Completed", 20).await;
     eprintln!(
-        "{MANY} chargers: all answered in {answering:?}, known to the platform in {known:?}, waiting work through in {through:?}, in-doubt work settled in {settled:?}"
+        "{MANY} chargers at {RATE} a second: a heartbeat answered in {beat:?} during it, all answered in {answering:?}, known to the platform in {known:?}, waiting work through in {through:?}, in-doubt work settled in {settled:?}"
     );
 }

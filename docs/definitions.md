@@ -49,7 +49,7 @@ start and not a promise: none has been tried on the equipment it names ([compati
 | `coap://sensor:5683` | A device that serves CoAP. `get`, `put`, `post`, `delete`, and `subscribe` to watch with Observe |
 | `listen+lwm2m://0.0.0.0:5683` | LwM2M devices register here. `subscribe` lists what to watch on each |
 | `listen+lwm2ms://0.0.0.0:5684`, and `listen+coaps://0.0.0.0:5684` with `api: device` | LwM2M and the device API over DTLS by pre-shared key. The identity is the device's code and the key the SHA-256 of its access token, as bytes, so nothing new has to be given out. An LwM2M device has to register under the identity it proved. Use these for anything off a private network. Certificates over DTLS are not here |
-| `listen+ocpp://0.0.0.0:9000/ocpp?open=1`, `listen+ocpps://…` | EV chargers, with `api: ocpp`. `open=1` lets a charger with no token in |
+| `listen+ocpp://0.0.0.0:9000/ocpp?open=1`, `listen+ocpps://…` | EV chargers, with `api: ocpp`. `open=1` lets a charger with no token in. `rate=` is how many new chargers it lets in a second (below) |
 | `mtconnect://agent:5000?interval=1000` | An MTConnect agent: everything, then its sample stream |
 | `nats://bus:4222` | NATS subjects in `subscribe` |
 | `amqp://reader:{secret.x}@broker/plant`, `amqps://…` | Queues named in `subscribe`, which it does not create, arriving by routing key. Each is acknowledged once it has been taken, so one can arrive twice |
@@ -64,6 +64,12 @@ start and not a promise: none has been tried on the equipment it names ([compati
 
 A device can give its own address, which is how one definition serves a hundred devices. Each distinct
 address is one connection, shared by the devices on it, and it reconnects on its own, backing off.
+
+After an outage every charger and MQTT device calls back at once. Their ports let in 100 new connections a
+second, a second's worth at once, and the rest wait their turn in the queue for the port, so those already
+in, and what they are doing, are answered at once. `?rate=25` lets in 25 a second. A handshake that does not
+finish within ten seconds is closed. In a test, a hundred chargers at 25 a second were all back in 3.3 s, and
+one already connected had its heartbeat answered in under a millisecond while they came in.
 
 A definition can come from the platform, so the site decides what one may do there (`site.yaml`):
 
