@@ -1291,6 +1291,12 @@ mod tests {
         }
         let took = start.elapsed();
         assert!((Duration::from_millis(450)..Duration::from_millis(900)).contains(&took), "then twenty a second: {took:?}");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let again = std::time::Instant::now();
+        for _ in 0..20 {
+            pace.turn().await;
+        }
+        assert!(again.elapsed() < Duration::from_millis(100), "a quiet second gives a whole second's worth back: {:?}", again.elapsed());
         assert_eq!(Pace::of("0.0.0.0:9000/ocpp"), Ok(RATE));
         assert_eq!(Pace::of("0.0.0.0:9000/ocpp?open=1&rate=25"), Ok(25));
         assert!(Pace::of("0.0.0.0:9000/ocpp?rate=0").is_err() && Pace::of("0.0.0.0:9000/ocpp?rate=many").is_err());
