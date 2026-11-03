@@ -131,6 +131,8 @@ pub struct Limits {
     /// Where a definition may read files. Without it, nowhere: a definition comes from the platform,
     /// and must not be able to read whatever it likes on a gateway.
     pub files_dir: Option<PathBuf>,
+    /// What keeps what devices say about money.
+    pub keeper: Option<std::sync::Arc<dyn super::hub::Keeper>>,
     /// Where a source keeps how far it has read.
     pub state_dir: Option<PathBuf>,
 }
