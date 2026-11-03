@@ -173,9 +173,13 @@ struct Charger {
 impl Charger {
     /// Calls until something answers, the way a charger does, and says hello.
     async fn calling(port: u16) -> Charger {
+        Charger::calling_as(port, "CP-1".to_string()).await
+    }
+
+    async fn calling_as(port: u16, code: String) -> Charger {
         let start = Instant::now();
         loop {
-            let mut request = format!("ws://127.0.0.1:{port}/ocpp/CP-1").into_client_request().unwrap();
+            let mut request = format!("ws://127.0.0.1:{port}/ocpp/{code}").into_client_request().unwrap();
             request.headers_mut().insert("sec-websocket-protocol", "ocpp1.6".parse().unwrap());
             match tokio_tungstenite::connect_async(request).await {
                 Ok((socket, _)) => {
@@ -426,4 +430,133 @@ async fn scenario() {
     commands::expire_unsent(&first).await.unwrap();
     assert_eq!(w.state(late.id).await, "Expired");
     four.kill();
+
+    many_at_once(&first, &second, &api, &admin, tenant).await;
+}
+
+/// How many of them a gateway holds, as the platform understands it.
+async fn held_by(k: &Arc<Kernel>, tenant: Uuid, gateway: Uuid) -> i64 {
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    let n = sqlx::query_scalar("select count(*) from op_connection where tenant_id = $1 and gateway_id = $2 and closed_at is null")
+        .bind(tenant)
+        .bind(gateway)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    n
+}
+
+/// AT-SCALE-006 and AT-DR-007: a gateway goes with a hundred chargers on it and work out on some, and they
+/// all call the next one at once. Whatever may have reached a charger is not sent again, whatever had not
+/// gets there, and work asked for in the middle of it gets through.
+async fn many_at_once(first: &Arc<Kernel>, second: &Arc<Kernel>, api: &str, admin: &Ctx, tenant: Uuid) {
+    const MANY: usize = 100;
+    const DOMAIN: &str = "yard";
+    let site = id_of(&first.insert(admin, "Site", obj(json!({"site_name": DOMAIN, "site_code": DOMAIN}))).await.unwrap());
+    let port = free_port();
+    let body = format!("name: yard\nconnect: listen+ocpp://127.0.0.1:{port}/ocpp?open=1\napi: ocpp\n");
+    let definition = id_of(&first.insert(admin, "DeviceDefinition", obj(json!({"definition_name": "yard", "body": body}))).await.unwrap());
+    first.run_action(admin, "DeviceDefinition", definition, "publish", json!({})).await.expect("published");
+    let mut five = Gateway::enrolled(first, admin, site, api, "charge", "GW-5", port).await;
+    let mut six = Gateway::enrolled(first, admin, site, api, "charge", "GW-6", port).await;
+
+    let mut chargers = vec![];
+    for i in 0..MANY {
+        let code = format!("Y-{i}");
+        let fields = json!({"device_name": code, "device_code": code, "kind": "Machine", "site": site, "gateway": five.id, "edge_definition": definition, "operations": [{"operation": "ocpp.RemoteStartTransaction"}]});
+        let id = id_of(&first.insert(admin, "Device", obj(fields)).await.unwrap());
+        for (state, note) in [
+            (Lifecycle::Claimed, "ours"),
+            (Lifecycle::Provisioned, "behind its gateway"),
+            (Lifecycle::Commissioned, "checked"),
+            (Lifecycle::Active, "in service"),
+        ] {
+            devices::set_lifecycle(first, admin, id, state, note).await.unwrap();
+        }
+        chargers.push(id);
+    }
+
+    five.start(None);
+    until("the gateway to hold the yard", 15, async || {
+        let mut tx = first.db.tenant_tx(tenant).await.unwrap();
+        let held: Option<Uuid> = sqlx::query_scalar("select holder from op_authority where tenant_id = $1 and domain = $2")
+            .bind(tenant)
+            .bind(DOMAIN)
+            .fetch_optional(&mut *tx)
+            .await
+            .unwrap()
+            .flatten();
+        tx.commit().await.unwrap();
+        held == Some(five.id)
+    })
+    .await;
+    authority::pool(first, admin, DOMAIN, "chargers call whichever gateway they are sent to").await.expect("pooled");
+
+    let all_call = async || futures_util::future::join_all((0..MANY).map(|i| Charger::calling_as(port, format!("Y-{i}")))).await;
+    let mut stations = all_call().await;
+    until("every charger to be known", 30, async || held_by(first, tenant, five.id).await == MANY as i64).await;
+
+    // Twenty are asked to start. Ten answer. The other ten were told, and the gateway goes before they say.
+    let w = |charger: Uuid| World { tenant, admin: admin.clone(), charger, first: first.clone(), second: second.clone() };
+    let mut answered = vec![];
+    let mut silent = vec![];
+    for i in 0..20 {
+        let issued = w(chargers[i]).asks(first, &format!("burst-{i}"), 300).await;
+        let asked = stations[i].hears(Duration::from_secs(20)).await.expect("it hears about it");
+        if i < 10 {
+            stations[i].answers(&asked, json!({"status": "Accepted"})).await;
+            answered.push(issued.id);
+        } else {
+            silent.push(issued.id);
+        }
+    }
+    for id in &answered {
+        w(chargers[0]).reaches(*id, "Completed", 20).await;
+    }
+    until("the platform to know the others were sent", 20, async || {
+        for id in &silent {
+            if w(chargers[0]).state(*id).await == "Queued" {
+                return false;
+            }
+        }
+        true
+    })
+    .await;
+
+    // The gateway goes, with all of them on it, and work is asked for while nothing can take it.
+    five.kill();
+    stations.clear();
+    let waiting = w(chargers[50]).asks(second, "burst-waiting", 300).await;
+
+    // They all call the next one together.
+    six.start(None);
+    let started = Instant::now();
+    let mut stations = all_call().await;
+    let answering = started.elapsed();
+    until("every charger to be known on the next gateway", 30, async || held_by(first, tenant, six.id).await == MANY as i64).await;
+    let known = started.elapsed();
+
+    // Work asked for in the middle of it gets through, and the work that may have happened stays with a person.
+    let asked = stations[50].hears(Duration::from_secs(20)).await.expect("what was waiting gets there");
+    assert_eq!(asked[2], json!("RemoteStartTransaction"), "{asked}");
+    stations[50].answers(&asked, json!({"status": "Accepted"})).await;
+    w(chargers[50]).reaches(waiting.id, "Completed", 20).await;
+    let through = started.elapsed();
+    for id in &silent {
+        w(chargers[0]).reaches(*id, "OutcomeUnknown", 30).await;
+    }
+    let settled = started.elapsed();
+    let heard = futures_util::future::join_all(stations.iter_mut().map(|s| s.hears(Duration::from_secs(3)))).await;
+    assert_eq!(heard.into_iter().flatten().collect::<Vec<_>>(), Vec::<Value>::new(), "nothing is sent twice, to any of them");
+    for id in &answered {
+        assert_eq!(w(chargers[0]).state(*id).await, "Completed", "and what was finished stays finished");
+    }
+    let new = w(chargers[99]).asks(first, "burst-after", 300).await;
+    let asked = stations[99].hears(Duration::from_secs(20)).await.expect("the new gateway takes new work");
+    stations[99].answers(&asked, json!({"status": "Accepted"})).await;
+    w(chargers[0]).reaches(new.id, "Completed", 20).await;
+    eprintln!(
+        "{MANY} chargers: all answered in {answering:?}, known to the platform in {known:?}, waiting work through in {through:?}, in-doubt work settled in {settled:?}"
+    );
 }
