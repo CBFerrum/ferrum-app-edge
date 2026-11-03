@@ -213,6 +213,44 @@ fn host_of(address: &str) -> &str {
     }
 }
 
+/// How many new connections a port lets in a second, unless its address says `?rate=`.
+const RATE: u32 = 100;
+
+/// New connections let in at a steady rate, a second's worth at once. After an outage every device calls
+/// back together: those already in, and what they are doing, must not wait behind everyone's handshake.
+pub(crate) struct Pace {
+    per_second: f64,
+    tokens: f64,
+    last: tokio::time::Instant,
+}
+
+impl Pace {
+    pub(crate) fn new(per_second: u32) -> Pace {
+        let per_second = f64::from(per_second.max(1));
+        Pace { per_second, tokens: per_second, last: tokio::time::Instant::now() }
+    }
+
+    /// The rate an address asks for, or [`RATE`].
+    fn of(rest: &str) -> Result<u32, String> {
+        match query(rest, "rate") {
+            None => Ok(RATE),
+            Some(r) => r.parse().ok().filter(|r| *r > 0).ok_or_else(|| format!("rate={r}: new connections a second, at least 1")),
+        }
+    }
+
+    /// Waits for the next connection's turn.
+    pub(crate) async fn turn(&mut self) {
+        let now = tokio::time::Instant::now();
+        self.tokens = (self.tokens + now.duration_since(self.last).as_secs_f64() * self.per_second).min(self.per_second);
+        self.last = now;
+        if self.tokens < 1.0 {
+            tokio::time::sleep(Duration::from_secs_f64((1.0 - self.tokens) / self.per_second)).await;
+            (self.tokens, self.last) = (1.0, tokio::time::Instant::now());
+        }
+        self.tokens -= 1.0;
+    }
+}
+
 /// Query parameters of an address, as `a=1&b=2`.
 fn query(address: &str, key: &str) -> Option<String> {
     let (_, q) = address.split_once('?')?;
@@ -302,7 +340,7 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
             };
             let hub = hub.ok_or("nothing here can check who calls")?;
             if scheme.starts_with("listen+mqtt") {
-                Arc::new(MqttServer { address: bind.to_string(), tls: secured, hub, api })
+                Arc::new(MqttServer { address: bind.to_string(), tls: secured, hub, api, rate: Pace::of(rest)? })
             } else {
                 Arc::new(HttpServer { address: bind.to_string(), tls: secured, hub })
             }
@@ -382,6 +420,7 @@ pub fn open(address: &str, options: Options<'_>, limits: &Limits) -> Result<Arc<
             Arc::new(super::ocpp::OcppServer {
                 address,
                 open: query(rest, "open").as_deref() == Some("1"),
+                rate: Pace::of(rest)?,
                 tls,
                 hub: hub.ok_or("nothing here can check who calls")?,
                 stations: Default::default(),
@@ -1238,6 +1277,30 @@ mod serial {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_storm_is_let_in_at_its_rate() {
+        let mut pace = Pace::new(20);
+        let start = std::time::Instant::now();
+        for _ in 0..20 {
+            pace.turn().await;
+        }
+        assert!(start.elapsed() < Duration::from_millis(100), "a second's worth at once: {:?}", start.elapsed());
+        for _ in 0..10 {
+            pace.turn().await;
+        }
+        let took = start.elapsed();
+        assert!((Duration::from_millis(450)..Duration::from_millis(900)).contains(&took), "then twenty a second: {took:?}");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let again = std::time::Instant::now();
+        for _ in 0..20 {
+            pace.turn().await;
+        }
+        assert!(again.elapsed() < Duration::from_millis(100), "a quiet second gives a whole second's worth back: {:?}", again.elapsed());
+        assert_eq!(Pace::of("0.0.0.0:9000/ocpp"), Ok(RATE));
+        assert_eq!(Pace::of("0.0.0.0:9000/ocpp?open=1&rate=25"), Ok(25));
+        assert!(Pace::of("0.0.0.0:9000/ocpp?rate=0").is_err() && Pace::of("0.0.0.0:9000/ocpp?rate=many").is_err());
+    }
 
     #[tokio::test]
     async fn a_failure_never_says_what_an_address_held() {

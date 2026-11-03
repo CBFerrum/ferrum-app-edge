@@ -256,6 +256,8 @@ pub struct MqttServer {
     pub hub: Arc<Hub>,
     /// The device API: a device says only what that lets it, and is asked for nothing else.
     pub api: bool,
+    /// New connections let in a second.
+    pub rate: u32,
 }
 
 struct Live {
@@ -417,10 +419,11 @@ impl Transport for MqttServer {
         let listener = TcpListener::bind(&self.address).await.map_err(|e| format!("{}: {e}", self.address))?;
         let live = Arc::new(Live { hub: self.hub.clone(), tx: tx.clone(), api: self.api, count: AtomicUsize::new(0) });
         let _ = ready.send(()).await;
+        let mut pace = crate::adapters::transport::Pace::new(self.rate);
         loop {
             let (stream, _) = tokio::select! {
                 _ = tx.closed() => return Ok(()),
-                accepted = listener.accept() => accepted.map_err(|e| e.to_string())?,
+                accepted = async { pace.turn().await; listener.accept().await } => accepted.map_err(|e| e.to_string())?,
             };
             if live.count.load(Ordering::Relaxed) >= MAX_SESSIONS {
                 continue;

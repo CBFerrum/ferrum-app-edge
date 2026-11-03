@@ -670,7 +670,7 @@ async fn what_a_site_has_forgotten_is_asked_of_the_platform(w: &World) {
     let waiting = issue(&ws, ws.robot, "warehouse.move", json!({"task": {"after": [first]}}), 60).await;
     w.p.down.store(true, Ordering::SeqCst);
     let mut tx = ws.k.db.tenant_tx(ws.tenant).await.unwrap();
-    let taken = commands::take_for_site(&mut tx, ws.tenant, &ws.slug, 1, 10).await.unwrap();
+    let taken = commands::take_for_site(&mut tx, ws.tenant, &ws.slug, 1, 10, ws.gateway, false).await.unwrap();
     tx.commit().await.unwrap();
     {
         let j = site.journal();
@@ -750,7 +750,7 @@ async fn a_power_cut_with_no_link_waits_for_someone_to_vouch_for_the_time(w: &Wo
     // The link is gone and the machine came back from a power cut: the same file, another boot.
     w.p.down.store(true, Ordering::SeqCst);
     let mut tx = ws.k.db.tenant_tx(ws.tenant).await.unwrap();
-    let taken = commands::take_for_site(&mut tx, ws.tenant, &ws.slug, 1, 10).await.unwrap();
+    let taken = commands::take_for_site(&mut tx, ws.tenant, &ws.slug, 1, 10, ws.gateway, false).await.unwrap();
     tx.commit().await.unwrap();
     {
         let j = site.journal();
@@ -789,7 +789,7 @@ async fn what_the_lease_and_the_disk_allow(w: &World) {
     // The site holds work, and was offline past its allowance when it comes back up.
     let c = issue(&ws, ws.robot, "warehouse.move", json!({"tote": "L"}), 60).await;
     let mut tx = ws.k.db.tenant_tx(ws.tenant).await.unwrap();
-    let taken = commands::take_for_site(&mut tx, ws.tenant, &ws.slug, 1, 10).await.unwrap();
+    let taken = commands::take_for_site(&mut tx, ws.tenant, &ws.slug, 1, 10, ws.gateway, false).await.unwrap();
     tx.commit().await.unwrap();
     {
         let j = site.journal();
