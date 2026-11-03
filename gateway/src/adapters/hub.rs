@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
@@ -31,6 +31,23 @@ const MAX_JOINS: usize = 120;
 
 pub fn hash(secret: &[u8]) -> String {
     hex::encode(Sha256::digest(secret))
+}
+
+/// Where what a device said goes before it is told it was heard. Without one, what is heard is only held
+/// in memory for a moment, which is enough for readings and not for money.
+pub trait Keeper: Send + Sync {
+    /// Keeps it, durably, by what it says: hearing the same thing again changes nothing.
+    fn keep(&self, device: &str, call: &str, action: &str, said: &Value) -> Result<(), String>;
+
+    /// The number a new transaction goes by: the same one however often a charger asks, and never one
+    /// another transaction has had, across restarts.
+    fn number(&self, device: &str, said: &Value) -> Result<i32, String>;
+}
+
+impl std::fmt::Debug for dyn Keeper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Keeper")
+    }
 }
 
 #[derive(Default)]
@@ -132,6 +149,7 @@ pub struct Hub {
     joined: Mutex<HashMap<String, String>>,
     joins: Mutex<Vec<Instant>>,
     firmware: Mutex<HashMap<String, Offered>>,
+    keeper: RwLock<Option<Arc<dyn Keeper>>>,
 }
 
 /// A device that has just added itself: what it gets, and what the platform is to be told.
@@ -153,6 +171,14 @@ fn locked<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl Hub {
+    pub fn keep_with(&self, keeper: Arc<dyn Keeper>) {
+        *self.keeper.write().unwrap_or_else(|e| e.into_inner()) = Some(keeper);
+    }
+
+    pub fn keeper(&self) -> Option<Arc<dyn Keeper>> {
+        self.keeper.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
     /// Who may connect changes with the platform's word. A device no longer listed, or whose
     /// credentials went, is gone at once: taking a device away must not wait for it to reconnect.
     pub fn set(&self, devices: &[DeviceLink]) {

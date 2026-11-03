@@ -135,12 +135,32 @@ async fn heard(s: &Shared, station: &str, text: &str) -> Option<String> {
         CALL => {
             let (id, action) = (frame[1].as_str()?, frame[2].as_str()?);
             let said = &frame[3];
+            let refuse = |why: &str| Some(json!([ERROR, id, "InternalError", why, {}]).to_string());
+            // Kept before it is answered: a charger that hears nothing says it again, and one that
+            // hears yes forgets it, so this answer is the moment it stops being the charger's to keep.
+            let keeper = s.hub.keeper();
+            if ocpp::billing(action)
+                && let Some(keeper) = &keeper
+                && let Err(why) = keeper.keep(station, id, action, said)
+            {
+                tracing::error!(station, action, "could not keep what a charger said: {why}");
+                return refuse("this could not be kept, so say it again");
+            }
             let message = Message { topic: format!("{prefix}{station}/{action}"), body: said.to_string().into_bytes(), status: None, from };
             if s.tx.send(message).await.is_err() {
-                return Some(json!([ERROR, id, "InternalError", "this gateway is not taking anything now", {}]).to_string());
+                return refuse("this gateway is not taking anything now");
             }
             let list = s.hub.setting(station, "id_tags");
-            let number = s.transactions.fetch_add(1, Ordering::Relaxed);
+            let number = match &keeper {
+                Some(keeper) if action == "StartTransaction" => match keeper.number(station, said) {
+                    Ok(number) => number.unsigned_abs(),
+                    Err(why) => {
+                        tracing::error!(station, "could not number a transaction: {why}");
+                        return refuse("this could not be numbered, so say it again");
+                    }
+                },
+                _ => s.transactions.fetch_add(1, Ordering::Relaxed),
+            };
             Some(json!([RESULT, id, ocpp::answer(action, said, list.as_ref(), number, Utc::now())]).to_string())
         }
         RESULT => {

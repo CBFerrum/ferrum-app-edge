@@ -21,6 +21,7 @@
 
 pub mod alarms;
 pub mod bundles;
+pub mod charging;
 pub mod config;
 pub mod data;
 pub mod facts;

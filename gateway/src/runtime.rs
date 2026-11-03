@@ -4,6 +4,7 @@
 
 use crate::adapter::{Adapter, Binding, Dispatched, Failure, Observation, Reading};
 use crate::adapters::defined::{Defined, LinkHealth};
+use crate::adapters::hub::Keeper;
 use crate::adapters::transport::Limits as OpenLimits;
 use crate::adapters::{operator::OperatorTasks, sim::Sim};
 use crate::clock::{Clock, Source};
@@ -23,6 +24,7 @@ use ferrum_ops_contract::sync::{Fact, Health, SiteDevice};
 use ferrum_ops_contract::telemetry::{Class, Limits, Measurement};
 use ferrum_ops_contract::{Lifecycle, State, Step, SyncRequest, SyncResponse, VERSION};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
@@ -126,6 +128,33 @@ fn free_disk(path: &Path) -> Option<i64> {
     (!failed).then(|| (s.f_bavail as i64).saturating_mul(s.f_frsize as i64))
 }
 
+/// What a device said about money, in the journal before it hears that it was heard.
+struct Kept {
+    journal: Arc<Journal>,
+}
+
+/// One start, one stop or one reading, however many times it arrives and over however many connections.
+fn said_key(device: &str, action: &str, said: &Value) -> [u8; 32] {
+    Sha256::new().chain_update(device).chain_update([0]).chain_update(action).chain_update([0]).chain_update(said.to_string()).finalize().into()
+}
+
+impl Keeper for Kept {
+    fn keep(&self, device: &str, call: &str, action: &str, said: &Value) -> Result<(), String> {
+        let key = said_key(device, action, said);
+        let id = Uuid::from_slice(&key[..16]).map_err(|e| e.to_string())?;
+        let mut body = json!({"code": device, "call": call, "action": action, "said": said});
+        // 1.6 says what number a start got only in the answer, so it goes with the start.
+        if action == "StartTransaction" {
+            body["transaction"] = json!(self.number(device, said)?);
+        }
+        self.journal.add_fact(&Fact { fact_id: id, kind: "edge.transaction".into(), at_source: Utc::now(), actor: None, body }).map_err(|e| e.to_string())
+    }
+
+    fn number(&self, device: &str, said: &Value) -> Result<i32, String> {
+        self.journal.transaction_number(&hex::encode(said_key(device, "StartTransaction", said)), Utc::now().timestamp_millis()).map_err(|e| e.to_string())
+    }
+}
+
 impl Runtime {
     pub fn open(cfg: Config, key: ed25519_dalek::SigningKey) -> Result<Arc<Runtime>, String> {
         let journal = Arc::new(Journal::open(&cfg.journal_path()).map_err(|e| e.to_string())?);
@@ -165,8 +194,11 @@ impl Runtime {
             firmware_dir: Some(cfg.state_dir.join("firmware")),
             files_dir: cfg.files_dir.clone(),
             state_dir: Some(cfg.state_dir.clone()),
+            keeper: None,
         };
         let exporting = OpenLimits { allow: cfg.allow.clone(), listen: cfg.listen.clone(), tls_dir: Some(cfg.state_dir.join("tls")), ..OpenLimits::default() };
+        let keeper: Arc<dyn Keeper> = Arc::new(Kept { journal: journal.clone() });
+        let limits = OpenLimits { keeper: Some(keeper), ..limits };
         let defined = Arc::new(Defined::new(limits, json!(cfg.secrets)));
         adapters.push(("definitions".to_string(), defined.clone()));
         let high_water = journal.high_water().map_err(|e| e.to_string())?.map(|t| t.timestamp_millis()).unwrap_or(0);
@@ -1163,6 +1195,17 @@ impl Runtime {
             }
             Reading::Event { device, name, value } => {
                 let Some(d) = devices.get(&device) else { return };
+                // A device that calls in is wherever its connection is, which the platform has to know.
+                if name == "ocpp.Connection" {
+                    let kind = if value["connected"] == json!(true) { "connection.opened" } else { "connection.closed" };
+                    let _ = self.journal.add_fact(&Fact {
+                        fact_id: Uuid::now_v7(),
+                        kind: kind.into(),
+                        at_source: self.clock.now(),
+                        actor: None,
+                        body: json!({"device": d.id}),
+                    });
+                }
                 let fact = Fact {
                     fact_id: Uuid::now_v7(),
                     kind: "edge.event".into(),
