@@ -51,11 +51,26 @@ async fn until(what: &str, seconds: u64, mut check: impl AsyncFnMut() -> bool) {
     }
 }
 
-async fn handle(Shared(k): Shared<Arc<Kernel>>, UrlPath((tenant, package, path)): UrlPath<(String, String, String)>, uri: Uri, headers: HeaderMap, body: Bytes) -> Response {
+async fn handle(
+    Shared(k): Shared<Arc<Kernel>>,
+    UrlPath((tenant, package, path)): UrlPath<(String, String, String)>,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     let (tenant, _) = k.tenant_by_slug(&tenant).await.unwrap();
     let mut map: Map<String, Value> = headers.iter().filter_map(|(k, v)| Some((k.to_string(), json!(v.to_str().ok()?)))).collect();
     map.insert("x-ferrum-uri".into(), json!(uri.path()));
-    let req = SiteRequest { tenant, user: None, method: "POST".into(), path: format!("/{path}"), query: Map::new(), headers: map, body: body.to_vec(), client_ip: "127.0.0.1".into() };
+    let req = SiteRequest {
+        tenant,
+        user: None,
+        method: "POST".into(),
+        path: format!("/{path}"),
+        query: Map::new(),
+        headers: map,
+        body: body.to_vec(),
+        client_ip: "127.0.0.1".into(),
+    };
     match k.hooks.site(&package).unwrap().clone().handle(&k, req).await {
         Ok(r) => (StatusCode::from_u16(r.status).unwrap(), r.body).into_response(),
         Err(Error::Conflict(m)) => (StatusCode::CONFLICT, axum::Json(json!({"error": m}))).into_response(),
@@ -105,7 +120,9 @@ impl Gateway {
         std::fs::write(&config, text).unwrap();
         let (enrollment, _) = ferrum_ops::identity::new_enrollment(k, admin, id).await.unwrap();
         let (exe, file) = (env!("CARGO_BIN_EXE_ferrum-site").to_string(), config.clone());
-        let out = tokio::task::spawn_blocking(move || Command::new(exe).args(["enroll", "--code", &enrollment, "--config"]).arg(file).output().unwrap()).await.unwrap();
+        let out = tokio::task::spawn_blocking(move || Command::new(exe).args(["enroll", "--code", &enrollment, "--config"]).arg(file).output().unwrap())
+            .await
+            .unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         devices::set_lifecycle(k, admin, id, Lifecycle::Commissioned, "checked").await.unwrap();
         devices::set_lifecycle(k, admin, id, Lifecycle::Active, "in service").await.unwrap();
@@ -232,12 +249,13 @@ impl World {
     async fn connected_to(&self, gateway: Uuid) {
         until("the platform to know where the charger is", 15, async || {
             let mut tx = self.first.db.tenant_tx(self.tenant).await.unwrap();
-            let held: Option<(Uuid, Option<chrono::DateTime<Utc>>)> = sqlx::query_as("select gateway_id, closed_at from op_connection where tenant_id = $1 and device_id = $2")
-                .bind(self.tenant)
-                .bind(self.charger)
-                .fetch_optional(&mut *tx)
-                .await
-                .unwrap();
+            let held: Option<(Uuid, Option<chrono::DateTime<Utc>>)> =
+                sqlx::query_as("select gateway_id, closed_at from op_connection where tenant_id = $1 and device_id = $2")
+                    .bind(self.tenant)
+                    .bind(self.charger)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .unwrap();
             tx.commit().await.unwrap();
             held == Some((gateway, None))
         })
@@ -319,7 +337,13 @@ async fn scenario() {
     three.start(None);
     until("the gateway to hold the domain", 15, async || {
         let mut tx = first.db.tenant_tx(tenant).await.unwrap();
-        let held: Option<Uuid> = sqlx::query_scalar("select holder from op_authority where tenant_id = $1 and domain = $2").bind(tenant).bind(SITE).fetch_optional(&mut *tx).await.unwrap().flatten();
+        let held: Option<Uuid> = sqlx::query_scalar("select holder from op_authority where tenant_id = $1 and domain = $2")
+            .bind(tenant)
+            .bind(SITE)
+            .fetch_optional(&mut *tx)
+            .await
+            .unwrap()
+            .flatten();
         tx.commit().await.unwrap();
         held == Some(three.id)
     })
