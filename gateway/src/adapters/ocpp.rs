@@ -32,10 +32,14 @@ const RESULT: i64 = 3;
 const ERROR: i64 = 4;
 /// What can wait to go to one charger.
 const QUEUE: usize = 32;
+/// How long a charger has to finish its TLS and WebSocket handshakes, which hold a place until it does.
+const HELLO: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub struct OcppServer {
     pub address: String,
     pub open: bool,
+    /// New connections let in a second.
+    pub rate: u32,
     pub tls: Option<TlsAcceptor>,
     pub hub: Arc<Hub>,
     pub stations: Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>,
@@ -84,7 +88,7 @@ async fn serve(stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static, s: 
             }
         }
     };
-    let Ok(socket) = tokio_tungstenite::accept_hdr_async(stream, check).await else { return };
+    let Ok(Ok(socket)) = tokio::time::timeout(HELLO, tokio_tungstenite::accept_hdr_async(stream, check)).await else { return };
     let Some(station) = who else { return };
     let (mut write, mut read) = socket.split();
     let (out, mut outgoing) = mpsc::channel::<String>(QUEUE);
@@ -194,17 +198,18 @@ impl Transport for OcppServer {
         let _ = ready.send(()).await;
         let shared =
             Shared { hub: self.hub.clone(), open: self.open, tx: tx.clone(), stations: self.stations.clone(), transactions: self.transactions.clone() };
+        let mut pace = crate::adapters::transport::Pace::new(self.rate);
         loop {
             let accepted = tokio::select! {
                 () = tx.closed() => return Ok(()),
-                got = listener.accept() => got,
+                got = async { pace.turn().await; listener.accept().await } => got,
             };
             let Ok((stream, _)) = accepted else { continue };
             let (s, tls) = (shared.clone(), self.tls.clone());
             tokio::spawn(async move {
                 match tls {
                     Some(tls) => {
-                        if let Ok(stream) = tls.accept(stream).await {
+                        if let Ok(Ok(stream)) = tokio::time::timeout(HELLO, tls.accept(stream)).await {
                             let certificate = crate::adapters::mqtt_server::fingerprint(&stream);
                             serve(stream, s, certificate).await;
                         }

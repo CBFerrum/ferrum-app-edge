@@ -35,6 +35,7 @@ PORTAL = ("-p", "ferrum-app-edge", "--test", "portal_it")
 EXPORTS = ("-p", "ferrum-site", "--test", "exports_it")
 METERS = ("-p", "ferrum-site", "--test", "dlms_it")
 DISPATCH = ("-p", "ferrum-site", "--test", "dispatch_it")
+CHARGERS = ("-p", "ferrum-site", "--features", "failpoints", "--test", "charger_it")
 CLOCK = "gateway/src/clock.rs"
 RUNTIME = "gateway/src/runtime.rs"
 # Generous enough to compile and run; passing it means the mutant hung the test.
@@ -42,6 +43,8 @@ TIMEOUT = 600
 
 # name, file, text to replace, what breaks it, test
 MUTANTS = [
+    ("pace-lets-everyone-in", "gateway/src/adapters/ocpp.rs", "got = async { pace.turn().await; listener.accept().await } => got,", "got = listener.accept() => got,", CHARGERS),
+    ("pace-never-refills", "gateway/src/adapters/transport.rs", "self.tokens = (self.tokens + now.duration_since(self.last).as_secs_f64() * self.per_second).min(self.per_second);", "self.tokens = self.tokens.min(self.per_second);", SITE_UNIT),
     ("clock-follows-the-wall", CLOCK, "        m.at_ms + passed + passed * self.drift_ppm / 1_000_000\n", "        let _ = passed;\n        m.at_ms.max((self.source.wall)())\n", SITE_UNIT),
     ("clock-believes-a-reboot", CLOCK, "None => Mark { at_ms: high_water.max((source.wall)() + offset), boot_ms: now, sure: false },", "None => Mark { at_ms: high_water.max((source.wall)() + offset), boot_ms: now, sure: true },", SITE_UNIT),
     ("clock-loses-a-restart", CLOCK, "let mark = match saved.filter(|s| s.boot.is_some() && s.boot == source.boot_id && s.boot_ms <= now) {", "let mark = match saved.filter(|_| false) {", SITE_UNIT),
