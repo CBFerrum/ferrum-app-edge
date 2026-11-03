@@ -12,12 +12,12 @@ license = "AGPL-3.0-or-later"
 repository = "https://github.com/CBFerrum/ferrum-app-edge"
 
 [workspace.dependencies]
-ferrum-kernel = { git = "https://github.com/CBFerrum/Ferrum", branch = "platform/w10-hardening" }
-ferrum-meta = { git = "https://github.com/CBFerrum/Ferrum", branch = "platform/w10-hardening" }
-ferrum-domain = { git = "https://github.com/CBFerrum/Ferrum", branch = "platform/w10-hardening" }
-ferrum-calc = { git = "https://github.com/CBFerrum/Ferrum", branch = "platform/w10-hardening" }
-ferrum-ops = { git = "https://github.com/CBFerrum/Ferrum", branch = "platform/w10-hardening" }
-ferrum-ops-contract = { git = "https://github.com/CBFerrum/Ferrum", branch = "platform/w10-hardening" }
+ferrum-kernel = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-meta = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-domain = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-calc = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-ops = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-ops-contract = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
 ferrum-edge-contract = { path = "contract" }
 rust_decimal = { version = "1.43", features = ["serde-with-str", "maths"] }
 serde = { version = "1", features = ["derive"] }
