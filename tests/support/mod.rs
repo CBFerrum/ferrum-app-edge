@@ -18,8 +18,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use uuid::Uuid;
 
+/// The tests of a binary share its database, and each resets it: one scenario at a time.
+static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Runs a scenario on a stack as deep as the kernel's document hooks can go in a debug build.
 pub fn run<F: Future<Output = ()> + Send + 'static>(scenario: F) {
+    // A scenario that failed leaves the lock poisoned; the next one still runs.
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(32 << 20).build().unwrap();
     rt.block_on(async { tokio::spawn(scenario).await.unwrap() });
 }
