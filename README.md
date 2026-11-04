@@ -385,6 +385,7 @@ CHANGELOG.md  what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.4.1** | Rebuilt with Ferrum-Frontend 80ff179: labels name their fields, and linked titles show their titles. |
 | **0.4.0** | Recovery, following and stopping go back to exactly what a command went out on. Time is the platform's, on a clock nothing here can set. Every command is checked again the moment before it goes … |
 | **0.3.1** | The gateway's releases are static, so they run on any 64-bit Linux. Those of 0.3.0 needed glibc 2.39 and would not start on Ubuntu 22.04, Debian … |
 | **0.3.0** | Customers who own devices: their people see those devices, their alarms and the dashboards given to them in the workspace's portal, and nothing else. |
