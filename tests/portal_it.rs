@@ -211,4 +211,23 @@ async fn reporting() {
     // Every minute comes round, and a day's report goes out once.
     reports::deliver(&t.k, &ctx).await.unwrap();
     assert_eq!(mails(&t).await.len(), 2);
+
+    // Asked for by the boss, their row of the weekly schedule is theirs alone: erased, it goes, and
+    // the schedule goes on to ops.
+    let asked = t.k.personal_data(&t.admin, "boss@x.test").await.unwrap();
+    let theirs: Vec<&Value> = asked["records"].as_array().unwrap().iter().filter(|r| r["entity"] == "EdgeReportSchedule").collect();
+    assert_eq!(theirs.len(), 1, "{asked}");
+    assert_eq!(theirs[0]["data"]["recipients"], json!([theirs[0]["data"]["recipients"][0].clone()]));
+    assert_eq!(theirs[0]["data"]["recipients"][0]["email"], "boss@x.test");
+    let erased = t.k.erase_personal_data(&t.admin, "boss@x.test", "Request 1").await.unwrap();
+    assert_eq!(erased["erased"][0]["rows"], json!(1), "{erased}");
+    let mut tx = t.k.db.tenant_tx(t.tenant).await.unwrap();
+    let left: Vec<String> = sqlx::query_scalar(
+        "select r.email from e_edge_report_schedule__recipients r join e_edge_report_schedule s on s.id = r.parent_id where s.schedule_name = 'Weekly' order by r.email",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(left, ["ops@x.test"]);
 }

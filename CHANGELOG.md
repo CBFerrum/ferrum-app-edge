@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.4
+
+Personal-data requests find the customers' people and the report recipients by their address, in the rows that hold them: a request copies those rows alone, and erasure removes them (the person loses the customer's portal, or stops getting the report) and leaves the customer and the schedule (Ferrum's FERRUM-PRIVACY-002).
+
 ## 0.4.3
 
 Rebuilt with Ferrum-Frontend 00dea07: in a workflow state that names what may change, the other fields show read-only, and the fields the state needs show required.
