@@ -6,6 +6,8 @@ summary: Devices described instead of programmed, flows drawn and reviewed, gate
 description: README.md
 categories: [manufacturing]
 license: AGPL-3.0-or-later
+homepage: https://github.com/CBFerrum/ferrum-app-edge
+support: https://github.com/CBFerrum/ferrum-app-edge/issues
 runtime: native
 platform: ">=0.3, <0.4"
 requires: {ops: ">=0.1"}
