@@ -1,6 +1,6 @@
 id: edge
 name: IoT Edge
-version: 0.4.3
+version: 0.4.4
 publisher: cbferrum
 summary: Devices described instead of programmed, flows drawn and reviewed, gateways that keep working offline, alarms and robots
 description: README.md

@@ -385,6 +385,7 @@ CHANGELOG.md  what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.4.4** | Personal-data requests find customers' people and report recipients in their rows, and erase those rows alone. |
 | **0.4.3** | Rebuilt with Ferrum-Frontend 00dea07: a workflow state's kept fields are read-only, its needed ones required. |
 | **0.4.2** | Rebuilt with Ferrum-Frontend daeadda: actions say what they did. |
 | **0.4.1** | Rebuilt with Ferrum-Frontend 80ff179: labels name their fields, and linked titles show their titles. |
