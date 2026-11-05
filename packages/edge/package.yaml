@@ -85,3 +85,7 @@ roles:
       - {entity: EdgeDashboard, read: true}
       - {entity: Device, read: true}
       - {entity: Site, read: true}
+
+personal_data:
+  - {entity: EdgeCustomer, match: people.user_email, erase: [people]}
+  - {entity: EdgeReportSchedule, match: recipients.email, erase: [recipients]}
