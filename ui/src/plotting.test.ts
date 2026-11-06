@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { setTimeZone } from "@ferrum/client";
 import { csv, extent, linePath, nearest, summary, timeTicks, valueTicks } from "./plotting";
 
 const p = (at: number, value: number | null) => ({ at, value });
@@ -19,6 +20,10 @@ describe("a chart's axes", () => {
   it("has none for nothing", () => {
     expect(valueTicks(Infinity, -Infinity)).toEqual([]);
     expect(timeTicks(10, 10)).toEqual([]);
+    // On the workspace's clock: India's hours begin at half past, UTC's.
+    setTimeZone("Asia/Kolkata");
+    expect(timeTicks(Date.UTC(2026, 10, 6, 0, 10), Date.UTC(2026, 10, 6, 5, 10))[0]).toBe(Date.UTC(2026, 10, 6, 0, 30));
+    setTimeZone(undefined);
   });
 
   it("keeps times on whole steps", () => {

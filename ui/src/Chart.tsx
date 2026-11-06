@@ -2,6 +2,7 @@
 // gap, because nothing reported is not the same as nothing changing.
 
 import { type PointerEvent, useEffect, useRef, useState } from "react";
+import { formatMoment } from "@ferrum/client";
 import { extent, type Line, linePath, nearest, timeLabel, timeTicks, valueTicks } from "./plotting";
 
 export const COLORS = ["var(--color-blue-600, #2563eb)", "var(--color-amber-600, #d97706)", "var(--color-emerald-600, #059669)", "var(--color-rose-600, #e11d48)", "var(--color-violet-600, #7c3aed)", "var(--color-cyan-600, #0891b2)", "var(--color-lime-600, #65a30d)", "var(--color-fuchsia-600, #c026d3)"];
@@ -108,7 +109,7 @@ export function Chart({ lines, from, to, gap, height: fixed = 260, marks = [], l
       </svg>
       {shown !== null ? (
         <div className="edge-chart-tip" style={left_side ? { right: `${100 - (x(shown) / W) * 100 + 1}%` } : { left: `${(x(shown) / W) * 100 + 1}%` }}>
-          <div className="faint">{new Date(shown).toLocaleString()}</div>
+          <div className="faint">{formatMoment(shown, { dateStyle: "medium", timeStyle: "medium" })}</div>
           {near.map((n, i) =>
             n.point ? (
               <div key={n.line.label}>
