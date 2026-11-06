@@ -385,6 +385,7 @@ CHANGELOG.md  what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.4.6** | Times on the workspace's clock; rebuilt with Ferrum-Frontend 24c3951. |
 | **0.4.5** | Rebuilt with Ferrum-Frontend bb60115: empty numbers read as the server reads them; settings open as their record. |
 | **0.4.4** | Personal-data requests find customers' people and report recipients in their rows, and erase those rows alone. |
 | **0.4.3** | Rebuilt with Ferrum-Frontend 00dea07: a workflow state's kept fields are read-only, its needed ones required. |

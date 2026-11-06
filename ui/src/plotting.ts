@@ -1,4 +1,7 @@
-// What a chart works out before anything is drawn.
+// What a chart works out before anything is drawn. Times are on the workspace's clock, as the kit
+// shows them.
+
+import { shownTimeZone } from "@ferrum/client";
 
 export interface Point {
   at: number;
@@ -32,11 +35,18 @@ export function valueTicks(lo: number, hi: number, count = 5): number[] {
 
 const STEPS = [1, 5, 15, 30, 60, 300, 900, 1800, 3600, 7200, 21600, 43200, 86400, 172800, 604800, 2592000].map((s) => s * 1000);
 
-/** Whole minutes, hours or days between two times, about `count` of them. */
+/** How far the workspace's clock is behind UTC at `t`, as `getTimezoneOffset` counts it, in ms. */
+function clockOffset(t: number): number {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: shownTimeZone(), hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" }).formatToParts(t);
+  const n = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  return Math.floor(t / 1000) * 1000 - Date.UTC(n("year"), n("month") - 1, n("day"), n("hour"), n("minute"), n("second"));
+}
+
+/** Whole minutes, hours or days between two times, about `count` of them, on the workspace's clock. */
 export function timeTicks(from: number, to: number, count = 6): number[] {
   if (!(to > from)) return [];
   const step = STEPS.find((s) => (to - from) / s <= count) ?? STEPS[STEPS.length - 1]!;
-  const offset = new Date(from).getTimezoneOffset() * 60_000;
+  const offset = clockOffset(from);
   const ticks: number[] = [];
   for (let t = Math.ceil((from - offset) / step) * step + offset; t <= to; t += step) ticks.push(t);
   return ticks;
@@ -45,8 +55,8 @@ export function timeTicks(from: number, to: number, count = 6): number[] {
 /** A time as an axis shows it: the less of it needed for this span, the better. */
 export function timeLabel(at: number, span: number): string {
   const d = new Date(at);
-  if (span <= 2 * 86_400_000) return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  if (span <= 2 * 86_400_000) return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", timeZone: shownTimeZone() });
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: shownTimeZone() });
 }
 
 /** The lowest and highest value of everything drawn, bands included, with nothing drawn as null. */

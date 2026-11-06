@@ -6,7 +6,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type KeyboardEvent, type PointerEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
-import { refusal, relativeTime } from "@ferrum/client";
+import { formatMoment, refusal, relativeTime } from "@ferrum/client";
 import { Alert, Button, confirmDialog, Dialog, ErrorState, Field, PageLoading, toast, useDebounced, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
 import { can, LinkInput, useEntityMeta, useMe } from "@ferrum/records";
 import { flowAction, type FlowDoc, flowDoc, flowTraces, flowVersions, type Moment, saveFlow, type Simulated, simulateFlow, type Traced, tryFlow } from "./data";
@@ -840,7 +840,7 @@ function Watching({ doc, writable, chosen, choose }: { doc: FlowDoc; writable: b
         ) : null}
       </div>
       <p className="muted" role="status">
-        {watching ? `What passes through arrives here as it is reported, until ${new Date(until).toLocaleTimeString()}.` : "See what real messages do at each step. Nothing is reported until someone asks, and it stops by itself."}
+        {watching ? `What passes through arrives here as it is reported, until ${formatMoment(until, { timeStyle: "medium" })}.` : "See what real messages do at each step. Nothing is reported until someone asks, and it stops by itself."}
       </p>
       {seen.length ? (
         <div className="edge-scroll">
@@ -857,7 +857,7 @@ function Watching({ doc, writable, chosen, choose }: { doc: FlowDoc; writable: b
             <tbody>
               {[...seen].reverse().map((t) => (
                 <tr key={t.id} className={chosen === t.node ? "edge-on" : undefined}>
-                  <td>{new Date(t.at).toLocaleTimeString()}</td>
+                  <td>{formatMoment(t.at, { timeStyle: "medium" })}</td>
                   <td>
                     <button type="button" className="edge-step-link" onClick={() => choose(chosen === t.node ? null : t.node)}>
                       {t.node}
