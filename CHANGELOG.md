@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0
+
+Gateways in the support report (FERRUM-IND-021). The workspace's support report (`apps.edge`,
+Ferrum PR 90) counts its gateways in service that have spoken, those not heard from for five
+minutes, and those whose last word named problems, with those problems in words. Counts only:
+no gateway's name or address, so a partner reading a customer's health with a health-only key
+sees how the gateways are and nothing else. The control plane counts them in the customer's
+health (Control Plane 0.5.0). Rebuilt with Ferrum-Frontend 922fcfb: an action's refusals on another
+record's rows show in its dialog, and an action with a confirmation and parameters asks once.
+
 ## 0.4.7
 
 Rebuilt with Ferrum-Frontend a76295e: its pages show times on a person's own clock when they chose one on their Account page, while today and due dates stay on the workspace's day.
