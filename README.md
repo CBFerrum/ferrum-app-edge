@@ -385,6 +385,7 @@ CHANGELOG.md  what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.5.0** | Gateways in the workspace's support report, as counts, for partners and the control plane. Rebuilt with Ferrum-Frontend 922fcfb. |
 | **0.4.7** | Rebuilt with Ferrum-Frontend a76295e: times on a person's own clock when they chose one. |
 | **0.4.6** | Times on the workspace's clock; rebuilt with Ferrum-Frontend 24c3951. |
 | **0.4.5** | Rebuilt with Ferrum-Frontend bb60115: empty numbers read as the server reads them; settings open as their record. |
