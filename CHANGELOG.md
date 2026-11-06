@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.5
+
+Rebuilt with Ferrum-Frontend bb60115: a record page reads an empty number or check as the server does, so an action whose condition needs one shows, and a workspace's settings open as their one record.
+
 ## 0.4.4
 
 Personal-data requests find the customers' people and the report recipients by their address, in the rows that hold them: a request copies those rows alone, and erasure removes them (the person loses the customer's portal, or stops getting the report) and leaves the customer and the schedule (Ferrum's FERRUM-PRIVACY-002).
