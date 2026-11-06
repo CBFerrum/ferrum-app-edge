@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+Rebuilt with Ferrum-Frontend a64416a: a new record's box whose default is 1 shows ticked, as it is saved.
+
 ## 0.5.0
 
 Gateways in the support report (FERRUM-IND-021). The workspace's support report (`apps.edge`,
