@@ -70,6 +70,7 @@ pub fn register(h: &mut HookRegistry) {
     h.add_event_sink(Arc::new(Facts));
     h.add_site("edge", Arc::new(site::EdgeSite));
     h.add_job_handler(Arc::new(notices::Notices));
+    h.add_health("edge", Arc::new(facts::GatewayHealth));
 }
 
 /// This app's reports.
