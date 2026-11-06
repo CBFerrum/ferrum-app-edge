@@ -237,6 +237,41 @@ async fn alarm(k: &Kernel, ctx: &Ctx, tx: &mut Tx, change: &AlarmChange, at: Dat
 /// Minutes a gateway can stay silent before someone should look.
 const GATEWAY_SILENT_MINUTES: i32 = 5;
 
+/// IoT Edge's own part of a workspace in its support report (Ferrum's `support::Health`): its
+/// gateways in service that have spoken, those quiet for longer than a gateway's alarm waits, and
+/// those whose last word named problems. Counts only, so a partner reading a customer's health
+/// learns no gateway's name or address.
+pub struct GatewayHealth;
+
+#[async_trait::async_trait]
+impl ferrum_kernel::support::Health for GatewayHealth {
+    async fn health(&self, _k: &Kernel, tx: &mut Tx, tenant: Uuid) -> Result<Value> {
+        let (total, quiet, troubled): (i64, i64, i64) = sqlx::query_as(
+            "select count(*), count(*) filter (where g.seen_at < now() - make_interval(mins => $2)), \
+                    count(*) filter (where jsonb_array_length(coalesce(g.problems, '[]')) > 0) \
+             from edge_gateway g join e_device d on d.tenant_id = g.tenant_id and d.id = g.device_id \
+             where g.tenant_id = $1 and d.lifecycle in ('Commissioned', 'Active')",
+        )
+        .bind(tenant)
+        .bind(GATEWAY_SILENT_MINUTES)
+        .fetch_one(&mut **tx)
+        .await?;
+        Ok(json!({"gateways": total, "quiet": quiet, "with_problems": troubled, "problems": gateway_problems(total, quiet, troubled)}))
+    }
+}
+
+/// What someone looking after the workspace should hear of its gateways.
+fn gateway_problems(total: i64, quiet: i64, troubled: i64) -> Vec<String> {
+    let mut said = Vec::new();
+    if quiet > 0 {
+        said.push(format!("{quiet} of {total} gateways not heard from for {GATEWAY_SILENT_MINUTES} minutes"));
+    }
+    if troubled > 0 {
+        said.push(format!("{troubled} of {total} gateways report problems"));
+    }
+    said
+}
+
 /// A gateway that stopped talking cannot raise an alarm about itself, so this does, and clears it
 /// when it is back. One that was never heard from has not gone anywhere.
 pub async fn watch_gateways(k: &Kernel, ctx: &Ctx) -> Result<()> {
@@ -277,4 +312,16 @@ pub async fn watch_gateways(k: &Kernel, ctx: &Ctx) -> Result<()> {
     }
     tx.commit().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gateway_problems;
+
+    #[test]
+    fn gateways_said_plainly() {
+        assert_eq!(gateway_problems(3, 1, 0), ["1 of 3 gateways not heard from for 5 minutes"]);
+        assert_eq!(gateway_problems(3, 0, 2), ["2 of 3 gateways report problems"]);
+        assert!(gateway_problems(3, 0, 0).is_empty() && gateway_problems(0, 0, 0).is_empty());
+    }
 }

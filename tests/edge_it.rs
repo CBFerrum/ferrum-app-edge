@@ -160,6 +160,9 @@ async fn scenario() {
     assert_eq!(overview["strangers"][0]["code"], json!("V-9"), "{overview}");
     assert_eq!(overview["gateways"][0]["problems"], json!(["bad: broken"]));
     assert_eq!(overview["gateways"][0]["links"][0]["up"], json!(true));
+    // The workspace's support report says how its gateways are, in counts, for whoever looks after it.
+    let report = t.k.support_report(&t.admin, "health").await.expect("report");
+    assert_eq!(report["apps"]["edge"], json!({"gateways": 1, "quiet": 0, "with_problems": 1, "problems": ["1 of 1 gateways report problems"]}), "{report}");
     let claimed = t.api(&engineer, "POST", "/strangers/claim", json!({"gateway": gw, "code": "V-9", "definition": definition})).await.expect("claimed");
     assert!(claimed["id"].is_string());
     let overview = t.api(&viewer, "GET", "/overview", Value::Null).await.unwrap();
