@@ -440,6 +440,6 @@ export function WidgetBody({ w, result, live }: { w: Widget; result?: Result; li
     case "text":
       return <Markdown source={w.text ?? ""} />;
     default:
-      return <Nothing why={`${w.type} is not something this can draw`} />;
+      return <Nothing why={tr("{type} is not something this can draw", { type: w.type })} />;
   }
 }

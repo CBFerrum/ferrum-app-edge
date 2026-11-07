@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.7
+
+Rebuilt with Ferrum-Frontend 155518c: the sentences its pages built in code (counts, dates, what a toast or a screen reader says) go through t() too, as whole sentences where code chose a word, and carry built-in Arabic and Hindi (512 words each in ui/src/locales, translated by the model and to be reviewed by native speakers).
+
 ## 0.5.6
 
 The assistant knows what its records mean in its pages (contributes.shell.assistant): their states, what counts and where figures come from, with questions it suggests asking there.
