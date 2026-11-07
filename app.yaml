@@ -1,6 +1,6 @@
 id: edge
 name: IoT Edge
-version: 0.5.5
+version: 0.5.6
 publisher: cbferrum
 summary: Devices described instead of programmed, flows drawn and reviewed, gateways that keep working offline, alarms and robots
 description: README.md
@@ -31,3 +31,17 @@ contributes:
     - {id: definition, label: Device definition, path: edge/definitions, entity: DeviceDefinition}
     - {id: flow, label: Flow, path: edge/flows, entity: EdgeFlow}
     - {id: dashboard, label: Dashboard, path: edge/dashboards, entity: EdgeDashboard}
+  # What the assistant should know in IoT Edge's pages, and what it suggests asking there.
+  shell.assistant:
+    - id: edge
+      title: "IoT Edge"
+      instructions: >-
+        A DeviceDefinition (Draft, Published) describes a kind of device instead of programming it. An EdgeFlow is
+        drawn and reviewed (Draft, In Review, Approved) before it runs on gateways. An EdgeAlarm is Active until
+        Acknowledged, and Cleared when its condition ends. Firmware reaches devices through an EdgeRollout (Draft,
+        Running, Paused, Done). Readings come from gateways, which keep working offline and send what they kept later,
+        so a recent gap may still fill in.
+      suggestions:
+        - "Which alarms are active now?"
+        - "Which rollouts are running?"
+        - "Which flows are waiting for review?"
