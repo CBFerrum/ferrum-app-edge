@@ -6,7 +6,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type KeyboardEvent, type PointerEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
-import { formatMoment, refusal, relativeTime } from "@ferrum/client";
+import { formatMoment, refusal, relativeTime, t as tr } from "@ferrum/client";
 import { Alert, Button, confirmDialog, Dialog, ErrorState, Field, PageLoading, toast, useDebounced, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
 import { can, LinkInput, useEntityMeta, useMe } from "@ferrum/records";
 import { flowAction, type FlowDoc, flowDoc, flowTraces, flowVersions, type Moment, saveFlow, type Simulated, simulateFlow, type Traced, tryFlow } from "./data";
@@ -127,7 +127,7 @@ function Canvas({
         width={width}
         height={height}
         role="group"
-        aria-label="The flow, drawn. Each step can be reached with Tab and moved with the arrow keys."
+        aria-label={tr("The flow, drawn. Each step can be reached with Tab and moved with the arrow keys.")}
         onClick={(e) => {
           if (e.target === e.currentTarget) {
             select(null);
@@ -305,7 +305,7 @@ function Wires({ flow, node, setFlow, locked }: { flow: Flow; node: FlowNode; se
         <span className="edge-row-main">{text(e)}</span>
         {locked ? null : (
           <Button size="sm" onClick={() => setFlow(disconnect(flow, e))}>
-            Remove
+            {tr("Remove")}
           </Button>
         )}
       </li>
@@ -318,13 +318,13 @@ function Wires({ flow, node, setFlow, locked }: { flow: Flow; node: FlowNode; se
           {list(leaving, (e) => `${(e.port ?? "out") === "out" ? "To" : `On ${e.port}, to`} ${label(e.to)}${(e.input ?? "in") === "in" ? "" : `, into ${e.input}`}`)}
         </ul>
       ) : (
-        <p className="muted">Not joined to anything yet.</p>
+        <p className="muted">{tr("Not joined to anything yet.")}</p>
       )}
       {locked || outs.length === 0 ? null : (
         <fieldset className="edge-join">
-          <legend>Join it to</legend>
+          <legend>{tr("Join it to")}</legend>
           {outs.length > 1 ? (
-            <Field label="Going out of" htmlFor={`${id}-p`}>
+            <Field label={tr("Going out of")} htmlFor={`${id}-p`}>
               <select id={`${id}-p`} className="input" value={port} onChange={(e) => setPort(e.target.value)}>
                 {outs.map((p) => (
                   <option key={p}>{p}</option>
@@ -332,9 +332,9 @@ function Wires({ flow, node, setFlow, locked }: { flow: Flow; node: FlowNode; se
               </select>
             </Field>
           ) : null}
-          <Field label="Step" htmlFor={`${id}-t`}>
+          <Field label={tr("Step")} htmlFor={`${id}-t`}>
             <select id={`${id}-t`} className="input" value={to} onChange={(e) => setTo(e.target.value)}>
-              <option value="">Choose…</option>
+              <option value="">{tr("Choose…")}</option>
               {flow.nodes
                 .filter((n) => n.id !== node.id && kindOf(n.kind).group !== "Listen")
                 .map((n) => (
@@ -345,11 +345,11 @@ function Wires({ flow, node, setFlow, locked }: { flow: Flow; node: FlowNode; se
             </select>
           </Field>
           {target && accepts === null ? (
-            <Field label="As input" htmlFor={`${id}-i`} hint="The name a formula knows it by.">
+            <Field label={tr("As input")} htmlFor={`${id}-i`} hint={tr("The name a formula knows it by.")}>
               <input id={`${id}-i`} className="input" placeholder={edge.input} value={input} onChange={(e) => setInput(e.target.value)} />
             </Field>
           ) : accepts && accepts.length > 1 ? (
-            <Field label="Into" htmlFor={`${id}-i`}>
+            <Field label={tr("Into")} htmlFor={`${id}-i`}>
               <select id={`${id}-i`} className="input" value={edge.input} onChange={(e) => setInput(e.target.value)}>
                 {accepts.map((p) => (
                   <option key={p}>{p}</option>
@@ -359,7 +359,7 @@ function Wires({ flow, node, setFlow, locked }: { flow: Flow; node: FlowNode; se
           ) : null}
           {refused ? <p className="edge-why">{refused}</p> : null}
           <Button disabled={!to || refused !== null} onClick={() => setFlow(connect(flow, edge))}>
-            Join them
+            {tr("Join them")}
           </Button>
         </fieldset>
       )}
@@ -384,18 +384,18 @@ function Inspector({ flow, setFlow, id, select, locked }: { flow: Flow; setFlow:
               select(null);
             }}
           >
-            Remove
+            {tr("Remove")}
           </Button>
         )}
       </div>
       <p className="muted">{k.says}</p>
-      <Field label="Called" htmlFor={nameId}>
+      <Field label={tr("Called")} htmlFor={nameId}>
         <input id={nameId} className="input" disabled={locked} placeholder={k.label} value={node.label ?? ""} onChange={(e) => setFlow(change(flow, node.id, { label: e.target.value }))} />
       </Field>
       {k.params.map((p) => (
         <Setting key={p.name} node={node} param={p} disabled={locked} onChange={(v) => setFlow(change(flow, node.id, { [p.name]: v }))} />
       ))}
-      <h3 className="edge-section">Joined to</h3>
+      <h3 className="edge-section">{tr("Joined to")}</h3>
       <Wires flow={flow} node={node} setFlow={setFlow} locked={locked} />
     </section>
   );
@@ -422,56 +422,56 @@ function Simulation({
   const [lines, setLines] = useState<ScriptLine[]>(() => firstScript(flow));
   const edit = (i: number, patch: Partial<ScriptLine>) => setLines((l) => l.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   return (
-    <section className="card card-pad stack" aria-label="Simulate">
-      <h2 className="edge-section">Simulate</h2>
+    <section className="card card-pad stack" aria-label={tr("Simulate")}>
+      <h2 className="edge-section">{tr("Simulate")}</h2>
       <p className="muted">
-        Say what happens and when, and watch what this flow does, by the code a gateway runs. Nothing reaches a device.{canRecord ? " A version must be simulated before it can go for review." : ""}
+        {tr("Say what happens and when, and watch what this flow does, by the code a gateway runs. Nothing reaches a device.")}{canRecord ? " A version must be simulated before it can go for review." : ""}
       </p>
       {lines.map((l, i) => (
         <div key={i} className="edge-line">
-          <Field label="After (s)" htmlFor={`${id}-${i}-a`}>
+          <Field label={tr("After (s)")} htmlFor={`${id}-${i}-a`}>
             <input id={`${id}-${i}-a`} className="input" type="number" min="0" value={l.at} onChange={(e) => edit(i, { at: Math.max(0, Number(e.target.value)) })} />
           </Field>
-          <Field label="Device" htmlFor={`${id}-${i}-d`}>
+          <Field label={tr("Device")} htmlFor={`${id}-${i}-d`}>
             <input id={`${id}-${i}-d`} className="input" value={l.device} onChange={(e) => edit(i, { device: e.target.value })} />
           </Field>
-          <Field label="Says" htmlFor={`${id}-${i}-w`}>
+          <Field label={tr("Says")} htmlFor={`${id}-${i}-w`}>
             <select id={`${id}-${i}-w`} className="input" value={l.what} onChange={(e) => edit(i, { what: e.target.value as ScriptLine["what"] })}>
-              <option value="metric">A number</option>
-              <option value="state">A state</option>
-              <option value="event">An event</option>
-              <option value="attribute">An attribute</option>
+              <option value="metric">{tr("A number")}</option>
+              <option value="state">{tr("A state")}</option>
+              <option value="event">{tr("An event")}</option>
+              <option value="attribute">{tr("An attribute")}</option>
             </select>
           </Field>
           {l.what === "state" ? null : (
-            <Field label="Called" htmlFor={`${id}-${i}-n`}>
+            <Field label={tr("Called")} htmlFor={`${id}-${i}-n`}>
               <input id={`${id}-${i}-n`} className="input" value={l.name} onChange={(e) => edit(i, { name: e.target.value })} />
             </Field>
           )}
-          <Field label="Value" htmlFor={`${id}-${i}-v`}>
+          <Field label={tr("Value")} htmlFor={`${id}-${i}-v`}>
             <input id={`${id}-${i}-v`} className="input" value={l.value} onChange={(e) => edit(i, { value: e.target.value })} />
           </Field>
           <Button size="sm" aria-label={`Remove line ${i + 1}`} onClick={() => setLines((x) => x.filter((_, j) => j !== i))}>
-            Remove
+            {tr("Remove")}
           </Button>
         </div>
       ))}
       <div className="edge-bar">
-        <Button onClick={() => setLines(firstScript(flow))}>Start again from this flow</Button>
-        <Button onClick={() => setLines((l) => [...l, { ...(l[l.length - 1] ?? { at: 0, device: "DEVICE-1", what: "metric", name: "", value: "1" }), at: (l[l.length - 1]?.at ?? -10) + 10 }])}>Add a line</Button>
+        <Button onClick={() => setLines(firstScript(flow))}>{tr("Start again from this flow")}</Button>
+        <Button onClick={() => setLines((l) => [...l, { ...(l[l.length - 1] ?? { at: 0, device: "DEVICE-1", what: "metric", name: "", value: "1" }), at: (l[l.length - 1]?.at ?? -10) + 10 }])}>{tr("Add a line")}</Button>
         <Button variant="primary" disabled={lines.length === 0} loading={running} onClick={() => run(lines, waitFor(flow, lines))}>
-          Simulate it
+          {tr("Simulate it")}
         </Button>
       </div>
       {result && !result.ok ? <Alert tone="error">{result.error}</Alert> : null}
-      {result?.ok && result.moments?.length === 0 ? <Alert tone="info">Nothing happened.</Alert> : null}
+      {result?.ok && result.moments?.length === 0 ? <Alert tone="info">{tr("Nothing happened.")}</Alert> : null}
       {result?.ok && result.moments?.length ? (
         <ol className="edge-timeline">
           {result.moments.map((m) => (
             <li key={m.at}>
               <button type="button" className={chosen?.at === m.at ? "edge-moment edge-on" : "edge-moment"} onClick={() => choose(chosen?.at === m.at ? null : m)}>
-                <strong>After {m.at} s</strong>
-                {m.effects.length ? m.effects.map((e, i) => <span key={i}>{sayEffect(e)}</span>) : <span className="faint">Passed through {m.trace.length} {m.trace.length === 1 ? "step" : "steps"}, and nothing came of it yet</span>}
+                <strong>{tr("After {at} s", { at: m.at })}</strong>
+                {m.effects.length ? m.effects.map((e, i) => <span key={i}>{sayEffect(e)}</span>) : <span className="faint">{tr("Passed through {length}", { length: m.trace.length })} {m.trace.length === 1 ? "step" : "steps"}{tr(", and nothing came of it yet")}</span>}
                 {m.problems.map((p) => (
                   <span key={p} className="edge-why">
                     {p}
@@ -492,7 +492,7 @@ function Stages({ doc, digest }: { doc: FlowDoc; digest: string | undefined }) {
   const simulated = digest !== undefined && doc.simulated_digest === digest;
   const at = doc.status === "Draft" ? (simulated ? 1 : 0) : doc.status === "In Review" ? 2 : doc.live && doc.revision ? 4 : 3;
   return (
-    <ol className="edge-stages" aria-label="Where this flow stands">
+    <ol className="edge-stages" aria-label={tr("Where this flow stands")}>
       {STAGES.map((s, i) => (
         <li key={s} className={i < at ? "edge-stage-done" : i === at ? "edge-stage-now" : ""} aria-current={i === at ? "step" : undefined}>
           {s}
@@ -508,18 +508,18 @@ function SendBack({ onClose, onDone }: { onClose: () => void; onDone: (note: str
   return (
     <Dialog
       open
-      title="Send it back"
+      title={tr("Send it back")}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Back</Button>
+          <Button onClick={onClose}>{tr("Back")}</Button>
           <Button variant="primary" disabled={!note.trim()} onClick={() => onDone(note.trim())}>
-            Send it back
+            {tr("Send it back")}
           </Button>
         </>
       }
     >
-      <Field label="What needs to change" htmlFor={id} required>
+      <Field label={tr("What needs to change")} htmlFor={id} required>
         <textarea id={id} className="input" rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
       </Field>
     </Dialog>
@@ -563,7 +563,7 @@ export function FlowEditor() {
     qc.setQueryData(["edge", "flow", id], next);
     return next;
   }, [doc, id, qc, text]);
-  const save = useMutation({ mutationFn: put, onSuccess: () => toast("Saved."), onError: (e) => toast(refusal(e), "error") });
+  const save = useMutation({ mutationFn: put, onSuccess: () => toast(tr("Saved.")), onError: (e) => toast(refusal(e), "error") });
   const act = useMutation({
     mutationFn: async ({ name, params }: { name: string; params?: unknown; done: string }) => {
       if (dirty) await put();
@@ -613,25 +613,25 @@ export function FlowEditor() {
   return (
     <div className="edge-page">
       <div className="edge-bar">
-        <Link to="/flows">Flows</Link>
+        <Link to="/flows">{tr("Flows")}</Link>
         <strong className="edge-title">{d.flow_name}</strong>
         <span className="edge-grow" />
-        <Button onClick={() => download(d.flow_name, text)}>Download</Button>
+        <Button onClick={() => download(d.flow_name, text)}>{tr("Download")}</Button>
         {locked ? null : (
           <Button disabled={!dirty} loading={save.isPending} onClick={() => save.mutate()}>
-            Save
+            {tr("Save")}
           </Button>
         )}
         {!writable ? null : d.status === "Draft" ? (
           <Button variant="primary" disabled={problem !== null} loading={act.isPending} onClick={() => act.mutate({ name: "submit_for_review", done: "Sent. Someone else reviews it next." })}>
-            Send for review
+            {tr("Send for review")}
           </Button>
         ) : null}
         {reviewer && d.status === "In Review" ? (
           <>
-            <Button onClick={() => setSendingBack(true)}>Send back…</Button>
+            <Button onClick={() => setSendingBack(true)}>{tr("Send back…")}</Button>
             <Button variant="primary" loading={act.isPending} onClick={() => act.mutate({ name: "approve", done: "Approved." })}>
-              Approve
+              {tr("Approve")}
             </Button>
           </>
         ) : null}
@@ -642,20 +642,20 @@ export function FlowEditor() {
             disabled={Boolean(d.live) && d.published_body === d.body}
             onClick={() => act.mutate({ name: "activate", done: "Running. Gateways take it at their next exchange." })}
           >
-            Run it
+            {tr("Run it")}
           </Button>
         ) : null}
         {writable && d.status !== "Draft" ? (
-          <Button onClick={() => act.mutate({ name: "revise", done: "It is a draft again. What is running stays as it is." })}>Change it</Button>
+          <Button onClick={() => act.mutate({ name: "revise", done: "It is a draft again. What is running stays as it is." })}>{tr("Change it")}</Button>
         ) : null}
-        {writable && d.live ? <Button onClick={() => void stop()}>Stop it</Button> : null}
+        {writable && d.live ? <Button onClick={() => void stop()}>{tr("Stop it")}</Button> : null}
       </div>
       <Stages doc={d} digest={check.data?.digest} />
-      {d.live && d.status === "Draft" ? <Alert tone="info">Version {d.revision} is running. Your changes reach nobody until they have been through review.</Alert> : null}
-      {d.review_note && d.status === "Draft" ? <Alert tone="warning">Sent back: {d.review_note}</Alert> : null}
+      {d.live && d.status === "Draft" ? <Alert tone="info">{tr("Version {revision} is running. Your changes reach nobody until they have been through review.", { revision: d.revision ?? "" })}</Alert> : null}
+      {d.review_note && d.status === "Draft" ? <Alert tone="warning">{tr("Sent back: {review_note}", { review_note: d.review_note })}</Alert> : null}
       {d.status === "Approved" && d.approved_by ? (
         <p className="faint">
-          Approved by {d.approved_by}
+          {tr("Approved by {approved_by}", { approved_by: d.approved_by })}
           {d.approved_at ? `, ${relativeTime(d.approved_at)}` : ""}.
         </p>
       ) : null}
@@ -666,7 +666,7 @@ export function FlowEditor() {
       ) : null}
       <div className="edge-editor">
         {locked ? null : (
-          <section className="card card-pad edge-palette" aria-label="Steps you can add">
+          <section className="card card-pad edge-palette" aria-label={tr("Steps you can add")}>
             {GROUPS.map(({ group, label }) => (
               <div key={group} className="edge-palette-group">
                 <h2 className="edge-section">{label}</h2>
@@ -694,16 +694,16 @@ export function FlowEditor() {
         )}
         <div className="edge-board">
           <div className="edge-bar">
-            {picked ? <span className="faint">Choose where it goes: a dot on the left of a step. Esc cancels.</span> : <span className="faint">{locked ? "This version is locked." : "Click a dot on the right of a step, then one on the left of another, to join them."}</span>}
+            {picked ? <span className="faint">{tr("Choose where it goes: a dot on the left of a step. Esc cancels.")}</span> : <span className="faint">{locked ? "This version is locked." : "Click a dot on the right of a step, then one on the left of another, to join them."}</span>}
             <span className="edge-grow" />
-            {locked ? null : <Button size="sm" onClick={() => setFlow(arrange(flow))}>Tidy up</Button>}
+            {locked ? null : <Button size="sm" onClick={() => setFlow(arrange(flow))}>{tr("Tidy up")}</Button>}
           </div>
           <Canvas flow={flow} selected={selected} select={select} picked={picked} pick={pick} join={join} move={move} passed={passed} locked={locked} />
-          {flow.nodes.length === 0 ? <p className="muted">Add a step from the list to begin. A flow starts with something a device does, and ends with something to do about it.</p> : null}
+          {flow.nodes.length === 0 ? <p className="muted">{tr("Add a step from the list to begin. A flow starts with something a device does, and ends with something to do about it.")}</p> : null}
         </div>
         {selected ? <Inspector flow={flow} setFlow={setFlow} id={selected} select={select} locked={locked} /> : null}
       </div>
-      <section className="card card-pad stack" aria-label="Where it runs">
+      <section className="card card-pad stack" aria-label={tr("Where it runs")}>
         <SiteChoice doc={d} locked={locked} />
       </section>
       {d.live ? <Watching doc={d} writable={writable} chosen={watched} choose={setWatched} /> : null}
@@ -733,13 +733,13 @@ function SiteChoice({ doc, locked }: { doc: FlowDoc; locked: boolean }) {
   });
   return (
     <div className="edge-fields">
-      <Field label="Runs on" htmlFor={`${id}-on`} hint={doc.runs_at === "Platform" ? "The platform sees across sites, a minute at a time, and stops when the link does." : "A gateway hears every reading and keeps working with the link down."}>
+      <Field label={tr("Runs on")} htmlFor={`${id}-on`} hint={doc.runs_at === "Platform" ? "The platform sees across sites, a minute at a time, and stops when the link does." : "A gateway hears every reading and keeps working with the link down."}>
         <select id={`${id}-on`} className="input" value={doc.runs_at ?? "Gateway"} disabled={locked} onChange={(e) => set.mutate({ runs_at: e.target.value as FlowDoc["runs_at"] })}>
-          <option value="Gateway">Each gateway</option>
-          <option value="Platform">The platform</option>
+          <option value="Gateway">{tr("Each gateway")}</option>
+          <option value="Platform">{tr("The platform")}</option>
         </select>
       </Field>
-      <Field label="Which site" htmlFor={id} hint="Every site if left empty. One site first is how a change is tried.">
+      <Field label={tr("Which site")} htmlFor={id} hint={tr("Every site if left empty. One site first is how a change is tried.")}>
         <LinkInput to="Site" id={id} value={doc.site} disabled={locked} onChange={(s) => set.mutate({ site: s })} />
       </Field>
     </div>
@@ -760,22 +760,22 @@ function Versions({ doc, locked, draft }: { doc: FlowDoc; locked: boolean; draft
   const versions = q.data?.versions ?? [];
   if (versions.length === 0) return null;
   return (
-    <section className="card card-pad stack" aria-label="Versions that ran">
-      <h2 className="edge-section">Versions that ran</h2>
+    <section className="card card-pad stack" aria-label={tr("Versions that ran")}>
+      <h2 className="edge-section">{tr("Versions that ran")}</h2>
       <ul className="edge-versions">
         {versions.map((v) => (
           <li key={v.revision}>
-            <strong>Version {v.revision}</strong>
+            <strong>{tr("Version {revision}", { revision: v.revision })}</strong>
             <span className="faint">
-              Run by {v.by}, {relativeTime(v.at)}
+              {tr("Run by {by},", { by: v.by })} {relativeTime(v.at)}
             </span>
             <span className="edge-grow" />
             <Button size="sm" onClick={() => download(`${doc.flow_name} ${v.revision}`, v.body)}>
-              Download
+              {tr("Download")}
             </Button>
             {locked ? null : (
               <Button size="sm" onClick={() => draft(v.body)}>
-                Draw from this
+                {tr("Draw from this")}
               </Button>
             )}
           </li>
@@ -829,9 +829,9 @@ function Watching({ doc, writable, chosen, choose }: { doc: FlowDoc; writable: b
     onError: (e) => toast(refusal(e), "error"),
   });
   return (
-    <section className="card card-pad stack" aria-label="Watch it run">
+    <section className="card card-pad stack" aria-label={tr("Watch it run")}>
       <div className="edge-bar">
-        <h2 className="edge-section">Watch it run</h2>
+        <h2 className="edge-section">{tr("Watch it run")}</h2>
         <span className="edge-grow" />
         {writable ? (
           <Button size="sm" loading={turn.isPending} onClick={() => turn.mutate(watching ? 0 : WATCH_MINUTES)}>
@@ -847,11 +847,11 @@ function Watching({ doc, writable, chosen, choose }: { doc: FlowDoc; writable: b
           <table className="edge-table edge-rows-left">
             <thead>
               <tr>
-                <th>When</th>
-                <th>Step</th>
-                <th>Device</th>
-                <th>Value</th>
-                <th>Left by</th>
+                <th>{tr("When")}</th>
+                <th>{tr("Step")}</th>
+                <th>{tr("Device")}</th>
+                <th>{tr("Value")}</th>
+                <th>{tr("Left by")}</th>
               </tr>
             </thead>
             <tbody>
@@ -865,7 +865,7 @@ function Watching({ doc, writable, chosen, choose }: { doc: FlowDoc; writable: b
                   </td>
                   <td>{t.device ?? ""}</td>
                   <td className="edge-said">{say(t.value)}</td>
-                  <td>{t.ports.join(", ") || <span className="faint">It stopped here</span>}</td>
+                  <td>{t.ports.join(", ") || <span className="faint">{tr("It stopped here")}</span>}</td>
                 </tr>
               ))}
             </tbody>

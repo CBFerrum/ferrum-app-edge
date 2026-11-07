@@ -4,7 +4,7 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { shell } from "@ferrum/client";
+import { shell, t } from "@ferrum/client";
 import { EmptyState, PageLoading, useShellTitle } from "@ferrum/kit";
 import type { Board } from "./layout";
 import { Grid } from "./Boards";
@@ -34,7 +34,7 @@ function Page() {
   const q = useQuery({ queryKey: ["shared"], enabled: Boolean(link), refetchInterval: 10_000, retry: false, queryFn: () => load(link!) });
   useShellTitle(q.data?.name ?? "Dashboard");
   useEffect(() => shell().ready(), []);
-  if (!link || q.isError) return <EmptyState title="This link does not lead anywhere" icon="chart" />;
+  if (!link || q.isError) return <EmptyState title={t("This link does not lead anywhere")} icon="chart" />;
   if (q.isPending) return <PageLoading />;
   return (
     <main className="edge-page edge-shared">

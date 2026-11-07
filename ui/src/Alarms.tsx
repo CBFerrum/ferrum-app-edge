@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { refusal, relativeTime } from "@ferrum/client";
+import { refusal, relativeTime, t } from "@ferrum/client";
 import { Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
 import { acknowledge, alarms } from "./data";
 import { Tabs } from "./Tabs";
@@ -17,7 +17,7 @@ export function Acknowledge({ id }: { id: string }) {
   const ack = useMutation({
     mutationFn: () => acknowledge(id, note.trim()),
     onSuccess: () => {
-      toast("Noted. It stays open until the equipment clears it.");
+      toast(t("Noted. It stays open until the equipment clears it."));
       void qc.invalidateQueries({ queryKey: ["edge"] });
       setOpen(false);
     },
@@ -26,23 +26,23 @@ export function Acknowledge({ id }: { id: string }) {
   return (
     <>
       <Button size="sm" onClick={() => setOpen(true)}>
-        I have seen this
+        {t("I have seen this")}
       </Button>
       {open ? (
         <Dialog
           open
-          title="Say you have seen this"
+          title={t("Say you have seen this")}
           onClose={() => setOpen(false)}
           footer={
             <>
-              <Button onClick={() => setOpen(false)}>Back</Button>
+              <Button onClick={() => setOpen(false)}>{t("Back")}</Button>
               <Button variant="primary" loading={ack.isPending} onClick={() => ack.mutate()}>
-                Save
+                {t("Save")}
               </Button>
             </>
           }
         >
-          <Field label="Note" htmlFor={`${form}-n`} hint="What you are doing about it, for whoever comes next.">
+          <Field label={t("Note")} htmlFor={`${form}-n`} hint={t("What you are doing about it, for whoever comes next.")}>
             <textarea id={`${form}-n`} className="input" rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
           </Field>
         </Dialog>
@@ -65,18 +65,18 @@ export function Alarms() {
       <Tabs alarms={all ? undefined : q.data?.alarms.length} />
       <div className="edge-bar">
         <label className="edge-check">
-          <input type="checkbox" checked={all} onChange={(e) => setParams(e.target.checked ? { all: "1" } : {}, { replace: true })} /> Show cleared ones too
+          <input type="checkbox" checked={all} onChange={(e) => setParams(e.target.checked ? { all: "1" } : {}, { replace: true })} /> {t("Show cleared ones too")}
         </label>
         <span className="edge-grow" />
-        <Link to="/e/EdgeNotifyRule">Who is told what</Link>
+        <Link to="/e/EdgeNotifyRule">{t("Who is told what")}</Link>
       </div>
       {q.isPending ? (
         <PageLoading />
       ) : q.isError ? (
         <ErrorState error={q.error} onRetry={() => void q.refetch()} />
       ) : q.data.alarms.length === 0 ? (
-        <EmptyState title="Nothing is wrong" icon="check">
-          <p className="muted">As far as the gateways have said.</p>
+        <EmptyState title={t("Nothing is wrong")} icon="check">
+          <p className="muted">{t("As far as the gateways have said.")}</p>
         </EmptyState>
       ) : (
         <ul className="card edge-rows edge-rows-pad">
@@ -95,7 +95,7 @@ export function Alarms() {
                 {a.note ? <div className="faint">{a.note}</div> : null}
               </div>
               <Badge tone={tone(a.severity)}>{a.severity}</Badge>
-              {a.shelved_until && Date.parse(a.shelved_until) > Date.now() ? <Badge tone="amber">Shelved</Badge> : null}
+              {a.shelved_until && Date.parse(a.shelved_until) > Date.now() ? <Badge tone="amber">{t("Shelved")}</Badge> : null}
               {a.status === "Active" ? <Acknowledge id={a.id} /> : <Badge>{a.status}</Badge>}
             </li>
           ))}

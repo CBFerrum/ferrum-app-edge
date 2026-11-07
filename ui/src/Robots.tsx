@@ -5,7 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
-import { relativeTime } from "@ferrum/client";
+import { relativeTime, t } from "@ferrum/client";
 import { Badge, EmptyState, ErrorState, PageLoading, statusTone, useShellTitle } from "@ferrum/kit";
 import { type Robot, robots } from "./data";
 import { type Bounds, fit, grown, type Placed, placed } from "./map";
@@ -50,7 +50,7 @@ function Row({ r, on }: { r: Robot; on: boolean }) {
         </div>
       </Link>
       {battery !== undefined ? <Badge tone={battery < 20 ? "red" : "neutral"}>{Math.round(battery)}%</Badge> : null}
-      {r.running ? <Badge tone="blue">Working</Badge> : null}
+      {r.running ? <Badge tone="blue">{t("Working")}</Badge> : null}
       <Badge tone={statusTone(r.state ?? r.lifecycle)}>{r.state ?? r.lifecycle}</Badge>
     </li>
   );
@@ -70,8 +70,8 @@ export function Robots() {
       ) : q.isError ? (
         <ErrorState error={q.error} onRetry={() => void q.refetch()} />
       ) : list.length === 0 ? (
-        <EmptyState title="No robots yet" icon="dashboard">
-          <Link to="/e/Device/new">Add a device of kind Robot</Link>
+        <EmptyState title={t("No robots yet")} icon="dashboard">
+          <Link to="/e/Device/new">{t("Add a device of kind Robot")}</Link>
         </EmptyState>
       ) : (
         <>

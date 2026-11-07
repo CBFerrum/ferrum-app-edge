@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { refusal, relativeTime } from "@ferrum/client";
+import { refusal, relativeTime, t } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { LinkInput } from "@ferrum/records";
 import { claim, fleet, type Gateway, type LinkHealth, overview, type Stranger } from "./data";
@@ -72,7 +72,7 @@ function Claim({ stranger, onClose }: { stranger: Stranger; onClose: () => void 
   const save = useMutation({
     mutationFn: () => claim(stranger.gateway, stranger.code, name.trim(), definition),
     onSuccess: (made) => {
-      toast("Added. It goes through commissioning like any other device.");
+      toast(t("Added. It goes through commissioning like any other device."));
       void qc.invalidateQueries({ queryKey: ["edge"] });
       navigate(`/d/${made.id}`);
     },
@@ -85,21 +85,21 @@ function Claim({ stranger, onClose }: { stranger: Stranger; onClose: () => void 
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Not now</Button>
+          <Button onClick={onClose}>{t("Not now")}</Button>
           <Button variant="primary" disabled={!name.trim()} loading={save.isPending} onClick={() => save.mutate()}>
-            Add it
+            {t("Add it")}
           </Button>
         </>
       }
     >
       <div className="stack">
         <p className="muted">
-          {stranger.gateway_name} heard this on a shared connection. Adding it makes a record: nothing is sent to it until it has been commissioned.
+          {t("{gateway_name} heard this on a shared connection. Adding it makes a record: nothing is sent to it until it has been commissioned.", { gateway_name: stranger.gateway_name })}
         </p>
-        <Field label="Name" htmlFor={`${id}-n`} required>
+        <Field label={t("Name")} htmlFor={`${id}-n`} required>
           <input id={`${id}-n`} className="input" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="Definition" htmlFor={`${id}-d`} hint="How it is read, if not the one it was heard by.">
+        <Field label={t("Definition")} htmlFor={`${id}-d`} hint={t("How it is read, if not the one it was heard by.")}>
           <LinkInput to="DeviceDefinition" id={`${id}-d`} value={definition} onChange={setDefinition} />
         </Field>
       </div>
@@ -111,19 +111,19 @@ function Strangers({ list }: { list: Stranger[] }) {
   const [claiming, setClaiming] = useState<Stranger | null>(null);
   if (list.length === 0) return null;
   return (
-    <section className="card card-pad stack" aria-label="Devices nobody has added">
-      <h2 className="edge-section">Heard, and nobody has added them</h2>
+    <section className="card card-pad stack" aria-label={t("Devices nobody has added")}>
+      <h2 className="edge-section">{t("Heard, and nobody has added them")}</h2>
       <ul className="edge-rows">
         {list.map((s) => (
           <li key={`${s.gateway}-${s.code}`}>
             <div className="edge-row-main">
               <strong>{s.code}</strong>
               <div className="faint">
-                By {s.gateway_name}, {relativeTime(s.last_seen_at)}
+                {t("By {gateway_name},", { gateway_name: s.gateway_name })} {relativeTime(s.last_seen_at)}
               </div>
             </div>
             <Button size="sm" onClick={() => setClaiming(s)}>
-              Add…
+              {t("Add…")}
             </Button>
           </li>
         ))}
@@ -138,17 +138,17 @@ function FleetHealth() {
   const rows = q.data?.definitions ?? [];
   if (rows.length === 0) return null;
   return (
-    <section className="card card-pad stack" aria-label="How the fleet stands">
-      <h2 className="edge-section">How the fleet stands</h2>
+    <section className="card card-pad stack" aria-label={t("How the fleet stands")}>
+      <h2 className="edge-section">{t("How the fleet stands")}</h2>
       <div className="edge-scroll">
         <table className="edge-table">
           <thead>
             <tr>
-              <th>Read by</th>
-              <th>Devices</th>
-              <th>In service</th>
-              <th>Heard lately</th>
-              <th>Alarms</th>
+              <th>{t("Read by")}</th>
+              <th>{t("Devices")}</th>
+              <th>{t("In service")}</th>
+              <th>{t("Heard lately")}</th>
+              <th>{t("Alarms")}</th>
             </tr>
           </thead>
           <tbody>
@@ -164,7 +164,7 @@ function FleetHealth() {
           </tbody>
         </table>
       </div>
-      {q.data?.versions.length ? <p className="faint">Firmware running: {q.data.versions.map((v) => `${v.version} on ${v.devices}`).join(", ")}.</p> : null}
+      {q.data?.versions.length ? <p className="faint">{t("Firmware running:")} {q.data.versions.map((v) => `${v.version} on ${v.devices}`).join(", ")}.</p> : null}
     </section>
   );
 }
@@ -179,7 +179,7 @@ export function Home() {
       <Tabs alarms={raised} />
       {q.data?.allowance && q.data.allowance.today >= q.data.allowance.per_day ? (
         <Alert tone="warning">
-          This workspace has stored today&apos;s {q.data.allowance.per_day.toLocaleString()} readings, so gateways are holding new ones until tomorrow or until its allowance is raised.
+          This workspace has stored today&apos;s {q.data.allowance.per_day.toLocaleString()} {t("readings, so gateways are holding new ones until tomorrow or until its allowance is raised.")}
         </Alert>
       ) : null}
       {q.isPending ? (
@@ -189,15 +189,15 @@ export function Home() {
       ) : (
         <>
           {critical ? (
-            <Alert tone="error" action={<Link to="/alarms">See them</Link>}>
+            <Alert tone="error" action={<Link to="/alarms">{t("See them")}</Link>}>
               {critical} critical {critical === 1 ? "alarm is" : "alarms are"} open.
             </Alert>
           ) : null}
           <Strangers list={q.data.strangers} />
           {q.data.gateways.length === 0 ? (
-            <EmptyState title="No gateways yet" icon="dashboard">
-              <p className="muted">A gateway is a device of kind Gateway, enrolled in Operations.</p>
-              <Link to="/e/Device/new">Add one</Link>
+            <EmptyState title={t("No gateways yet")} icon="dashboard">
+              <p className="muted">{t("A gateway is a device of kind Gateway, enrolled in Operations.")}</p>
+              <Link to="/e/Device/new">{t("Add one")}</Link>
             </EmptyState>
           ) : (
             <div className="edge-cards">

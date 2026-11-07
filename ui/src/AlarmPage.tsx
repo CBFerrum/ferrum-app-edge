@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useParams } from "react-router";
-import { refusal, relativeTime } from "@ferrum/client";
+import { refusal, relativeTime, t } from "@ferrum/client";
 import { Badge, Button, Dialog, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { can, useEntityMeta, useMe } from "@ferrum/records";
 import { Acknowledge } from "./Alarms";
@@ -32,18 +32,18 @@ function Close({ id, onClose }: { id: string; onClose: () => void }) {
   return (
     <Dialog
       open
-      title="Close this by hand"
+      title={t("Close this by hand")}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Back</Button>
+          <Button onClick={onClose}>{t("Back")}</Button>
           <Button variant="primary" disabled={!note.trim()} loading={close.isPending} onClick={() => close.mutate()}>
-            Close it
+            {t("Close it")}
           </Button>
         </>
       }
     >
-      <Field label="Why it can be closed" htmlFor={`${form}-n`} required hint="For when nothing will ever report that the condition went. The timeline says it was you and not the equipment.">
+      <Field label={t("Why it can be closed")} htmlFor={`${form}-n`} required hint={t("For when nothing will ever report that the condition went. The timeline says it was you and not the equipment.")}>
         <textarea id={`${form}-n`} className="input" rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
       </Field>
     </Dialog>
@@ -82,37 +82,37 @@ export function AlarmPage() {
     <div className="edge-page">
       <Tabs />
       <div className="edge-bar">
-        <Link to="/alarms">Alarms</Link>
+        <Link to="/alarms">{t("Alarms")}</Link>
         <Badge tone={severityTone(a.severity)}>{a.severity}</Badge>
         <Badge>{a.status}</Badge>
-        {shelved ? <Badge tone="amber">Shelved</Badge> : null}
+        {shelved ? <Badge tone="amber">{t("Shelved")}</Badge> : null}
         <span className="edge-grow" />
         {writable && open ? (
           <>
             {a.status === "Active" ? <Acknowledge id={id} /> : null}
             {a.assignee === me?.id ? (
               <Button size="sm" loading={take.isPending} onClick={() => take.mutate(null)}>
-                Give it back
+                {t("Give it back")}
               </Button>
             ) : me ? (
               <Button size="sm" loading={take.isPending} onClick={() => take.mutate(me.id)}>
-                Take this on
+                {t("Take this on")}
               </Button>
             ) : null}
             {shelved ? (
               <Button size="sm" onClick={() => shelve.mutate(0)}>
-                Unshelve
+                {t("Unshelve")}
               </Button>
             ) : (
               <select
                 className="input edge-add"
-                aria-label="Shelve"
+                aria-label={t("Shelve")}
                 value=""
                 onChange={(e) => {
                   if (e.target.value) shelve.mutate(Number(e.target.value));
                 }}
               >
-                <option value="">Shelve…</option>
+                <option value="">{t("Shelve…")}</option>
                 {SHELVES.map(([label, minutes]) => (
                   <option key={minutes} value={minutes}>
                     {label}
@@ -121,15 +121,15 @@ export function AlarmPage() {
               </select>
             )}
             <Button size="sm" onClick={() => setClosing(true)}>
-              Close…
+              {t("Close…")}
             </Button>
           </>
         ) : null}
       </div>
-      <section className="card card-pad stack" aria-label="What happened">
+      <section className="card card-pad stack" aria-label={t("What happened")}>
         <h1 className="edge-section">{a.summary}</h1>
         <p className="faint">
-          Raised {relativeTime(a.raised_at)}
+          {t("Raised")} {relativeTime(a.raised_at)}
           {a.code ? (
             <>
               {" "}
@@ -159,22 +159,22 @@ export function AlarmPage() {
               if (text.trim()) say.mutate();
             }}
           >
-            <Field label="Add a note" htmlFor={`${form}-t`}>
+            <Field label={t("Add a note")} htmlFor={`${form}-t`}>
               <textarea id={`${form}-t`} className="input" rows={2} value={text} onChange={(e) => setText(e.target.value)} />
             </Field>
             <div>
               <Button type="submit" size="sm" loading={say.isPending} disabled={!text.trim()}>
-                Add it
+                {t("Add it")}
               </Button>
             </div>
           </form>
         ) : null}
       </section>
-      <section className="card card-pad stack" aria-label="Who was told">
-        <h2 className="edge-section">Who was told</h2>
+      <section className="card card-pad stack" aria-label={t("Who was told")}>
+        <h2 className="edge-section">{t("Who was told")}</h2>
         {a.notices.length === 0 ? (
           <p className="muted">
-            No rule told anyone about this. <Link to="/e/EdgeNotifyRule">Who is told what</Link> is yours to set.
+            {t("No rule told anyone about this.")} <Link to="/e/EdgeNotifyRule">{t("Who is told what")}</Link> {t("is yours to set.")}
           </p>
         ) : (
           <ul className="edge-rows">

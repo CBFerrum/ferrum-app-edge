@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { refusal } from "@ferrum/client";
+import { refusal, t as tr } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
 import { can, useEntityMeta } from "@ferrum/records";
 import { definitionDoc, definitionList, newDefinition, publishDefinition, saveDefinition, type Template, templates, tryDefinition, type Tried } from "./data";
@@ -29,19 +29,19 @@ function Start({ onClose }: { onClose: () => void }) {
   return (
     <Dialog
       open
-      title="A new definition"
+      title={tr("A new definition")}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Back</Button>
+          <Button onClick={onClose}>{tr("Back")}</Button>
           <Button variant="primary" disabled={!name.trim()} loading={make.isPending} onClick={() => make.mutate()}>
-            Start from {choice ? "this" : "nothing"}
+            {tr("Start from")} {choice ? "this" : "nothing"}
           </Button>
         </>
       }
     >
       <div className="stack">
-        <Field label="Name" htmlFor={`${id}-n`} required>
+        <Field label={tr("Name")} htmlFor={`${id}-n`} required>
           <input id={`${id}-n`} className="input" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         {list.isPending ? (
@@ -72,7 +72,7 @@ function Start({ onClose }: { onClose: () => void }) {
                 ))}
               </fieldset>
             ))}
-            <p className="faint">A template is a start, not a promise: none has been tried on the equipment it names.</p>
+            <p className="faint">{tr("A template is a start, not a promise: none has been tried on the equipment it names.")}</p>
           </div>
         )}
       </div>
@@ -91,7 +91,7 @@ export function Definitions() {
       {meta.data && can(meta.data.permissions, "create") ? (
         <div className="edge-bar">
           <Button variant="primary" onClick={() => setStarting(true)}>
-            New definition
+            {tr("New definition")}
           </Button>
         </div>
       ) : null}
@@ -100,8 +100,8 @@ export function Definitions() {
       ) : q.isError ? (
         <ErrorState error={q.error} onRetry={() => void q.refetch()} />
       ) : q.data.rows.length === 0 ? (
-        <EmptyState title="No definitions yet" icon="doc">
-          <p className="muted">A definition says how a kind of device is reached, read and commanded, in a few lines.</p>
+        <EmptyState title={tr("No definitions yet")} icon="doc">
+          <p className="muted">{tr("A definition says how a kind of device is reached, read and commanded, in a few lines.")}</p>
         </EmptyState>
       ) : (
         <ul className="card edge-rows edge-rows-pad">
@@ -123,7 +123,7 @@ export function Definitions() {
 
 function Result({ tried }: { tried: Tried }) {
   if (!tried.ok) return <Alert tone="error">{tried.error}</Alert>;
-  if (!tried.decoded?.length) return <Alert tone="info">It is well formed, and read nothing from that sample.</Alert>;
+  if (!tried.decoded?.length) return <Alert tone="info">{tr("It is well formed, and read nothing from that sample.")}</Alert>;
   return (
     <ul className="edge-rows">
       {tried.decoded.map((d, i) => (
@@ -168,7 +168,7 @@ export function DefinitionPage() {
     mutationFn: () => saveDefinition(id, q.data!.version, { body }),
     onSuccess: (doc) => {
       qc.setQueryData(["edge", "definition", id], doc);
-      toast("Saved. Gateways are still running what was last published.");
+      toast(tr("Saved. Gateways are still running what was last published."));
     },
     onError: (e) => toast(refusal(e), "error"),
   });
@@ -178,7 +178,7 @@ export function DefinitionPage() {
       return publishDefinition(id);
     },
     onSuccess: () => {
-      toast("Published. Gateways take it at their next exchange.");
+      toast(tr("Published. Gateways take it at their next exchange."));
       void qc.invalidateQueries({ queryKey: ["edge"] });
     },
     onError: (e) => toast(refusal(e), "error"),
@@ -189,40 +189,40 @@ export function DefinitionPage() {
     <div className="edge-page">
       <Tabs />
       <div className="edge-bar">
-        <Link to="/definitions">Definitions</Link>
+        <Link to="/definitions">{tr("Definitions")}</Link>
         <Badge tone={q.data.status === "Published" ? "green" : "neutral"}>{q.data.revision ? `Version ${q.data.revision}` : "Never published"}</Badge>
         <span className="edge-grow" />
         {writable ? (
           <>
             <Button disabled={!dirty} loading={save.isPending} onClick={() => save.mutate()}>
-              Save
+              {tr("Save")}
             </Button>
             <Button variant="primary" loading={publish.isPending} onClick={() => publish.mutate()}>
-              Publish
+              {tr("Publish")}
             </Button>
           </>
         ) : null}
       </div>
       <div className="edge-split">
-        <section className="card card-pad stack" aria-label="The definition">
-          <Field label="Definition" htmlFor={`${form}-b`} hint="YAML. See the definitions guide for every key.">
+        <section className="card card-pad stack" aria-label={tr("The definition")}>
+          <Field label={tr("Definition")} htmlFor={`${form}-b`} hint={tr("YAML. See the definitions guide for every key.")}>
             <textarea id={`${form}-b`} className="input edge-code" spellCheck={false} rows={24} readOnly={!writable} value={body} onChange={(e) => setBody(e.target.value)} />
           </Field>
         </section>
-        <section className="card card-pad stack" aria-label="Try it">
-          <h2 className="edge-section">Try it on a sample</h2>
-          <p className="muted">This runs here, by the code a gateway runs. Nothing reaches a device.</p>
-          <Field label="Topic or path" htmlFor={`${form}-t`} hint="Leave empty for a stream.">
+        <section className="card card-pad stack" aria-label={tr("Try it")}>
+          <h2 className="edge-section">{tr("Try it on a sample")}</h2>
+          <p className="muted">{tr("This runs here, by the code a gateway runs. Nothing reaches a device.")}</p>
+          <Field label={tr("Topic or path")} htmlFor={`${form}-t`} hint={tr("Leave empty for a stream.")}>
             <input id={`${form}-t`} className="input" value={topic} onChange={(e) => setTopic(e.target.value)} />
           </Field>
-          <Field label="What arrives" htmlFor={`${form}-s`}>
+          <Field label={tr("What arrives")} htmlFor={`${form}-s`}>
             <textarea id={`${form}-s`} className="input edge-code" spellCheck={false} rows={6} value={sample} onChange={(e) => setSample(e.target.value)} />
           </Field>
           <label className="edge-check">
-            <input type="checkbox" checked={hex} onChange={(e) => setHex(e.target.checked)} /> That is hexadecimal
+            <input type="checkbox" checked={hex} onChange={(e) => setHex(e.target.checked)} /> {tr("That is hexadecimal")}
           </label>
           <Button loading={attempt.isPending} onClick={() => attempt.mutate()}>
-            Try it
+            {tr("Try it")}
           </Button>
           {tried ? <Result tried={tried} /> : null}
         </section>

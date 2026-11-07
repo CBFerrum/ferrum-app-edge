@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
-import { refusal, relativeTime } from "@ferrum/client";
+import { refusal, relativeTime, t } from "@ferrum/client";
 import { Alert, Badge, Button, EmptyState, ErrorState, PageLoading, statusTone, toast, useShellTitle } from "@ferrum/kit";
 import { can, useEntityMeta } from "@ferrum/records";
 import { type RolloutDoc, rolloutAction, rolloutList, rolloutProgress } from "./data";
@@ -14,15 +14,15 @@ function Progress({ id }: { id: string }) {
   const q = useQuery({ queryKey: ["edge", "rollout", id], queryFn: () => rolloutProgress(id), refetchInterval: 15_000 });
   const devices = q.data?.devices ?? [];
   if (q.isPending) return <PageLoading />;
-  if (devices.length === 0) return <p className="muted">It has not reached a device yet.</p>;
+  if (devices.length === 0) return <p className="muted">{t("It has not reached a device yet.")}</p>;
   return (
     <div className="edge-scroll">
       <table className="edge-table edge-rows-left">
         <thead>
           <tr>
-            <th>Device</th>
-            <th>How it went</th>
-            <th>When</th>
+            <th>{t("Device")}</th>
+            <th>{t("How it went")}</th>
+            <th>{t("When")}</th>
           </tr>
         </thead>
         <tbody>
@@ -67,7 +67,7 @@ function Row({ r, writable }: { r: RolloutDoc; writable: boolean }) {
         ) : null}
         {writable && r.status === "Running" ? (
           <Button size="sm" loading={act.isPending} onClick={() => act.mutate("pause")}>
-            Pause
+            {t("Pause")}
           </Button>
         ) : null}
       </div>
@@ -87,14 +87,14 @@ export function Updates() {
     <div className="edge-page">
       <Tabs />
       <div className="edge-bar">
-        <span className="muted">Firmware reaches sensors and meters whose definition allows it, never a robot or a controller.</span>
+        <span className="muted">{t("Firmware reaches sensors and meters whose definition allows it, never a robot or a controller.")}</span>
         <span className="edge-grow" />
         <Link className="btn btn-md" to="/e/EdgeFirmware">
-          Firmware
+          {t("Firmware")}
         </Link>
         {writable ? (
           <Link className="btn btn-primary btn-md" to="/e/EdgeRollout/new">
-            A new rollout
+            {t("A new rollout")}
           </Link>
         ) : null}
       </div>
@@ -103,7 +103,7 @@ export function Updates() {
       ) : q.isError ? (
         <ErrorState error={q.error} onRetry={() => void q.refetch()} />
       ) : rows.length === 0 ? (
-        <EmptyState title="No rollouts yet" icon="dashboard" />
+        <EmptyState title={t("No rollouts yet")} icon="dashboard" />
       ) : (
         <ul className="card edge-rows edge-rows-pad">
           {rows.map((r) => (

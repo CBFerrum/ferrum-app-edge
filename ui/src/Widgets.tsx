@@ -4,7 +4,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useId, useRef, useState } from "react";
 import { Link } from "react-router";
-import { refusal, relativeTime } from "@ferrum/client";
+import { refusal, relativeTime, t as tr } from "@ferrum/client";
 import { Badge, Button, confirmDialog, Markdown, toast } from "@ferrum/kit";
 import { isOn, share, tone, type Widget } from "./layout";
 import { Chart, COLORS } from "./Chart";
@@ -252,13 +252,13 @@ function TableView({ w, result, live }: { w: Widget; result?: Result; live: bool
     <table className="edge-table">
       <thead>
         <tr>
-          <th scope="col">Device</th>
+          <th scope="col">{tr("Device")}</th>
           {columns.map((c) => (
             <th key={c} scope="col">
               {c}
             </th>
           ))}
-          <th scope="col">Alarms</th>
+          <th scope="col">{tr("Alarms")}</th>
         </tr>
       </thead>
       <tbody>
@@ -285,7 +285,7 @@ function AlarmsView({ result }: { result?: Result }) {
         <li key={a.id}>
           <div className="edge-row-main">
             <strong>{a.summary}</strong>
-            <div className="faint">Raised {relativeTime(a.raised_at)}</div>
+            <div className="faint">{tr("Raised")} {relativeTime(a.raised_at)}</div>
           </div>
           <Badge tone={a.severity === "Critical" ? "red" : a.severity === "Warning" ? "amber" : "neutral"}>{a.severity}</Badge>
         </li>
@@ -375,7 +375,7 @@ function SetpointView({ w, result }: { w: Widget; result?: Result }) {
     },
     onSuccess: () => {
       setValue("");
-      toast("Asked. It shows as out of step until the device says it is so.");
+      toast(tr("Asked. It shows as out of step until the device says it is so."));
       void qc.invalidateQueries({ queryKey: ["edge", "board-data"] });
     },
     onError: (e) => toast(refusal(e), "error"),
@@ -391,15 +391,15 @@ function SetpointView({ w, result }: { w: Widget; result?: Result }) {
       }}
     >
       <div className="faint">
-        Now {row ? String(row.value) : "unknown"} {w.unit ?? ""}
+        {tr("Now")} {row ? String(row.value) : "unknown"} {w.unit ?? ""}
         {out ? `, asked for ${String(row?.desired)}` : ""}
       </div>
       <label className="sr-only" htmlFor={id}>
-        New value
+        {tr("New value")}
       </label>
       <input id={id} className="input" value={value} onChange={(e) => setValue(e.target.value)} />
       <Button type="submit" loading={set.isPending} disabled={!value.trim()}>
-        Ask for it
+        {tr("Ask for it")}
       </Button>
     </form>
   );
