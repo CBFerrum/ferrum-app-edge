@@ -5,7 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
-import { relativeTime, t } from "@ferrum/client";
+import { relativeTime, t, isolate } from "@ferrum/client";
 import { Badge, EmptyState, ErrorState, PageLoading, statusTone, useShellTitle } from "@ferrum/kit";
 import { type Robot, robots } from "./data";
 import { type Bounds, fit, grown, type Placed, placed } from "./map";
@@ -16,7 +16,7 @@ function FleetMap({ list, chosen, choose }: { list: Placed[]; chosen: string | n
   seen.current = grown(seen.current, list);
   const toScreen = fit(seen.current, 640, 360, 32);
   return (
-    <svg className="edge-map" viewBox="0 0 640 360" role="img" aria-label={`${list.length} robots on a map of where they say they are`}>
+    <svg className="edge-map" viewBox="0 0 640 360" role="img" aria-label={t("{length} robots on a map of where they say they are", { length: list.length })}>
       <rect x="0" y="0" width="640" height="360" className="edge-map-floor" />
       {list.map((r) => {
         const { x, y } = toScreen(r);
@@ -27,7 +27,7 @@ function FleetMap({ list, chosen, choose }: { list: Placed[]; chosen: string | n
             {heading ? <line x1={x} y1={y} x2={heading.x} y2={heading.y} /> : null}
             <circle cx={x} cy={y} r={on ? 10 : 8} />
             <text x={x + 13} y={y + 4}>
-              {r.robot.code}
+              {isolate(r.robot.code)}
             </text>
           </g>
         );
@@ -42,11 +42,11 @@ function Row({ r, on }: { r: Robot; on: boolean }) {
   return (
     <li className={on ? "edge-on" : undefined}>
       <Link to={`/d/${r.id}`} className="edge-row-main">
-        <strong>{r.name}</strong>
+        <strong>{isolate(r.name)}</strong>
         <div className="faint">
-          {r.code}
+          {isolate(r.code)}
           {r.site ? `, ${r.site}` : ""}
-          {when ? `, heard ${relativeTime(when)}` : ""}
+          {when ? t(", heard {when}", { when: relativeTime(when) }) : ""}
         </div>
       </Link>
       {battery !== undefined ? <Badge tone={battery < 20 ? "red" : "neutral"}>{Math.round(battery)}%</Badge> : null}
@@ -57,7 +57,7 @@ function Row({ r, on }: { r: Robot; on: boolean }) {
 }
 
 export function Robots() {
-  useShellTitle("Robots");
+  useShellTitle(t("Robots"));
   const q = useQuery({ queryKey: ["edge", "robots"], queryFn: robots, refetchInterval: 5_000 });
   const [chosen, choose] = useState<string | null>(null);
   const list = useMemo(() => q.data?.robots ?? [], [q.data]);
@@ -76,8 +76,8 @@ export function Robots() {
       ) : (
         <>
           {[...maps.entries()].map(([name, robotsHere]) => (
-            <section key={name} className="card card-pad stack" aria-label={name ? `Map ${name}` : "Map"}>
-              {name ? <h2 className="edge-section">{name}</h2> : null}
+            <section key={name} className="card card-pad stack" aria-label={name ? t("Map {name}", { name }) : t("Map")}>
+              {name ? <h2 className="edge-section">{isolate(name)}</h2> : null}
               <FleetMap list={robotsHere} chosen={chosen} choose={choose} />
             </section>
           ))}

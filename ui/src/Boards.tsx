@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
-import { bootstrap, refusal, t } from "@ferrum/client";
+import { bootstrap, refusal, t, isolate } from "@ferrum/client";
 import { Alert, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
 import { can, useEntityMeta } from "@ferrum/records";
 import { type Board, COLUMNS, added, kindOf, KINDS, moved, type Param, parse, resized, SYMBOLS, type Variable, type Widget } from "./layout";
@@ -54,7 +54,7 @@ function Start({ onClose }: { onClose: () => void }) {
 }
 
 export function Boards() {
-  useShellTitle("Dashboards");
+  useShellTitle(t("Dashboards"));
   const q = useQuery({ queryKey: ["edge", "boards"], queryFn: boardList });
   const meta = useEntityMeta("EdgeDashboard");
   const [starting, setStarting] = useState(false);
@@ -81,7 +81,7 @@ export function Boards() {
           {q.data.rows.map((b) => (
             <li key={b.id}>
               <Link to={`/dashboards/${b.id}`} className="edge-row-main">
-                <strong>{b.dashboard_name}</strong>
+                <strong>{isolate(b.dashboard_name)}</strong>
                 <div className="faint">{b.description ?? ""}</div>
               </Link>
               {b.shared_at ? <span className="faint">{t("Shared")}</span> : null}
@@ -110,7 +110,7 @@ function Setting({ p, w, set, options, variables }: { p: Param; w: Widget; set: 
       ))}
       {options.map((o) => (
         <option key={o.id} value={o.id}>
-          {o.name} ({o.code})
+          {isolate(o.name)} ({isolate(o.code)})
         </option>
       ))}
     </select>
@@ -120,7 +120,7 @@ function Setting({ p, w, set, options, variables }: { p: Param; w: Widget; set: 
     const change = (i: number, patch: Partial<NonNullable<Widget["sources"]>[number]>) => set({ sources: lines.map((l, j) => (j === i ? { ...l, ...patch } : l)) });
     return (
       <fieldset className="stack">
-        <legend>{p.label}</legend>
+        <legend>{isolate(p.label)}</legend>
         {lines.map((l, i) => (
           <div className="edge-line-source" key={i}>
             {devicePicker(l.device, (v) => change(i, { device: v }), `${id}-${i}`)}
@@ -149,7 +149,7 @@ function Setting({ p, w, set, options, variables }: { p: Param; w: Widget; set: 
           <select id={id} className="input" value={w.symbol ?? "pump"} onChange={(e) => set({ symbol: e.target.value })}>
             {SYMBOLS.map(([v, label]) => (
               <option key={v} value={v}>
-                {label}
+                {isolate(label)}
               </option>
             ))}
           </select>
@@ -291,12 +291,12 @@ function Share({ id, shared, onClose }: { id: string; shared: boolean; onClose: 
         {link ? (
           <>
             <Alert tone="warning">{t("This is the only time it is shown.")}</Alert>
-            <code className="edge-token">{link}</code>
+            <code className="edge-token">{isolate(link)}</code>
           </>
         ) : null}
         <div className="edge-bar">
           <Button variant="primary" loading={make.isPending} onClick={() => make.mutate()}>
-            {shared ? "Make a new link, ending the old one" : "Make a link"}
+            {shared ? t("Make a new link, ending the old one") : t("Make a link")}
           </Button>
           {shared ? (
             <Button loading={end.isPending} onClick={() => end.mutate()}>
@@ -354,10 +354,10 @@ export function Grid({ board, data, live, editing, onMove, onResize, onEdit, onR
         <section key={w.id} className="card edge-widget" aria-label={w.title || kindOf(w.type)?.label} style={{ gridColumn: `${w.x + 1} / span ${w.w}`, gridRow: `${w.y + 1} / span ${w.h}` }}>
           {(w.title && w.type !== "button") || editing ? (
             <header className="edge-widget-title">
-              <h2>{w.title}</h2>
+              <h2>{isolate(w.title ?? "")}</h2>
               {editing ? (
                 <span className="edge-widget-tools">
-                  <button type="button" className="edge-widget-grip" aria-label={`Move ${w.title ?? "widget"}, or size it with shift and the arrows`} onPointerDown={(e) => drag(e, w, false)} onKeyDown={(e) => keys(e, w)}>
+                  <button type="button" className="edge-widget-grip" aria-label={t("Move {value}, or size it with shift and the arrows", { value: w.title ?? "widget" })} onPointerDown={(e) => drag(e, w, false)} onKeyDown={(e) => keys(e, w)}>
                     {t("Move")}
                   </button>
                   <button type="button" onClick={() => onEdit?.(w)}>
@@ -400,7 +400,7 @@ export function BoardPage() {
   const body = JSON.stringify(board);
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(saved);
   const { dialog } = useUnsavedGuard(dirty);
-  useShellTitle(q.data?.dashboard_name ?? "Dashboard");
+  useShellTitle(q.data?.dashboard_name ?? t("Dashboard"));
   const data = useQuery({ queryKey: ["edge", "board-data", id, body, vars, last], enabled: q.isSuccess, refetchInterval: SLOW_POLL_MS, placeholderData: (old) => old, queryFn: () => boardData(body, vars, last) });
   const list = useQuery({ queryKey: ["edge", "devices", ""], enabled: (board.variables?.length ?? 0) > 0, queryFn: () => devices({}) });
   const save = useMutation({
@@ -423,14 +423,14 @@ export function BoardPage() {
         <Link to="/dashboards">{t("Dashboards")}</Link>
         {(board.variables ?? []).map((v) => (
           <label key={v.name} className="edge-variable">
-            {v.label}
+            {isolate(v.label)}
             <select className="input" value={vars[v.name] ?? ""} onChange={(e) => setVars({ ...vars, [v.name]: e.target.value })}>
               <option value="">{t("Choose…")}</option>
               {(list.data?.devices ?? [])
                 .filter((d) => !v.kind || d.kind === v.kind)
                 .map((d) => (
                   <option key={d.id} value={d.id}>
-                    {d.name}
+                    {isolate(d.name)}
                   </option>
                 ))}
             </select>
@@ -440,13 +440,13 @@ export function BoardPage() {
         <div className="edge-choice" role="group" aria-label={t("Period")}>
           {RANGES.map(([label, s]) => (
             <button key={s} type="button" aria-pressed={s === last} onClick={() => setSecs(s)}>
-              {label}
+              {isolate(label)}
             </button>
           ))}
         </div>
         {writable && !editing ? (
           <>
-            <Button onClick={() => setSharing(true)}>{q.data.shared_at ? "Shared" : "Share…"}</Button>
+            <Button onClick={() => setSharing(true)}>{q.data.shared_at ? t("Shared") : t("Share…")}</Button>
             <Button variant="primary" onClick={() => setEditing(true)}>
               {t("Lay out")}
             </Button>
@@ -471,7 +471,7 @@ export function BoardPage() {
                 <optgroup key={group} label={group}>
                   {KINDS.filter((k) => k.group === group).map((k) => (
                     <option key={k.type} value={k.type}>
-                      {k.label}
+                      {isolate(k.label)}
                     </option>
                   ))}
                 </optgroup>
@@ -494,7 +494,7 @@ export function BoardPage() {
       </div>
       {board.widgets.length === 0 ? (
         <EmptyState title={t("Nothing on it yet")} icon="chart">
-          <p className="muted">{writable ? "Add a widget to begin." : "Someone has still to lay this out."}</p>
+          <p className="muted">{writable ? t("Add a widget to begin.") : t("Someone has still to lay this out.")}</p>
         </EmptyState>
       ) : (
         <Grid

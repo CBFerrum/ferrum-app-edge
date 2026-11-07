@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { refusal, t as tr } from "@ferrum/client";
+import { refusal, t as tr, isolate } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
 import { can, useEntityMeta } from "@ferrum/records";
 import { definitionDoc, definitionList, newDefinition, publishDefinition, saveDefinition, type Template, templates, tryDefinition, type Tried } from "./data";
@@ -35,7 +35,7 @@ function Start({ onClose }: { onClose: () => void }) {
         <>
           <Button onClick={onClose}>{tr("Back")}</Button>
           <Button variant="primary" disabled={!name.trim()} loading={make.isPending} onClick={() => make.mutate()}>
-            {tr("Start from")} {choice ? "this" : "nothing"}
+            {tr("Start from")} {choice ? tr("this") : tr("nothing")}
           </Button>
         </>
       }
@@ -52,7 +52,7 @@ function Start({ onClose }: { onClose: () => void }) {
           <div className="edge-templates">
             {groups.map(([group, items]) => (
               <fieldset key={group}>
-                <legend>{group}</legend>
+                <legend>{isolate(group)}</legend>
                 {items.map((t) => (
                   <label key={t.name} className={choice === t ? "edge-template edge-on" : "edge-template"}>
                     <input
@@ -65,8 +65,8 @@ function Start({ onClose }: { onClose: () => void }) {
                       }}
                     />
                     <span>
-                      <strong>{t.name}</strong>
-                      <span className="faint">{t.about}</span>
+                      <strong>{isolate(t.name)}</strong>
+                      <span className="faint">{isolate(t.about)}</span>
                     </span>
                   </label>
                 ))}
@@ -81,7 +81,7 @@ function Start({ onClose }: { onClose: () => void }) {
 }
 
 export function Definitions() {
-  useShellTitle("Definitions");
+  useShellTitle(tr("Definitions"));
   const q = useQuery({ queryKey: ["edge", "definitions"], queryFn: definitionList });
   const [starting, setStarting] = useState(false);
   const meta = useEntityMeta("DeviceDefinition");
@@ -108,10 +108,10 @@ export function Definitions() {
           {q.data.rows.map((d) => (
             <li key={d.id}>
               <Link to={`/definitions/${d.id}`} className="edge-row-main">
-                <strong>{d.definition_name}</strong>
-                <div className="faint">{d.revision ? `Version ${d.revision}` : "Never published"}</div>
+                <strong>{isolate(d.definition_name)}</strong>
+                <div className="faint">{d.revision ? tr("Version {revision}", { revision: d.revision }) : tr("Never published")}</div>
               </Link>
-              <Badge tone={d.status === "Published" ? "green" : "neutral"}>{d.status}</Badge>
+              <Badge tone={d.status === "Published" ? "green" : "neutral"}>{isolate(d.status)}</Badge>
             </li>
           ))}
         </ul>
@@ -122,7 +122,7 @@ export function Definitions() {
 }
 
 function Result({ tried }: { tried: Tried }) {
-  if (!tried.ok) return <Alert tone="error">{tried.error}</Alert>;
+  if (!tried.ok) return <Alert tone="error">{isolate(tried.error ?? "")}</Alert>;
   if (!tried.decoded?.length) return <Alert tone="info">{tr("It is well formed, and read nothing from that sample.")}</Alert>;
   return (
     <ul className="edge-rows">
@@ -131,8 +131,8 @@ function Result({ tried }: { tried: Tried }) {
           <div className="edge-row-main">
             <strong>{d.name ?? d.kind}</strong>
             <div className="faint">
-              {d.kind}
-              {d.device ? `, for ${d.device}` : ""}
+              {isolate(d.kind)}
+              {d.device ? tr(", for {device}", { device: d.device }) : ""}
             </div>
           </div>
           <span>
@@ -150,7 +150,7 @@ export function DefinitionPage() {
   const form = useId();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["edge", "definition", id], queryFn: () => definitionDoc(id) });
-  useShellTitle(q.data?.definition_name ?? "Definition");
+  useShellTitle(q.data?.definition_name ?? tr("Definition"));
   const [body, setBody] = useState("");
   const [topic, setTopic] = useState("");
   const [sample, setSample] = useState("");
@@ -190,7 +190,7 @@ export function DefinitionPage() {
       <Tabs />
       <div className="edge-bar">
         <Link to="/definitions">{tr("Definitions")}</Link>
-        <Badge tone={q.data.status === "Published" ? "green" : "neutral"}>{q.data.revision ? `Version ${q.data.revision}` : "Never published"}</Badge>
+        <Badge tone={q.data.status === "Published" ? "green" : "neutral"}>{q.data.revision ? tr("Version {revision}", { revision: q.data.revision }) : tr("Never published")}</Badge>
         <span className="edge-grow" />
         {writable ? (
           <>

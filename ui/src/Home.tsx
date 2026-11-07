@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { refusal, relativeTime, t } from "@ferrum/client";
+import { refusal, relativeTime, t, isolate } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { LinkInput } from "@ferrum/records";
 import { claim, fleet, type Gateway, type LinkHealth, overview, type Stranger } from "./data";
@@ -17,16 +17,16 @@ function Connection({ link }: { link: LinkHealth }) {
   return (
     <li className="edge-link">
       <div className="edge-link-head">
-        <Badge tone={link.up ? "green" : "red"}>{link.up ? "Connected" : "Not connected"}</Badge>
-        <strong>{link.definition}</strong>
+        <Badge tone={link.up ? "green" : "red"}>{link.up ? t("Connected") : t("Not connected")}</Badge>
+        <strong>{isolate(link.definition)}</strong>
       </div>
-      <code className="edge-address">{link.address}</code>
+      <code className="edge-address">{isolate(link.address)}</code>
       <div className="faint">
-        {link.devices} {link.devices === 1 ? "device" : "devices"}, {count(link.messages)} messages
-        {link.dropped ? `, ${count(link.dropped)} dropped` : ""}
-        {link.reconnects > 1 ? `, ${link.reconnects} reconnects` : ""}
+        {link.devices} {link.devices === 1 ? t("device") : t("devices")}{t(", {value} messages", { value: count(link.messages) })}
+        {link.dropped ? t(", {value} dropped", { value: count(link.dropped) }) : ""}
+        {link.reconnects > 1 ? t(", {reconnects} reconnects", { reconnects: link.reconnects }) : ""}
       </div>
-      {link.last_error ? <div className="edge-why">{link.last_error}</div> : null}
+      {link.last_error ? <div className="edge-why">{isolate(link.last_error)}</div> : null}
     </li>
   );
 }
@@ -37,21 +37,21 @@ function GatewayCard({ g }: { g: Gateway }) {
     <section className="card card-pad edge-gateway" aria-label={g.name}>
       <header className="edge-head">
         <div>
-          <h2>{g.name}</h2>
+          <h2>{isolate(g.name)}</h2>
           <div className="faint">
-            {g.site ?? "No site"}
-            {g.runtime ? `, runtime ${g.runtime}` : ""}
+            {g.site ?? t("No site")}
+            {g.runtime ? t(", runtime {runtime}", { runtime: g.runtime }) : ""}
           </div>
         </div>
-        <Badge tone={heard ? "green" : "amber"}>{g.last_seen_at ? (heard ? "Heard from" : `Quiet since ${relativeTime(g.last_seen_at)}`) : "Not heard from yet"}</Badge>
+        <Badge tone={heard ? "green" : "amber"}>{g.last_seen_at ? (heard ? t("Heard from") : t("Quiet since {value}", { value: relativeTime(g.last_seen_at) })) : t("Not heard from yet")}</Badge>
       </header>
       {g.problems.map((p) => (
         <Alert key={p} tone="warning">
-          {p}
+          {isolate(p)}
         </Alert>
       ))}
       {g.links.length === 0 ? (
-        <p className="muted">{g.devices ? `${g.devices} devices assigned. It has not reported its connections yet.` : "No devices are assigned to this gateway."}</p>
+        <p className="muted">{g.devices ? t("{devices} devices assigned. It has not reported its connections yet.", { devices: g.devices }) : t("No devices are assigned to this gateway.")}</p>
       ) : (
         <ul className="edge-links">
           {g.links.map((l) => (
@@ -81,7 +81,7 @@ function Claim({ stranger, onClose }: { stranger: Stranger; onClose: () => void 
   return (
     <Dialog
       open
-      title={`Add ${stranger.code}`}
+      title={t("Add {code}", { code: stranger.code })}
       onClose={onClose}
       footer={
         <>
@@ -117,9 +117,9 @@ function Strangers({ list }: { list: Stranger[] }) {
         {list.map((s) => (
           <li key={`${s.gateway}-${s.code}`}>
             <div className="edge-row-main">
-              <strong>{s.code}</strong>
+              <strong>{isolate(s.code)}</strong>
               <div className="faint">
-                {t("By {gateway_name},", { gateway_name: s.gateway_name })} {relativeTime(s.last_seen_at)}
+                {t("By {gateway_name},", { gateway_name: s.gateway_name })} {isolate(relativeTime(s.last_seen_at))}
               </div>
             </div>
             <Button size="sm" onClick={() => setClaiming(s)}>
@@ -154,7 +154,7 @@ function FleetHealth() {
           <tbody>
             {rows.map((r) => (
               <tr key={r.name}>
-                <td>{r.name}</td>
+                <td>{isolate(r.name)}</td>
                 <td>{r.devices}</td>
                 <td>{r.in_service}</td>
                 <td>{r.heard}</td>
@@ -164,13 +164,13 @@ function FleetHealth() {
           </tbody>
         </table>
       </div>
-      {q.data?.versions.length ? <p className="faint">{t("Firmware running:")} {q.data.versions.map((v) => `${v.version} on ${v.devices}`).join(", ")}.</p> : null}
+      {q.data?.versions.length ? <p className="faint">{t("Firmware running:")} {isolate(q.data.versions.map((v) => `${v.version} on ${v.devices}`).join(", "))}.</p> : null}
     </section>
   );
 }
 
 export function Home() {
-  useShellTitle("IoT Edge");
+  useShellTitle(t("IoT Edge"));
   const q = useQuery({ queryKey: ["edge", "overview"], queryFn: overview, refetchInterval: SLOW_POLL_MS });
   const raised = Object.values(q.data?.alarms ?? {}).reduce((n, c) => n + c, 0);
   const critical = q.data?.alarms.Critical ?? 0;
@@ -179,7 +179,7 @@ export function Home() {
       <Tabs alarms={raised} />
       {q.data?.allowance && q.data.allowance.today >= q.data.allowance.per_day ? (
         <Alert tone="warning">
-          This workspace has stored today&apos;s {q.data.allowance.per_day.toLocaleString()} {t("readings, so gateways are holding new ones until tomorrow or until its allowance is raised.")}
+          This workspace has stored today&apos;s {isolate(q.data.allowance.per_day.toLocaleString())} {t("readings, so gateways are holding new ones until tomorrow or until its allowance is raised.")}
         </Alert>
       ) : null}
       {q.isPending ? (
@@ -190,7 +190,7 @@ export function Home() {
         <>
           {critical ? (
             <Alert tone="error" action={<Link to="/alarms">{t("See them")}</Link>}>
-              {critical} critical {critical === 1 ? "alarm is" : "alarms are"} open.
+              {t("{critical} critical", { critical })} {critical === 1 ? t("alarm is") : t("alarms are")} {t("open.")}
             </Alert>
           ) : null}
           <Strangers list={q.data.strangers} />

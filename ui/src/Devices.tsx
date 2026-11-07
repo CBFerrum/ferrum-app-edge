@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { refusal, relativeTime, t as tr } from "@ferrum/client";
+import { refusal, relativeTime, t as tr, isolate } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, statusTone, toast, useDebounced, useShellTitle } from "@ferrum/kit";
 import { askAll, type DeviceRow, devices, type Imported, importDevices, type Outcome, type Selection, setAll } from "./data";
 import { Tabs } from "./Tabs";
@@ -14,14 +14,14 @@ function Outcomes({ outcomes }: { outcomes: Outcome[] }) {
   return (
     <div className="stack" role="status">
       <p>
-        {outcomes.length - refused.length} of {outcomes.length} asked.
+        {outcomes.length - refused.length} {tr("of {length} asked.", { length: outcomes.length })}
       </p>
       {refused.length ? (
         <ul className="edge-refused">
           {refused.map((o) => (
             <li key={o.device}>
-              {o.refused?.includes(o.device) ? null : <strong>{o.device} </strong>}
-              {o.refused}
+              {o.refused?.includes(o.device) ? null : <strong>{isolate(o.device)} </strong>}
+              {isolate(o.refused ?? "")}
             </li>
           ))}
         </ul>
@@ -51,7 +51,7 @@ function AskAll({ select, count, onClose }: { select: Selection; count: number; 
   return (
     <Dialog
       open
-      title={`Ask ${count === 1 ? "1 device" : `${count} devices`}`}
+      title={tr("Ask {value}", { value: count === 1 ? "1 device" : `${count} devices` })}
       onClose={onClose}
       footer={
         outcomes ? (
@@ -79,10 +79,10 @@ function AskAll({ select, count, onClose }: { select: Selection; count: number; 
               <option value="setting">{tr("A setting")}</option>
             </select>
           </Field>
-          <Field label={what === "command" ? "Operation" : "Setting"} htmlFor={`${id}-n`} required>
+          <Field label={what === "command" ? tr("Operation") : tr("Setting")} htmlFor={`${id}-n`} required>
             <input id={`${id}-n`} className="input" value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
-          <Field label={what === "command" ? "With (JSON)" : "Value (JSON)"} htmlFor={`${id}-v`} error={parsed === null ? "That is not JSON." : undefined}>
+          <Field label={what === "command" ? tr("With (JSON)") : tr("Value (JSON)")} htmlFor={`${id}-v`} error={parsed === null ? "That is not JSON." : undefined}>
             <textarea id={`${id}-v`} className="input edge-code" rows={3} value={value} onChange={(e) => setValue(e.target.value)} />
           </Field>
         </div>
@@ -91,7 +91,7 @@ function AskAll({ select, count, onClose }: { select: Selection; count: number; 
   );
 }
 
-const SAMPLE = "code,name,kind,site,definition,tags\nPRESS-7,Press seven,Machine,north,acme-press,line-1;hot";
+const SAMPLE = () => tr("code,name,kind,site,definition,tags\nPRESS-7,Press seven,Machine,north,acme-press,line-1;hot");
 
 function Import({ onClose }: { onClose: () => void }) {
   const id = useId();
@@ -137,13 +137,13 @@ function Import({ onClose }: { onClose: () => void }) {
       {done ? (
         <div className="stack" role="status">
           <p>
-            {done.created} added{done.failed.length ? `, ${done.failed.length} not` : ""}.
+            {tr("{created} added", { created: done.created })}{done.failed.length ? tr(", {length} not", { length: done.failed.length }) : ""}.
           </p>
           {done.failed.length ? (
             <ul className="edge-refused">
               {done.failed.map((f) => (
                 <li key={f.line}>
-                  <strong>{tr("Line {line}", { line: f.line })}</strong> {f.why}
+                  <strong>{tr("Line {line}", { line: f.line })}</strong> {isolate(f.why)}
                 </li>
               ))}
             </ul>
@@ -162,7 +162,7 @@ function Import({ onClose }: { onClose: () => void }) {
             <input id={`${id}-f`} type="file" accept=".csv,text/csv" onChange={(e) => void e.target.files?.[0]?.text().then(setCsv)} />
           </Field>
           <Field label={tr("Or the rows themselves")} htmlFor={`${id}-c`}>
-            <textarea id={`${id}-c`} className="input edge-code" rows={6} placeholder={SAMPLE} value={csv} onChange={(e) => setCsv(e.target.value)} />
+            <textarea id={`${id}-c`} className="input edge-code" rows={6} placeholder={SAMPLE()} value={csv} onChange={(e) => setCsv(e.target.value)} />
           </Field>
           <label className="edge-check">
             <input type="checkbox" checked={tokens} onChange={(e) => setTokens(e.target.checked)} /> {tr("Give each an access token")}
@@ -176,14 +176,14 @@ function Import({ onClose }: { onClose: () => void }) {
 function Row({ d, chosen, choose }: { d: DeviceRow; chosen: boolean; choose: (on: boolean) => void }) {
   return (
     <li>
-      <input type="checkbox" aria-label={`Choose ${d.name}`} checked={chosen} onChange={(e) => choose(e.target.checked)} />
+      <input type="checkbox" aria-label={tr("Choose {name}", { name: d.name })} checked={chosen} onChange={(e) => choose(e.target.checked)} />
       <Link to={`/d/${d.id}`} className="edge-row-main">
-        <strong>{d.name}</strong>
+        <strong>{isolate(d.name)}</strong>
         <div className="faint">
-          {d.code}
-          {d.definition ? `, read by ${d.definition}` : ""}
-          {d.gateway ? `, through ${d.gateway}` : ""}
-          {d.last_seen ? `, heard ${relativeTime(d.last_seen)}` : ", not heard yet"}
+          {isolate(d.code)}
+          {d.definition ? tr(", read by {definition}", { definition: d.definition }) : ""}
+          {d.gateway ? tr(", through {gateway}", { gateway: d.gateway }) : ""}
+          {d.last_seen ? tr(", heard {value}", { value: relativeTime(d.last_seen) }) : tr(", not heard yet")}
         </div>
       </Link>
       {d.tags ? (
@@ -193,19 +193,19 @@ function Row({ d, chosen, choose }: { d: DeviceRow; chosen: boolean; choose: (on
             .map((t) => t.trim())
             .filter(Boolean)
             .map((t) => (
-              <Badge key={t}>{t}</Badge>
+              <Badge key={t}>{isolate(t)}</Badge>
             ))}
         </span>
       ) : null}
       {d.active === true ? <Badge tone="green">{tr("Connected")}</Badge> : null}
-      {d.alarms ? <Badge tone="red">{d.alarms === 1 ? "1 alarm" : `${d.alarms} alarms`}</Badge> : null}
-      <Badge tone={statusTone(d.lifecycle)}>{d.lifecycle}</Badge>
+      {d.alarms ? <Badge tone="red">{d.alarms === 1 ? tr("1 alarm") : tr("{alarms} alarms", { alarms: d.alarms })}</Badge> : null}
+      <Badge tone={statusTone(d.lifecycle)}>{isolate(d.lifecycle)}</Badge>
     </li>
   );
 }
 
 export function Devices() {
-  useShellTitle("Devices");
+  useShellTitle(tr("Devices"));
   const [params, setParams] = useSearchParams();
   const text = params.get("q") ?? "";
   const tagged = params.get("tag") ?? "";
@@ -236,7 +236,7 @@ export function Devices() {
       </div>
       {picked.size ? (
         <div className="edge-bar" role="status">
-          <span>{picked.size === 1 ? "1 device chosen" : `${picked.size} devices chosen`}</span>
+          <span>{picked.size === 1 ? tr("1 device chosen") : tr("{size} devices chosen", { size: picked.size })}</span>
           <Button variant="primary" onClick={() => setDialog("ask")}>
             {tr("Ask them…")}
           </Button>
@@ -248,7 +248,7 @@ export function Devices() {
       ) : list.isError ? (
         <ErrorState error={list.error} onRetry={() => void list.refetch()} />
       ) : shown.length === 0 ? (
-        <EmptyState title={text || tagged ? "Nothing matches that" : "No devices yet"} icon="dashboard">
+        <EmptyState title={text || tagged ? tr("Nothing matches that") : tr("No devices yet")} icon="dashboard">
           {text || tagged ? null : <Link to="/e/Device/new">{tr("Add your first device")}</Link>}
         </EmptyState>
       ) : (

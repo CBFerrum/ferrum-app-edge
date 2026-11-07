@@ -2,7 +2,7 @@
 // gap, because nothing reported is not the same as nothing changing.
 
 import { type PointerEvent, useEffect, useRef, useState } from "react";
-import { formatMoment, t as tr } from "@ferrum/client";
+import { formatMoment, t as tr, isolate } from "@ferrum/client";
 import { extent, type Line, linePath, nearest, timeLabel, timeTicks, valueTicks } from "./plotting";
 
 export const COLORS = ["var(--color-blue-600, #2563eb)", "var(--color-amber-600, #d97706)", "var(--color-emerald-600, #059669)", "var(--color-rose-600, #e11d48)", "var(--color-violet-600, #7c3aed)", "var(--color-cyan-600, #0891b2)", "var(--color-lime-600, #65a30d)", "var(--color-fuchsia-600, #c026d3)"];
@@ -66,20 +66,20 @@ export function Chart({ lines, from, to, gap, height: fixed = 260, marks = [], l
           <g key={t}>
             <line className="edge-chart-grid" x1={left} x2={right} y1={y(t)} y2={y(t)} />
             <text className="edge-chart-tick" x={left - 8} y={y(t) + 4} textAnchor="end">
-              {number(t)}
+              {isolate(number(t))}
             </text>
           </g>
         ))}
         {timeTicks(from, to, Math.max(2, Math.floor(W / 110))).map((t) => (
           <text key={t} className="edge-chart-tick" x={x(t)} y={height - 8} textAnchor="middle">
-            {timeLabel(t, to - from)}
+            {isolate(timeLabel(t, to - from))}
           </text>
         ))}
         {marks.map((m) => (
           <g key={m.label}>
             <line className="edge-chart-mark" x1={left} x2={right} y1={y(m.value)} y2={y(m.value)} />
             <text className="edge-chart-tick" x={right} y={y(m.value) - 4} textAnchor="end">
-              {m.label}
+              {isolate(m.label)}
             </text>
           </g>
         ))}
@@ -109,11 +109,11 @@ export function Chart({ lines, from, to, gap, height: fixed = 260, marks = [], l
       </svg>
       {shown !== null ? (
         <div className="edge-chart-tip" style={left_side ? { right: `${100 - (x(shown) / W) * 100 + 1}%` } : { left: `${(x(shown) / W) * 100 + 1}%` }}>
-          <div className="faint">{formatMoment(shown, { dateStyle: "medium", timeStyle: "medium" })}</div>
+          <div className="faint">{isolate(formatMoment(shown, { dateStyle: "medium", timeStyle: "medium" }))}</div>
           {near.map((n, i) =>
             n.point ? (
               <div key={n.line.label}>
-                <span className="edge-chart-key" style={{ background: COLORS[i % COLORS.length] }} /> {n.line.label}: <strong>{number(n.point.value!)}</strong> {n.line.unit ?? ""}
+                <span className="edge-chart-key" style={{ background: COLORS[i % COLORS.length] }} /> {isolate(n.line.label)}: <strong>{isolate(number(n.point.value!))}</strong> {n.line.unit ?? ""}
               </div>
             ) : null,
           )}

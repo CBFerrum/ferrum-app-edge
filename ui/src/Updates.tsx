@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
-import { refusal, relativeTime, t } from "@ferrum/client";
+import { refusal, relativeTime, t, isolate } from "@ferrum/client";
 import { Alert, Badge, Button, EmptyState, ErrorState, PageLoading, statusTone, toast, useShellTitle } from "@ferrum/kit";
 import { can, useEntityMeta } from "@ferrum/records";
 import { type RolloutDoc, rolloutAction, rolloutList, rolloutProgress } from "./data";
@@ -28,11 +28,11 @@ function Progress({ id }: { id: string }) {
         <tbody>
           {devices.map((d) => (
             <tr key={d.code}>
-              <td>{d.code}</td>
+              <td>{isolate(d.code)}</td>
               <td>
-                <Badge tone={statusTone(d.status)}>{d.status}</Badge> {d.error}
+                <Badge tone={statusTone(d.status)}>{isolate(d.status)}</Badge> {isolate(d.error ?? "")}
               </td>
-              <td>{relativeTime(d.at)}</td>
+              <td>{isolate(relativeTime(d.at))}</td>
             </tr>
           ))}
         </tbody>
@@ -53,16 +53,16 @@ function Row({ r, writable }: { r: RolloutDoc; writable: boolean }) {
     <li className="stack">
       <div className="edge-bar">
         <Link to={`/e/EdgeRollout/${r.id}`} className="edge-row-main">
-          <strong>{r.rollout_name}</strong>
+          <strong>{isolate(r.rollout_name)}</strong>
           <div className="faint">{r._titles?.firmware ?? r.firmware}</div>
         </Link>
-        <Badge tone={statusTone(r.status)}>{r.status}</Badge>
+        <Badge tone={statusTone(r.status)}>{isolate(r.status)}</Badge>
         <Button size="sm" aria-expanded={open} onClick={() => setOpen(!open)}>
-          {open ? "Hide" : "How it stands"}
+          {open ? t("Hide") : t("How it stands")}
         </Button>
         {writable && (r.status === "Draft" || r.status === "Paused") ? (
           <Button size="sm" variant="primary" loading={act.isPending} onClick={() => act.mutate("start")}>
-            {r.status === "Draft" ? "Start" : "Carry on"}
+            {r.status === "Draft" ? t("Start") : t("Carry on")}
           </Button>
         ) : null}
         {writable && r.status === "Running" ? (
@@ -71,14 +71,14 @@ function Row({ r, writable }: { r: RolloutDoc; writable: boolean }) {
           </Button>
         ) : null}
       </div>
-      {r.note ? <Alert tone="warning">{r.note}</Alert> : null}
+      {r.note ? <Alert tone="warning">{isolate(r.note)}</Alert> : null}
       {open ? <Progress id={r.id} /> : null}
     </li>
   );
 }
 
 export function Updates() {
-  useShellTitle("Updates");
+  useShellTitle(t("Updates"));
   const q = useQuery({ queryKey: ["edge", "rollouts"], queryFn: rolloutList, refetchInterval: 30_000 });
   const meta = useEntityMeta("EdgeRollout");
   const writable = meta.data ? can(meta.data.permissions, "write") : false;
