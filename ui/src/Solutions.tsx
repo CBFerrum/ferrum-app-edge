@@ -3,7 +3,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { refusal } from "@ferrum/client";
+import { refusal, t } from "@ferrum/client";
 import { Alert, Button, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { can, useEntityMeta } from "@ferrum/records";
 import { exportSolution, installBundle, installSolution, type Installed, solutions } from "./data";
@@ -41,11 +41,11 @@ export function Solutions() {
   return (
     <div className="edge-page">
       <Tabs />
-      <p className="muted">What goes together for one kind of job. It arrives as drafts: definitions to publish and flows to simulate and review, and nothing runs by itself.</p>
+      <p className="muted">{t("What goes together for one kind of job. It arrives as drafts: definitions to publish and flows to simulate and review, and nothing runs by itself.")}</p>
       {done ? <Alert tone="info">{said(done)}</Alert> : null}
       {writable ? (
         <div className="edge-bar">
-          <Field label="From a file" htmlFor="edge-bundle">
+          <Field label={t("From a file")} htmlFor="edge-bundle">
             <input
               id="edge-bundle"
               type="file"
@@ -55,7 +55,7 @@ export function Solutions() {
                   try {
                     load.mutate(JSON.parse(text) as unknown);
                   } catch {
-                    toast("That file is not a solution.", "error");
+                    toast(t("That file is not a solution."), "error");
                   }
                 })
               }
@@ -63,7 +63,7 @@ export function Solutions() {
           </Field>
           <span className="edge-grow" />
           <Button loading={save.isPending} onClick={() => save.mutate()}>
-            Download what is here
+            {t("Download what is here")}
           </Button>
         </div>
       ) : null}
@@ -72,7 +72,7 @@ export function Solutions() {
       ) : q.isError ? (
         <ErrorState error={q.error} onRetry={() => void q.refetch()} />
       ) : q.data.solutions.length === 0 ? (
-        <EmptyState title="No solutions" icon="dashboard" />
+        <EmptyState title={t("No solutions")} icon="dashboard" />
       ) : (
         <ul className="card edge-rows edge-rows-pad">
           {q.data.solutions.map((s) => (
@@ -83,7 +83,7 @@ export function Solutions() {
               </div>
               {writable ? (
                 <Button loading={install.isPending && install.variables === s.name} onClick={() => install.mutate(s.name)}>
-                  Add it
+                  {t("Add it")}
                 </Button>
               ) : null}
             </li>

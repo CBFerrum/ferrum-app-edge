@@ -7,6 +7,7 @@ import { Chart, COLORS } from "./Chart";
 import { csv, type Line, summary } from "./plotting";
 import { history, type HistoryPoint } from "./data";
 import { SLOW_POLL_MS } from "./live";
+import { t } from "@ferrum/client";
 
 const RANGES: [string, number][] = [
   ["15 min", 900],
@@ -46,11 +47,11 @@ export function History({ id, code, metrics, root }: { id: string; code: string;
   const toggle = (m: string) => setPicked(chosen.includes(m) ? chosen.filter((c) => c !== m) : [...chosen, m].slice(-8));
   if (metrics.length === 0) return null;
   return (
-    <section className="card card-pad stack" aria-label="History">
+    <section className="card card-pad stack" aria-label={t("History")}>
       <div className="edge-bar">
-        <h2 className="edge-section">History</h2>
+        <h2 className="edge-section">{t("History")}</h2>
         <span className="edge-grow" />
-        <div className="edge-choice" role="group" aria-label="Period">
+        <div className="edge-choice" role="group" aria-label={t("Period")}>
           {RANGES.map(([label, s]) => (
             <button key={s} type="button" aria-pressed={s === secs} onClick={() => setSecs(s)}>
               {label}
@@ -58,10 +59,10 @@ export function History({ id, code, metrics, root }: { id: string; code: string;
           ))}
         </div>
         <Button size="sm" disabled={lines.length === 0} onClick={() => save(`${code}-${secs}s.csv`, csv(lines))}>
-          Export
+          {t("Export")}
         </Button>
       </div>
-      <div className="edge-choice" role="group" aria-label="Metrics">
+      <div className="edge-choice" role="group" aria-label={t("Metrics")}>
         {metrics.map((m) => (
           <button key={m} type="button" aria-pressed={chosen.includes(m)} onClick={() => toggle(m)}>
             {m}
@@ -71,18 +72,18 @@ export function History({ id, code, metrics, root }: { id: string; code: string;
       {q.isError ? (
         <ErrorState error={q.error} onRetry={() => void q.refetch()} />
       ) : chosen.length === 0 ? (
-        <p className="muted">Choose something to draw.</p>
+        <p className="muted">{t("Choose something to draw.")}</p>
       ) : q.data ? (
         <>
           <Chart lines={lines} from={Date.parse(q.data.from)} to={Date.parse(q.data.to)} gap={Math.max(q.data.bucket_secs * 3, 300) * 1000} label={`History of ${chosen.join(", ")}`} />
           <table className="edge-table">
             <thead>
               <tr>
-                <th scope="col">Metric</th>
-                <th scope="col">Lowest</th>
-                <th scope="col">Average</th>
-                <th scope="col">Highest</th>
-                <th scope="col">Latest</th>
+                <th scope="col">{t("Metric")}</th>
+                <th scope="col">{t("Lowest")}</th>
+                <th scope="col">{t("Average")}</th>
+                <th scope="col">{t("Highest")}</th>
+                <th scope="col">{t("Latest")}</th>
               </tr>
             </thead>
             <tbody>

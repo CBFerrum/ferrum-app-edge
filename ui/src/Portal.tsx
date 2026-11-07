@@ -4,7 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
-import { api, errorMessage } from "@ferrum/client";
+import { api, errorMessage, t } from "@ferrum/client";
 import { Badge, Button, EmptyState, ErrorState, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { Grid } from "./Boards";
 import { portalBase } from "./data";
@@ -41,16 +41,16 @@ export function PortalDevices() {
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   const { customers, devices, dashboards } = q.data;
   if (customers.length === 0) return (
-      <EmptyState title="Nothing here yet" icon="factory">
-        Nobody has given you any devices. Ask whoever looks after them to add your address.
+      <EmptyState title={t("Nothing here yet")} icon="factory">
+        {t("Nobody has given you any devices. Ask whoever looks after them to add your address.")}
       </EmptyState>
     );
   return (
     <div className="stack">
       <h1>{customers.join(", ")}</h1>
       {dashboards.length ? (
-        <section className="card card-pad stack" aria-label="Dashboards">
-          <h2 className="edge-section">Dashboards</h2>
+        <section className="card card-pad stack" aria-label={t("Dashboards")}>
+          <h2 className="edge-section">{t("Dashboards")}</h2>
           <ul className="edge-plain">
             {dashboards.map((b) => (
               <li key={b.id}>
@@ -60,19 +60,19 @@ export function PortalDevices() {
           </ul>
         </section>
       ) : null}
-      <section className="card card-pad stack" aria-label="Devices">
-        <h2 className="edge-section">Devices</h2>
+      <section className="card card-pad stack" aria-label={t("Devices")}>
+        <h2 className="edge-section">{t("Devices")}</h2>
         {devices.length === 0 ? (
-          <p className="muted">No devices yet.</p>
+          <p className="muted">{t("No devices yet.")}</p>
         ) : (
           <div className="edge-scroll">
             <table className="edge-table">
               <thead>
                 <tr>
-                  <th scope="col">Device</th>
-                  <th scope="col">Where</th>
-                  <th scope="col">Last heard</th>
-                  <th scope="col">Alarms</th>
+                  <th scope="col">{t("Device")}</th>
+                  <th scope="col">{t("Where")}</th>
+                  <th scope="col">{t("Last heard")}</th>
+                  <th scope="col">{t("Alarms")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -102,7 +102,7 @@ export function PortalDevice() {
   const ack = useMutation({
     mutationFn: (alarm: string) => api.post(`${portalBase}/alarms/${alarm}/acknowledge`, {}),
     onSuccess: () => {
-      toast("Acknowledged.");
+      toast(t("Acknowledged."));
       void qc.invalidateQueries({ queryKey: ["edge", "portal"] });
     },
     onError: (e) => toast(errorMessage(e), "error"),
@@ -114,13 +114,13 @@ export function PortalDevice() {
   return (
     <div className="stack">
       <p>
-        <Link to="/">Your devices</Link>
+        <Link to="/">{t("Your devices")}</Link>
       </p>
       <h1>{device.name}</h1>
       <p className="muted">{[device.code, device.site].filter(Boolean).join(" · ")}</p>
       {latest.length ? (
-        <section className="card card-pad stack" aria-label="Now">
-          <h2 className="edge-section">Now</h2>
+        <section className="card card-pad stack" aria-label={t("Now")}>
+          <h2 className="edge-section">{t("Now")}</h2>
           <div className="edge-scroll">
             <table className="edge-table">
               <tbody>
@@ -137,10 +137,10 @@ export function PortalDevice() {
         </section>
       ) : null}
       <History id={id} code={device.code} metrics={latest.map((m) => m.metric)} root={portalBase} />
-      <section className="card card-pad stack" aria-label="Alarms">
-        <h2 className="edge-section">Alarms</h2>
+      <section className="card card-pad stack" aria-label={t("Alarms")}>
+        <h2 className="edge-section">{t("Alarms")}</h2>
         {alarms.length === 0 ? (
-          <p className="muted">None.</p>
+          <p className="muted">{t("None.")}</p>
         ) : (
           <div className="edge-scroll">
             <table className="edge-table">
@@ -155,7 +155,7 @@ export function PortalDevice() {
                     <td>
                       {a.status === "Active" ? (
                         <Button size="sm" disabled={ack.isPending} onClick={() => ack.mutate(a.id)}>
-                          Acknowledge
+                          {t("Acknowledge")}
                         </Button>
                       ) : (
                         (a.acknowledged_by ?? "")
@@ -181,7 +181,7 @@ export function PortalBoard() {
   return (
     <div className="stack">
       <p>
-        <Link to="/">Your devices</Link>
+        <Link to="/">{t("Your devices")}</Link>
       </p>
       <h1>{q.data.name}</h1>
       <Grid board={q.data.board} data={q.data.data} live={false} />

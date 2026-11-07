@@ -3,7 +3,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { refusal } from "@ferrum/client";
+import { refusal, t } from "@ferrum/client";
 import { Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { can, useEntityMeta } from "@ferrum/records";
 import { type FlowDoc, flowList, newFlow } from "./data";
@@ -26,22 +26,22 @@ function Start({ onClose }: { onClose: () => void }) {
   return (
     <Dialog
       open
-      title="A new flow"
+      title={t("A new flow")}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Back</Button>
+          <Button onClick={onClose}>{t("Back")}</Button>
           <Button variant="primary" disabled={!name.trim()} loading={make.isPending} onClick={() => make.mutate()}>
-            Start drawing
+            {t("Start drawing")}
           </Button>
         </>
       }
     >
       <div className="stack">
-        <Field label="Name" htmlFor={`${id}-n`} required>
+        <Field label={t("Name")} htmlFor={`${id}-n`} required>
           <input id={`${id}-n`} className="input" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="Or from a file" htmlFor={`${id}-f`} hint={file ? `Starting from ${file.name}.` : "A flow someone downloaded. It starts as a draft here, and goes through review like any other."}>
+        <Field label={t("Or from a file")} htmlFor={`${id}-f`} hint={file ? `Starting from ${file.name}.` : "A flow someone downloaded. It starts as a draft here, and goes through review like any other."}>
           <input
             id={`${id}-f`}
             type="file"
@@ -50,7 +50,7 @@ function Start({ onClose }: { onClose: () => void }) {
               const picked = e.target.files?.[0];
               if (!picked) return setFile(null);
               void picked.text().then((body) => {
-                if (parseFlow(body).nodes.length === 0) return toast("That file has no flow in it.", "error");
+                if (parseFlow(body).nodes.length === 0) return toast(t("That file has no flow in it."), "error");
                 setFile({ name: picked.name, body });
                 setName((n) => n || picked.name.replace(/\.flow\.json$|\.json$/, ""));
               });
@@ -58,11 +58,11 @@ function Start({ onClose }: { onClose: () => void }) {
           />
         </Field>
         <fieldset className="edge-templates" disabled={file !== null}>
-          <legend>Begin with</legend>
+          <legend>{t("Begin with")}</legend>
           <label className={choice === null ? "edge-template edge-on" : "edge-template"}>
             <input type="radio" name={`${id}-s`} checked={choice === null} onChange={() => setChoice(null)} />
             <span>
-              <strong>An empty canvas</strong>
+              <strong>{t("An empty canvas")}</strong>
             </span>
           </label>
           {STARTS.map((s, i) => (
@@ -104,7 +104,7 @@ export function Flows() {
       {meta.data && can(meta.data.permissions, "create") ? (
         <div className="edge-bar">
           <Button variant="primary" onClick={() => setStarting(true)}>
-            New flow
+            {t("New flow")}
           </Button>
         </div>
       ) : null}
@@ -113,8 +113,8 @@ export function Flows() {
       ) : q.isError ? (
         <ErrorState error={q.error} onRetry={() => void q.refetch()} />
       ) : q.data.rows.length === 0 ? (
-        <EmptyState title="No flows yet" icon="timeline">
-          <p className="muted">A flow is logic you draw, which runs at the gateway with or without the link. It is simulated and reviewed before it runs, and the strongest thing it can do is ask for a command.</p>
+        <EmptyState title={t("No flows yet")} icon="timeline">
+          <p className="muted">{t("A flow is logic you draw, which runs at the gateway with or without the link. It is simulated and reviewed before it runs, and the strongest thing it can do is ask for a command.")}</p>
         </EmptyState>
       ) : (
         <ul className="card edge-rows edge-rows-pad">

@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
-import { bootstrap, refusal } from "@ferrum/client";
+import { bootstrap, refusal, t } from "@ferrum/client";
 import { Alert, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
 import { can, useEntityMeta } from "@ferrum/records";
 import { type Board, COLUMNS, added, kindOf, KINDS, moved, type Param, parse, resized, SYMBOLS, type Variable, type Widget } from "./layout";
@@ -35,18 +35,18 @@ function Start({ onClose }: { onClose: () => void }) {
   return (
     <Dialog
       open
-      title="A new dashboard"
+      title={t("A new dashboard")}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Back</Button>
+          <Button onClick={onClose}>{t("Back")}</Button>
           <Button variant="primary" disabled={!name.trim()} loading={make.isPending} onClick={() => make.mutate()}>
-            Start laying out
+            {t("Start laying out")}
           </Button>
         </>
       }
     >
-      <Field label="Name" htmlFor={`${id}-n`} required>
+      <Field label={t("Name")} htmlFor={`${id}-n`} required>
         <input id={`${id}-n`} className="input" value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
     </Dialog>
@@ -64,7 +64,7 @@ export function Boards() {
       {meta.data && can(meta.data.permissions, "create") ? (
         <div className="edge-bar">
           <Button variant="primary" onClick={() => setStarting(true)}>
-            New dashboard
+            {t("New dashboard")}
           </Button>
         </div>
       ) : null}
@@ -73,8 +73,8 @@ export function Boards() {
       ) : q.isError ? (
         <ErrorState error={q.error} onRetry={() => void q.refetch()} />
       ) : q.data.rows.length === 0 ? (
-        <EmptyState title="No dashboards yet" icon="chart">
-          <p className="muted">Values, gauges, charts, alarms and equipment on one page, for a screen on the wall or a link for someone with no account.</p>
+        <EmptyState title={t("No dashboards yet")} icon="chart">
+          <p className="muted">{t("Values, gauges, charts, alarms and equipment on one page, for a screen on the wall or a link for someone with no account.")}</p>
         </EmptyState>
       ) : (
         <ul className="card edge-rows edge-rows-pad">
@@ -84,7 +84,7 @@ export function Boards() {
                 <strong>{b.dashboard_name}</strong>
                 <div className="faint">{b.description ?? ""}</div>
               </Link>
-              {b.shared_at ? <span className="faint">Shared</span> : null}
+              {b.shared_at ? <span className="faint">{t("Shared")}</span> : null}
             </li>
           ))}
         </ul>
@@ -102,10 +102,10 @@ function Setting({ p, w, set, options, variables }: { p: Param; w: Widget; set: 
   const metrics = known.data ? (Array.isArray(known.data.latest) ? known.data.latest : (known.data.latest.metrics ?? [])).map((m) => m.metric) : [];
   const devicePicker = (value: string | undefined, onChange: (v: string) => void, label: string) => (
     <select id={label} className="input" value={value ?? ""} onChange={(e) => onChange(e.target.value)}>
-      <option value="">Choose…</option>
+      <option value="">{t("Choose…")}</option>
       {variables.map((v) => (
         <option key={v.name} value={`$${v.name}`}>
-          Whichever {v.label} is chosen
+          {t("Whichever {label} is chosen", { label: v.label })}
         </option>
       ))}
       {options.map((o) => (
@@ -124,16 +124,16 @@ function Setting({ p, w, set, options, variables }: { p: Param; w: Widget; set: 
         {lines.map((l, i) => (
           <div className="edge-line-source" key={i}>
             {devicePicker(l.device, (v) => change(i, { device: v }), `${id}-${i}`)}
-            <input className="input" aria-label="Metric" placeholder="Metric" value={l.metric} onChange={(e) => change(i, { metric: e.target.value })} />
-            <input className="input" aria-label="Label" placeholder="Label" value={l.label ?? ""} onChange={(e) => change(i, { label: e.target.value })} />
+            <input className="input" aria-label={t("Metric")} placeholder={t("Metric")} value={l.metric} onChange={(e) => change(i, { metric: e.target.value })} />
+            <input className="input" aria-label={t("Label")} placeholder={t("Label")} value={l.label ?? ""} onChange={(e) => change(i, { label: e.target.value })} />
             <Button size="sm" onClick={() => set({ sources: lines.filter((_, j) => j !== i) })}>
-              Remove
+              {t("Remove")}
             </Button>
           </div>
         ))}
         <div>
           <Button size="sm" disabled={lines.length >= 8} onClick={() => set({ sources: [...lines, { device: "", metric: "" }] })}>
-            Add a line
+            {t("Add a line")}
           </Button>
         </div>
       </fieldset>
@@ -202,15 +202,15 @@ function Settings({ w, variables, onSave, onClose }: { w: Widget; variables: Var
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Back</Button>
+          <Button onClick={onClose}>{t("Back")}</Button>
           <Button variant="primary" onClick={() => onSave(draft)}>
-            Keep
+            {t("Keep")}
           </Button>
         </>
       }
     >
       <div className="stack">
-        <Field label="Title" htmlFor={`${id}-t`}>
+        <Field label={t("Title")} htmlFor={`${id}-t`}>
           <input id={`${id}-t`} className="input" value={draft.title ?? ""} onChange={(e) => set({ title: e.target.value })} />
         </Field>
         {kind?.params.map((p) => <Setting key={p.name} p={p} w={draft} set={set} options={q.data?.devices ?? []} variables={variables} />)}
@@ -225,11 +225,11 @@ function Variables({ board, onChange, onClose }: { board: Board; onChange: (vari
   return (
     <Dialog
       open
-      title="Choices at the top"
+      title={t("Choices at the top")}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Back</Button>
+          <Button onClick={onClose}>{t("Back")}</Button>
           <Button
             variant="primary"
             onClick={() => {
@@ -237,25 +237,25 @@ function Variables({ board, onChange, onClose }: { board: Board; onChange: (vari
               onClose();
             }}
           >
-            Keep
+            {t("Keep")}
           </Button>
         </>
       }
     >
       <div className="stack">
-        <p className="muted">One dashboard for many devices: a widget set to the choice follows whichever device is picked.</p>
+        <p className="muted">{t("One dashboard for many devices: a widget set to the choice follows whichever device is picked.")}</p>
         {list.map((v, i) => (
           <div className="edge-line-source" key={i}>
-            <input className="input" aria-label="Label" placeholder="Label: Press" value={v.label} onChange={(e) => change(i, { label: e.target.value, name: v.name || e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "_") })} />
-            <input className="input" aria-label="Kind of device" placeholder="Kind: Machine" value={v.kind ?? ""} onChange={(e) => change(i, { kind: e.target.value })} />
+            <input className="input" aria-label={t("Label")} placeholder={t("Label: Press")} value={v.label} onChange={(e) => change(i, { label: e.target.value, name: v.name || e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "_") })} />
+            <input className="input" aria-label={t("Kind of device")} placeholder={t("Kind: Machine")} value={v.kind ?? ""} onChange={(e) => change(i, { kind: e.target.value })} />
             <Button size="sm" onClick={() => setList(list.filter((_, j) => j !== i))}>
-              Remove
+              {t("Remove")}
             </Button>
           </div>
         ))}
         <div>
           <Button size="sm" onClick={() => setList([...list, { name: "", label: "" }])}>
-            Add a choice
+            {t("Add a choice")}
           </Button>
         </div>
       </div>
@@ -278,19 +278,19 @@ function Share({ id, shared, onClose }: { id: string; shared: boolean; onClose: 
   const end = useMutation({
     mutationFn: () => unshareBoard(id),
     onSuccess: () => {
-      toast("That link no longer leads anywhere.");
+      toast(t("That link no longer leads anywhere."));
       done();
       onClose();
     },
     onError: (e) => toast(refusal(e), "error"),
   });
   return (
-    <Dialog open title="Share by a link" onClose={onClose} footer={<Button onClick={onClose}>Done</Button>}>
+    <Dialog open title={t("Share by a link")} onClose={onClose} footer={<Button onClick={onClose}>{t("Done")}</Button>}>
       <div className="stack">
-        <p className="muted">Anyone with the link sees what this shows, with no account. It leaves out buttons and setpoints, and changes nothing.</p>
+        <p className="muted">{t("Anyone with the link sees what this shows, with no account. It leaves out buttons and setpoints, and changes nothing.")}</p>
         {link ? (
           <>
-            <Alert tone="warning">This is the only time it is shown.</Alert>
+            <Alert tone="warning">{t("This is the only time it is shown.")}</Alert>
             <code className="edge-token">{link}</code>
           </>
         ) : null}
@@ -300,7 +300,7 @@ function Share({ id, shared, onClose }: { id: string; shared: boolean; onClose: 
           </Button>
           {shared ? (
             <Button loading={end.isPending} onClick={() => end.mutate()}>
-              End the link
+              {t("End the link")}
             </Button>
           ) : null}
         </div>
@@ -358,13 +358,13 @@ export function Grid({ board, data, live, editing, onMove, onResize, onEdit, onR
               {editing ? (
                 <span className="edge-widget-tools">
                   <button type="button" className="edge-widget-grip" aria-label={`Move ${w.title ?? "widget"}, or size it with shift and the arrows`} onPointerDown={(e) => drag(e, w, false)} onKeyDown={(e) => keys(e, w)}>
-                    Move
+                    {t("Move")}
                   </button>
                   <button type="button" onClick={() => onEdit?.(w)}>
-                    Set up
+                    {t("Set up")}
                   </button>
                   <button type="button" onClick={() => onRemove?.(w.id)}>
-                    Remove
+                    {t("Remove")}
                   </button>
                 </span>
               ) : null}
@@ -408,7 +408,7 @@ export function BoardPage() {
     onSuccess: () => {
       setDraft(null);
       setEditing(false);
-      toast("Saved.");
+      toast(t("Saved."));
       void qc.invalidateQueries({ queryKey: ["edge", "board", id] });
     },
     onError: (e) => toast(refusal(e), "error"),
@@ -420,12 +420,12 @@ export function BoardPage() {
     <div className="edge-page">
       <Tabs />
       <div className="edge-bar">
-        <Link to="/dashboards">Dashboards</Link>
+        <Link to="/dashboards">{t("Dashboards")}</Link>
         {(board.variables ?? []).map((v) => (
           <label key={v.name} className="edge-variable">
             {v.label}
             <select className="input" value={vars[v.name] ?? ""} onChange={(e) => setVars({ ...vars, [v.name]: e.target.value })}>
-              <option value="">Choose…</option>
+              <option value="">{t("Choose…")}</option>
               {(list.data?.devices ?? [])
                 .filter((d) => !v.kind || d.kind === v.kind)
                 .map((d) => (
@@ -437,7 +437,7 @@ export function BoardPage() {
           </label>
         ))}
         <span className="edge-grow" />
-        <div className="edge-choice" role="group" aria-label="Period">
+        <div className="edge-choice" role="group" aria-label={t("Period")}>
           {RANGES.map(([label, s]) => (
             <button key={s} type="button" aria-pressed={s === last} onClick={() => setSecs(s)}>
               {label}
@@ -448,7 +448,7 @@ export function BoardPage() {
           <>
             <Button onClick={() => setSharing(true)}>{q.data.shared_at ? "Shared" : "Share…"}</Button>
             <Button variant="primary" onClick={() => setEditing(true)}>
-              Lay out
+              {t("Lay out")}
             </Button>
           </>
         ) : null}
@@ -456,7 +456,7 @@ export function BoardPage() {
           <>
             <select
               className="input edge-add"
-              aria-label="Add a widget"
+              aria-label={t("Add a widget")}
               value=""
               onChange={(e) => {
                 if (e.target.value) {
@@ -466,7 +466,7 @@ export function BoardPage() {
                 }
               }}
             >
-              <option value="">Add a widget…</option>
+              <option value="">{t("Add a widget…")}</option>
               {["Show", "Over time", "Lists", "Control", "Words"].map((group) => (
                 <optgroup key={group} label={group}>
                   {KINDS.filter((k) => k.group === group).map((k) => (
@@ -477,23 +477,23 @@ export function BoardPage() {
                 </optgroup>
               ))}
             </select>
-            <Button onClick={() => setChoices(true)}>Choices…</Button>
+            <Button onClick={() => setChoices(true)}>{t("Choices…")}</Button>
             <Button
               onClick={() => {
                 setDraft(null);
                 setEditing(false);
               }}
             >
-              Back
+              {t("Back")}
             </Button>
             <Button variant="primary" loading={save.isPending} onClick={() => save.mutate()}>
-              Save
+              {t("Save")}
             </Button>
           </>
         ) : null}
       </div>
       {board.widgets.length === 0 ? (
-        <EmptyState title="Nothing on it yet" icon="chart">
+        <EmptyState title={t("Nothing on it yet")} icon="chart">
           <p className="muted">{writable ? "Add a widget to begin." : "Someone has still to lay this out."}</p>
         </EmptyState>
       ) : (

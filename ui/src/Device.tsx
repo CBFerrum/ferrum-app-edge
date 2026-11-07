@@ -5,7 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useParams } from "react-router";
-import { refusal, relativeTime } from "@ferrum/client";
+import { refusal, relativeTime, t as tr } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { tries } from "./connecting";
 import { type Attribute, connection, desire, device, deviceRecord, type Issued, issueCredentials, revokeCredentials, sendCommand } from "./data";
@@ -32,7 +32,7 @@ function Ask({ id, attribute, onClose }: { id: string; attribute: Attribute | nu
       return desire(id, key.trim(), parsed);
     },
     onSuccess: () => {
-      toast("Asked. It shows as out of step until the device says it is so.");
+      toast(tr("Asked. It shows as out of step until the device says it is so."));
       void qc.invalidateQueries({ queryKey: ["edge", "device", id] });
       onClose();
     },
@@ -45,21 +45,21 @@ function Ask({ id, attribute, onClose }: { id: string; attribute: Attribute | nu
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Back</Button>
+          <Button onClick={onClose}>{tr("Back")}</Button>
           <Button variant="primary" disabled={!key.trim()} loading={ask.isPending} onClick={() => ask.mutate()}>
-            Ask for it
+            {tr("Ask for it")}
           </Button>
         </>
       }
     >
       <div className="stack">
-        <p className="muted">This goes through the ledger as a command, so the device must have been commissioned for it.</p>
+        <p className="muted">{tr("This goes through the ledger as a command, so the device must have been commissioned for it.")}</p>
         {attribute ? null : (
-          <Field label="Attribute" htmlFor={`${form}-k`} required>
+          <Field label={tr("Attribute")} htmlFor={`${form}-k`} required>
             <input id={`${form}-k`} className="input" value={key} onChange={(e) => setKey(e.target.value)} />
           </Field>
         )}
-        <Field label="Value" htmlFor={`${form}-v`} required>
+        <Field label={tr("Value")} htmlFor={`${form}-v`} required>
           <input id={`${form}-v`} className="input" value={value} onChange={(e) => setValue(e.target.value)} />
         </Field>
       </div>
@@ -91,30 +91,30 @@ function Send({ id, operations, onClose }: { id: string; operations: string[]; o
   return (
     <Dialog
       open
-      title="Send a command"
+      title={tr("Send a command")}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Back</Button>
+          <Button onClick={onClose}>{tr("Back")}</Button>
           <Button variant="primary" disabled={!operation || !parsed.ok || minutes < 1} loading={send.isPending} onClick={() => send.mutate()}>
-            Send it
+            {tr("Send it")}
           </Button>
         </>
       }
     >
       <div className="stack">
-        <Field label="Operation" htmlFor={`${form}-o`} required>
+        <Field label={tr("Operation")} htmlFor={`${form}-o`} required>
           <select id={`${form}-o`} className="input" value={operation} onChange={(e) => setOperation(e.target.value)}>
             {operations.map((o) => (
               <option key={o}>{o}</option>
             ))}
           </select>
         </Field>
-        <Field label="With" htmlFor={`${form}-p`} hint="JSON: what its definition asks of {payload.x}.">
+        <Field label={tr("With")} htmlFor={`${form}-p`} hint="JSON: what its definition asks of {payload.x}.">
           <textarea id={`${form}-p`} className="input edge-code" spellCheck={false} rows={4} value={payload} onChange={(e) => setPayload(e.target.value)} />
         </Field>
-        {parsed.ok ? null : <p className="edge-why">That is not JSON yet.</p>}
-        <Field label="Gives up after (minutes)" htmlFor={`${form}-m`} hint="Not started by then, it does not start.">
+        {parsed.ok ? null : <p className="edge-why">{tr("That is not JSON yet.")}</p>}
+        <Field label={tr("Gives up after (minutes)")} htmlFor={`${form}-m`} hint={tr("Not started by then, it does not start.")}>
           <input id={`${form}-m`} className="input" type="number" min="1" value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} />
         </Field>
       </div>
@@ -145,19 +145,19 @@ function Connect({ id, onClose }: { id: string; onClose: () => void }) {
     mutationFn: () => revokeCredentials(id, kind),
     onSuccess: () => {
       setIssued(null);
-      toast("Taken away. Its gateway ends the connection at its next exchange.");
+      toast(tr("Taken away. Its gateway ends the connection at its next exchange."));
       done();
     },
     onError: (e) => toast(refusal(e), "error"),
   });
   const has = q.data ? (kind === "token" ? q.data.token : kind === "password" ? q.data.password : Boolean(q.data.certificate)) : false;
   return (
-    <Dialog open title="Connect this device" onClose={onClose} footer={<Button onClick={onClose}>Done</Button>}>
+    <Dialog open title={tr("Connect this device")} onClose={onClose} footer={<Button onClick={onClose}>{tr("Done")}</Button>}>
       <div className="stack">
         {q.isPending ? <PageLoading /> : null}
         {q.isError ? <ErrorState error={q.error} /> : null}
-        {q.data && !q.data.calls_in ? <Alert tone="warning">Its definition reaches out to it. For a device that calls in, give it a definition with api: device, such as the template Devices that call in. A token still works for posting to this workspace directly.</Alert> : null}
-        <div className="edge-choice" role="group" aria-label="How it proves who it is">
+        {q.data && !q.data.calls_in ? <Alert tone="warning">{tr("Its definition reaches out to it. For a device that calls in, give it a definition with api: device, such as the template Devices that call in. A token still works for posting to this workspace directly.")}</Alert> : null}
+        <div className="edge-choice" role="group" aria-label={tr("How it proves who it is")}>
           {(["token", "password", "certificate"] as const).map((k) => (
             <button
               key={k}
@@ -174,16 +174,16 @@ function Connect({ id, onClose }: { id: string; onClose: () => void }) {
         </div>
         {kind === "password" ? (
           <>
-            <Field label="MQTT client id" htmlFor={`${form}-c`} hint="Either of these, or both">
+            <Field label={tr("MQTT client id")} htmlFor={`${form}-c`} hint={tr("Either of these, or both")}>
               <input id={`${form}-c`} className="input" value={client} onChange={(e) => setClient(e.target.value)} />
             </Field>
-            <Field label="MQTT user" htmlFor={`${form}-u`}>
+            <Field label={tr("MQTT user")} htmlFor={`${form}-u`}>
               <input id={`${form}-u`} className="input" value={user} onChange={(e) => setUser(e.target.value)} />
             </Field>
           </>
         ) : null}
         {kind === "certificate" ? (
-          <Field label="Its certificate" htmlFor={`${form}-x`} hint="In PEM, or its SHA-256 fingerprint. Never its private key.">
+          <Field label={tr("Its certificate")} htmlFor={`${form}-x`} hint={tr("In PEM, or its SHA-256 fingerprint. Never its private key.")}>
             <textarea id={`${form}-x`} className="input edge-code" rows={5} value={certificate} onChange={(e) => setCertificate(e.target.value)} />
           </Field>
         ) : null}
@@ -193,13 +193,13 @@ function Connect({ id, onClose }: { id: string; onClose: () => void }) {
           </Button>
           {has ? (
             <Button loading={revoke.isPending} onClick={() => revoke.mutate()}>
-              Take it away
+              {tr("Take it away")}
             </Button>
           ) : null}
         </div>
         {issued?.token || issued?.password ? (
           <>
-            <Alert tone="warning">This is the only time it is shown, and it replaces the one before.</Alert>
+            <Alert tone="warning">{tr("This is the only time it is shown, and it replaces the one before.")}</Alert>
             <code className="edge-token">{issued.token ?? issued.password}</code>
           </>
         ) : null}
@@ -235,25 +235,25 @@ export function DevicePage() {
       <Tabs />
       <div className="edge-bar">
         <Link className="btn btn-md" to={`/e/Device/${id}`}>
-          Open the record
+          {tr("Open the record")}
         </Link>
         {operations.length ? (
           <Button variant="primary" onClick={() => setSending(true)}>
-            Send a command…
+            {tr("Send a command…")}
           </Button>
         ) : null}
-        <Button onClick={() => setAsking("new")}>Ask for a value…</Button>
-        <Button onClick={() => setToken(true)}>Connect…</Button>
+        <Button onClick={() => setAsking("new")}>{tr("Ask for a value…")}</Button>
+        <Button onClick={() => setToken(true)}>{tr("Connect…")}</Button>
       </div>
       {d.alarms.length ? (
-        <section className="card card-pad stack" aria-label="Open alarms">
-          <h2 className="edge-section">Alarms</h2>
+        <section className="card card-pad stack" aria-label={tr("Open alarms")}>
+          <h2 className="edge-section">{tr("Alarms")}</h2>
           <ul className="edge-rows">
             {d.alarms.map((a) => (
               <li key={a.id}>
                 <div className="edge-row-main">
                   <strong>{a.summary}</strong>
-                  <div className="faint">Raised {relativeTime(a.raised_at)}</div>
+                  <div className="faint">{tr("Raised")} {relativeTime(a.raised_at)}</div>
                 </div>
                 <Badge tone={a.severity === "Critical" ? "red" : "amber"}>{a.severity}</Badge>
                 {a.status === "Active" ? <Acknowledge id={a.id} /> : <Badge>{a.status}</Badge>}
@@ -262,10 +262,10 @@ export function DevicePage() {
           </ul>
         </section>
       ) : null}
-      <section className="card card-pad stack" aria-label="Newest values">
-        <h2 className="edge-section">Newest values</h2>
+      <section className="card card-pad stack" aria-label={tr("Newest values")}>
+        <h2 className="edge-section">{tr("Newest values")}</h2>
         {metrics.length === 0 ? (
-          <EmptyState title="Nothing reported yet" icon="chart" />
+          <EmptyState title={tr("Nothing reported yet")} icon="chart" />
         ) : (
           <dl className="edge-values">
             {metrics.map((m) => (
@@ -279,8 +279,8 @@ export function DevicePage() {
         )}
       </section>
       {d.related?.length ? (
-        <section className="card card-pad stack" aria-label="Related devices">
-          <h2 className="edge-section">Related</h2>
+        <section className="card card-pad stack" aria-label={tr("Related devices")}>
+          <h2 className="edge-section">{tr("Related")}</h2>
           <ul className="edge-plain">
             {d.related.map((r) => (
               <li key={r.id}>
@@ -291,10 +291,10 @@ export function DevicePage() {
         </section>
       ) : null}
       <History id={id} code={record.data?.device_code ?? id} metrics={metrics.map((m) => m.metric)} />
-      <section className="card card-pad stack" aria-label="Attributes">
-        <h2 className="edge-section">What it says about itself</h2>
+      <section className="card card-pad stack" aria-label={tr("Attributes")}>
+        <h2 className="edge-section">{tr("What it says about itself")}</h2>
         {d.attributes.length === 0 ? (
-          <p className="muted">Nothing yet.</p>
+          <p className="muted">{tr("Nothing yet.")}</p>
         ) : (
           <ul className="edge-rows">
             {d.attributes.map((a) => (
@@ -306,19 +306,19 @@ export function DevicePage() {
                     {a.in_step === false ? `, asked for ${shown(a.desired)}` : ""}
                   </div>
                 </div>
-                {a.in_step === false ? <Badge tone="amber">Out of step</Badge> : null}
+                {a.in_step === false ? <Badge tone="amber">{tr("Out of step")}</Badge> : null}
                 <Button size="sm" onClick={() => setAsking(a)}>
-                  Change…
+                  {tr("Change…")}
                 </Button>
               </li>
             ))}
           </ul>
         )}
       </section>
-      <section className="card card-pad stack" aria-label="Recent events">
-        <h2 className="edge-section">What it said lately</h2>
+      <section className="card card-pad stack" aria-label={tr("Recent events")}>
+        <h2 className="edge-section">{tr("What it said lately")}</h2>
         {d.events.length === 0 ? (
-          <p className="muted">No events.</p>
+          <p className="muted">{tr("No events.")}</p>
         ) : (
           <ul className="edge-rows">
             {d.events.map((e, i) => (

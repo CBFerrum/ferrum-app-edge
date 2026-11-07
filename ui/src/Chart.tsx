@@ -2,7 +2,7 @@
 // gap, because nothing reported is not the same as nothing changing.
 
 import { type PointerEvent, useEffect, useRef, useState } from "react";
-import { formatMoment } from "@ferrum/client";
+import { formatMoment, t as tr } from "@ferrum/client";
 import { extent, type Line, linePath, nearest, timeLabel, timeTicks, valueTicks } from "./plotting";
 
 export const COLORS = ["var(--color-blue-600, #2563eb)", "var(--color-amber-600, #d97706)", "var(--color-emerald-600, #059669)", "var(--color-rose-600, #e11d48)", "var(--color-violet-600, #7c3aed)", "var(--color-cyan-600, #0891b2)", "var(--color-lime-600, #65a30d)", "var(--color-fuchsia-600, #c026d3)"];
@@ -42,7 +42,7 @@ export function Chart({ lines, from, to, gap, height: fixed = 260, marks = [], l
   }, [fill, fixed]);
   const [W, height] = [room.width, room.height];
   const range = extent(lines);
-  if (!range) return <p className="muted">Nothing reported in this period.</p>;
+  if (!range) return <p className="muted">{tr("Nothing reported in this period.")}</p>;
   const [lo, hi] = marks.reduce<[number, number]>(([a, b], m) => [Math.min(a, m.value), Math.max(b, m.value)], range);
   const ticks = valueTicks(lo, hi);
   const [bottom, top] = [ticks[0]!, ticks[ticks.length - 1]!];

@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { refusal, relativeTime } from "@ferrum/client";
+import { refusal, relativeTime, t as tr } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, statusTone, toast, useDebounced, useShellTitle } from "@ferrum/kit";
 import { askAll, type DeviceRow, devices, type Imported, importDevices, type Outcome, type Selection, setAll } from "./data";
 import { Tabs } from "./Tabs";
@@ -56,13 +56,13 @@ function AskAll({ select, count, onClose }: { select: Selection; count: number; 
       footer={
         outcomes ? (
           <Button variant="primary" onClick={onClose}>
-            Done
+            {tr("Done")}
           </Button>
         ) : (
           <>
-            <Button onClick={onClose}>Back</Button>
+            <Button onClick={onClose}>{tr("Back")}</Button>
             <Button variant="primary" disabled={!name.trim() || parsed === null} loading={ask.isPending} onClick={() => ask.mutate()}>
-              Ask each of them
+              {tr("Ask each of them")}
             </Button>
           </>
         )
@@ -72,11 +72,11 @@ function AskAll({ select, count, onClose }: { select: Selection; count: number; 
         <Outcomes outcomes={outcomes} />
       ) : (
         <div className="stack">
-          <p className="muted">One request goes to each device through the ledger, under your name, and each is checked as if you had asked it alone.</p>
-          <Field label="Ask for" htmlFor={`${id}-w`}>
+          <p className="muted">{tr("One request goes to each device through the ledger, under your name, and each is checked as if you had asked it alone.")}</p>
+          <Field label={tr("Ask for")} htmlFor={`${id}-w`}>
             <select id={`${id}-w`} className="input" value={what} onChange={(e) => setWhat(e.target.value as "command" | "setting")}>
-              <option value="command">A command</option>
-              <option value="setting">A setting</option>
+              <option value="command">{tr("A command")}</option>
+              <option value="setting">{tr("A setting")}</option>
             </select>
           </Field>
           <Field label={what === "command" ? "Operation" : "Setting"} htmlFor={`${id}-n`} required>
@@ -117,18 +117,18 @@ function Import({ onClose }: { onClose: () => void }) {
   return (
     <Dialog
       open
-      title="Import devices"
+      title={tr("Import devices")}
       onClose={onClose}
       footer={
         done ? (
           <Button variant="primary" onClick={onClose}>
-            Done
+            {tr("Done")}
           </Button>
         ) : (
           <>
-            <Button onClick={onClose}>Back</Button>
+            <Button onClick={onClose}>{tr("Back")}</Button>
             <Button variant="primary" disabled={!csv.trim()} loading={run.isPending} onClick={() => run.mutate()}>
-              Import them
+              {tr("Import them")}
             </Button>
           </>
         )
@@ -143,29 +143,29 @@ function Import({ onClose }: { onClose: () => void }) {
             <ul className="edge-refused">
               {done.failed.map((f) => (
                 <li key={f.line}>
-                  <strong>Line {f.line}</strong> {f.why}
+                  <strong>{tr("Line {line}", { line: f.line })}</strong> {f.why}
                 </li>
               ))}
             </ul>
           ) : null}
           {done.tokens.length ? (
             <>
-              <Alert tone="warning">These tokens are shown once. Keep them now: only a hash of each is stored.</Alert>
-              <Button onClick={download}>Download the tokens</Button>
+              <Alert tone="warning">{tr("These tokens are shown once. Keep them now: only a hash of each is stored.")}</Alert>
+              <Button onClick={download}>{tr("Download the tokens")}</Button>
             </>
           ) : null}
         </div>
       ) : (
         <div className="stack">
-          <p className="muted">The first line says what each column is: code and name at least, and kind, site, gateway, definition, tags or address if you have them. Separate tags with semicolons.</p>
-          <Field label="A file" htmlFor={`${id}-f`}>
+          <p className="muted">{tr("The first line says what each column is: code and name at least, and kind, site, gateway, definition, tags or address if you have them. Separate tags with semicolons.")}</p>
+          <Field label={tr("A file")} htmlFor={`${id}-f`}>
             <input id={`${id}-f`} type="file" accept=".csv,text/csv" onChange={(e) => void e.target.files?.[0]?.text().then(setCsv)} />
           </Field>
-          <Field label="Or the rows themselves" htmlFor={`${id}-c`}>
+          <Field label={tr("Or the rows themselves")} htmlFor={`${id}-c`}>
             <textarea id={`${id}-c`} className="input edge-code" rows={6} placeholder={SAMPLE} value={csv} onChange={(e) => setCsv(e.target.value)} />
           </Field>
           <label className="edge-check">
-            <input type="checkbox" checked={tokens} onChange={(e) => setTokens(e.target.checked)} /> Give each an access token
+            <input type="checkbox" checked={tokens} onChange={(e) => setTokens(e.target.checked)} /> {tr("Give each an access token")}
           </label>
         </div>
       )}
@@ -197,7 +197,7 @@ function Row({ d, chosen, choose }: { d: DeviceRow; chosen: boolean; choose: (on
             ))}
         </span>
       ) : null}
-      {d.active === true ? <Badge tone="green">Connected</Badge> : null}
+      {d.active === true ? <Badge tone="green">{tr("Connected")}</Badge> : null}
       {d.alarms ? <Badge tone="red">{d.alarms === 1 ? "1 alarm" : `${d.alarms} alarms`}</Badge> : null}
       <Badge tone={statusTone(d.lifecycle)}>{d.lifecycle}</Badge>
     </li>
@@ -227,20 +227,20 @@ export function Devices() {
     <div className="edge-page">
       <Tabs />
       <div className="edge-bar">
-        <input className="input edge-search" type="search" aria-label="Find a device" placeholder="Find a device" value={text} onChange={(e) => set("q", e.target.value)} />
-        <input className="input edge-search" type="search" aria-label="With the tag" placeholder="With the tag" value={tagged} onChange={(e) => set("tag", e.target.value)} />
-        <Button onClick={() => setDialog("import")}>Import</Button>
+        <input className="input edge-search" type="search" aria-label={tr("Find a device")} placeholder={tr("Find a device")} value={text} onChange={(e) => set("q", e.target.value)} />
+        <input className="input edge-search" type="search" aria-label={tr("With the tag")} placeholder={tr("With the tag")} value={tagged} onChange={(e) => set("tag", e.target.value)} />
+        <Button onClick={() => setDialog("import")}>{tr("Import")}</Button>
         <Link className="btn btn-md" to="/e/Device/new">
-          Add a device
+          {tr("Add a device")}
         </Link>
       </div>
       {picked.size ? (
         <div className="edge-bar" role="status">
           <span>{picked.size === 1 ? "1 device chosen" : `${picked.size} devices chosen`}</span>
           <Button variant="primary" onClick={() => setDialog("ask")}>
-            Ask them…
+            {tr("Ask them…")}
           </Button>
-          <Button onClick={() => setPicked(new Set())}>Clear</Button>
+          <Button onClick={() => setPicked(new Set())}>{tr("Clear")}</Button>
         </div>
       ) : null}
       {list.isPending ? (
@@ -249,12 +249,12 @@ export function Devices() {
         <ErrorState error={list.error} onRetry={() => void list.refetch()} />
       ) : shown.length === 0 ? (
         <EmptyState title={text || tagged ? "Nothing matches that" : "No devices yet"} icon="dashboard">
-          {text || tagged ? null : <Link to="/e/Device/new">Add your first device</Link>}
+          {text || tagged ? null : <Link to="/e/Device/new">{tr("Add your first device")}</Link>}
         </EmptyState>
       ) : (
         <>
           <label className="edge-check">
-            <input type="checkbox" checked={everything} onChange={(e) => setPicked(e.target.checked ? new Set(shown.map((d) => d.id)) : new Set())} /> All shown
+            <input type="checkbox" checked={everything} onChange={(e) => setPicked(e.target.checked ? new Set(shown.map((d) => d.id)) : new Set())} /> {tr("All shown")}
           </label>
           <ul className="card edge-rows edge-rows-pad">
             {shown.map((d) => (
