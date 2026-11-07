@@ -314,8 +314,8 @@ function Wires({ flow, node, setFlow, locked }: { flow: Flow; node: FlowNode; se
     <div className="stack">
       {leaving.length + arriving.length ? (
         <ul className="edge-rows">
-          {list(arriving, (e) => `From ${label(e.from)}${(e.port ?? "out") === "out" ? "" : `, on ${e.port}`}${(e.input ?? "in") === "in" ? "" : `, into ${e.input}`}`)}
-          {list(leaving, (e) => `${(e.port ?? "out") === "out" ? "To" : `On ${e.port}, to`} ${label(e.to)}${(e.input ?? "in") === "in" ? "" : `, into ${e.input}`}`)}
+          {list(arriving, (e) => [tr("From {from}", { from: label(e.from) }), (e.port ?? "out") === "out" ? "" : tr(", on {port}", { port: String(e.port) }), (e.input ?? "in") === "in" ? "" : tr(", into {input}", { input: String(e.input) })].join(""))}
+          {list(leaving, (e) => `${(e.port ?? "out") === "out" ? "To" : tr("On {port}, to", { port: String(e.port) })} ${label(e.to)}${(e.input ?? "in") === "in" ? "" : tr(", into {input}", { input: String(e.input) })}`)}
         </ul>
       ) : (
         <p className="muted">{tr("Not joined to anything yet.")}</p>

@@ -638,7 +638,7 @@ const WORDS: Record<string, string> = { ">": "above", ">=": "at least", "<": "be
 
 /** One line on a step, saying what it has been set to. */
 export function summary(n: FlowNode): string {
-  const who = n.device ? ` on ${text(n.device)}` : "";
+  const who = n.device ? t(" on {value}", { value: text(n.device) }) : "";
   switch (n.kind) {
     case "metric":
       return `${text(n.metric) || "Say which value"}${who}`;
@@ -650,21 +650,21 @@ export function summary(n: FlowNode): string {
       return `${text(n.key) || "Say which attribute"}${who}`;
     case "timer":
     case "limit":
-      return `Every ${text(n.every)}`;
+      return t("Every {value}", { value: text(n.every) });
     case "compare":
       return `${WORDS[text(n.op)] ?? text(n.op)} ${text(n.value)}`;
     case "range":
-      return `${text(n.min)} to ${text(n.max)}`;
+      return t("{value} to {value2}", { value: text(n.min), value2: text(n.max) });
     case "hold":
     case "silence":
     case "delay":
-      return `For ${text(n.for)}`;
+      return t("For {value}", { value: text(n.for) });
     case "changed":
-      return n.by === undefined ? "Any change" : `By ${text(n.by)}`;
+      return n.by === undefined ? "Any change" : t("By {value}", { value: text(n.by) });
     case "count":
-      return `${text(n.of)} within ${text(n.within)}`;
+      return t("{value} within {value2}", { value: text(n.of), value2: text(n.within) });
     case "window":
-      return `${text(n.stat)} over ${text(n.over)}`;
+      return t("{value} over {value2}", { value: text(n.stat), value2: text(n.over) });
     case "math":
     case "combine":
       return n.formula ? text(n.formula) : "Together";
@@ -677,7 +677,7 @@ export function summary(n: FlowNode): string {
     case "command":
       return text(n.operation) || "Say which";
     case "export":
-      return `To ${text(n.to) || "which?"}`;
+      return t("To {value}", { value: text(n.to) || "which?" });
     case "record_event":
     case "record_metric":
       return text(n.name) || "Name it";
@@ -699,22 +699,22 @@ export interface Effect {
 
 /** What a simulated flow did, as a sentence. */
 export function sayEffect(e: Effect): string {
-  const on = e.device ? ` on ${text(e.device)}` : "";
+  const on = e.device ? t(" on {value}", { value: text(e.device) }) : "";
   switch (e.effect) {
     case "alarm":
-      return e.raised ? `Raises “${text(e.name)}”${on}` : `Clears “${text(e.name)}”${on}`;
+      return e.raised ? t("Raises “{value}”{on}", { value: text(e.name), on }) : t("Clears “{value}”{on}", { value: text(e.name), on });
     case "event":
-      return `Records ${text(e.name)}${on}`;
+      return t("Records {value}{on}", { value: text(e.name), on });
     case "metric":
       return `Records ${text(e.name)} = ${text(e.value)}${on}`;
     case "attribute":
-      return `Sets ${text(e.key)} to ${text(e.value)}${on}`;
+      return t("Sets {value} to {value2}{on}", { value: text(e.key), value2: text(e.value), on });
     case "notify":
-      return `Tells people: ${text(e.title)}`;
+      return t("Tells people: {value}", { value: text(e.title) });
     case "export":
-      return `Sends to ${text(e.to)}`;
+      return t("Sends to {value}", { value: text(e.to) });
     case "command":
-      return `Asks for ${text(e.operation)}${on}. A person or an envelope decides.`;
+      return t("Asks for {value}{on}. A person or an envelope decides.", { value: text(e.operation), on });
     default:
       return e.effect;
   }
