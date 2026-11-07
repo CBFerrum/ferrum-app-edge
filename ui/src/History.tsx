@@ -7,7 +7,7 @@ import { Chart, COLORS } from "./Chart";
 import { csv, type Line, summary } from "./plotting";
 import { history, type HistoryPoint } from "./data";
 import { SLOW_POLL_MS } from "./live";
-import { t } from "@ferrum/client";
+import { t, isolate } from "@ferrum/client";
 
 const RANGES: [string, number][] = [
   ["15 min", 900],
@@ -54,7 +54,7 @@ export function History({ id, code, metrics, root }: { id: string; code: string;
         <div className="edge-choice" role="group" aria-label={t("Period")}>
           {RANGES.map(([label, s]) => (
             <button key={s} type="button" aria-pressed={s === secs} onClick={() => setSecs(s)}>
-              {label}
+              {isolate(label)}
             </button>
           ))}
         </div>
@@ -65,7 +65,7 @@ export function History({ id, code, metrics, root }: { id: string; code: string;
       <div className="edge-choice" role="group" aria-label={t("Metrics")}>
         {metrics.map((m) => (
           <button key={m} type="button" aria-pressed={chosen.includes(m)} onClick={() => toggle(m)}>
-            {m}
+            {isolate(m)}
           </button>
         ))}
       </div>
@@ -75,7 +75,7 @@ export function History({ id, code, metrics, root }: { id: string; code: string;
         <p className="muted">{t("Choose something to draw.")}</p>
       ) : q.data ? (
         <>
-          <Chart lines={lines} from={Date.parse(q.data.from)} to={Date.parse(q.data.to)} gap={Math.max(q.data.bucket_secs * 3, 300) * 1000} label={`History of ${chosen.join(", ")}`} />
+          <Chart lines={lines} from={Date.parse(q.data.from)} to={Date.parse(q.data.to)} gap={Math.max(q.data.bucket_secs * 3, 300) * 1000} label={t("History of {chosen}", { chosen: chosen.join(", ") })} />
           <table className="edge-table">
             <thead>
               <tr>
@@ -93,12 +93,12 @@ export function History({ id, code, metrics, root }: { id: string; code: string;
                 return (
                   <tr key={l.label}>
                     <th scope="row">
-                      <span className="edge-chart-key" style={{ background: COLORS[i % COLORS.length] }} /> {l.label} {l.unit ? <span className="faint">{l.unit}</span> : null}
+                      <span className="edge-chart-key" style={{ background: COLORS[i % COLORS.length] }} /> {isolate(l.label)} {l.unit ? <span className="faint">{isolate(l.unit)}</span> : null}
                     </th>
-                    <td>{n(s?.min)}</td>
-                    <td>{n(s?.avg)}</td>
-                    <td>{n(s?.max)}</td>
-                    <td>{n(s?.last)}</td>
+                    <td>{isolate(n(s?.min))}</td>
+                    <td>{isolate(n(s?.avg))}</td>
+                    <td>{isolate(n(s?.max))}</td>
+                    <td>{isolate(n(s?.last))}</td>
                   </tr>
                 );
               })}

@@ -6,7 +6,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type KeyboardEvent, type PointerEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
-import { formatMoment, refusal, relativeTime, t as tr } from "@ferrum/client";
+import { formatMoment, refusal, relativeTime, t as tr, isolate } from "@ferrum/client";
 import { Alert, Button, confirmDialog, Dialog, ErrorState, Field, PageLoading, toast, useDebounced, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
 import { can, LinkInput, useEntityMeta, useMe } from "@ferrum/records";
 import { flowAction, type FlowDoc, flowDoc, flowTraces, flowVersions, type Moment, saveFlow, type Simulated, simulateFlow, type Traced, tryFlow } from "./data";
@@ -43,9 +43,9 @@ import {
 } from "./drawing";
 
 const GROUPS: { group: Group; label: string }[] = [
-  { group: "Listen", label: "When" },
-  { group: "Decide", label: "Decide" },
-  { group: "Do", label: "Do" },
+  { group: "Listen", get label() { return tr("When"); } },
+  { group: "Decide", get label() { return tr("Decide"); } },
+  { group: "Do", get label() { return tr("Do"); } },
 ];
 
 interface Picked {
@@ -169,10 +169,10 @@ function Canvas({
                 <rect width={NODE_W} height={NODE_H} rx="8" />
                 {/* Named inputs sit on the left edge, so the words start after them. */}
                 <text x={ins.length > 1 ? 46 : 14} y="24" className="edge-node-title">
-                  {(n.label ?? k.label).slice(0, ins.length > 1 ? 18 : 22)}
+                  {isolate((n.label ?? k.label).slice(0, ins.length > 1 ? 18 : 22))}
                 </text>
                 <text x={ins.length > 1 ? 46 : 14} y="44" className="edge-node-says">
-                  {summary(n).slice(0, ins.length > 1 ? 20 : 25)}
+                  {isolate(summary(n).slice(0, ins.length > 1 ? 20 : 25))}
                 </text>
               </g>
               {!locked &&
@@ -184,7 +184,7 @@ function Canvas({
                       <circle cx={at.x} cy={at.y} r="5" />
                       {ins.length > 1 ? (
                         <text x={at.x + 9} y={at.y + 3} className="edge-port-name">
-                          {input}
+                          {isolate(input)}
                         </text>
                       ) : null}
                     </g>
@@ -199,7 +199,7 @@ function Canvas({
                     <circle cx={at.x} cy={at.y} r="5" />
                     {outs.length > 1 ? (
                       <text x={at.x - 9} y={at.y + 3} textAnchor="end" className="edge-port-name">
-                        {port}
+                        {isolate(port)}
                       </text>
                     ) : null}
                   </g>
@@ -221,7 +221,7 @@ function Setting({ node, param, onChange, disabled }: { node: FlowNode; param: P
   if (param.type === "check") {
     return (
       <label className="edge-check">
-        <input type="checkbox" disabled={disabled} checked={Boolean(value)} onChange={(e) => onChange(e.target.checked || undefined)} /> {param.label}
+        <input type="checkbox" disabled={disabled} checked={Boolean(value)} onChange={(e) => onChange(e.target.checked || undefined)} /> {isolate(param.label)}
       </label>
     );
   }
@@ -231,7 +231,7 @@ function Setting({ node, param, onChange, disabled }: { node: FlowNode; param: P
         return (
           <select id={id} className="input" disabled={disabled} value={shown(value)} onChange={(e) => onChange(e.target.value)}>
             {param.options!.map((o) => (
-              <option key={o}>{o}</option>
+              <option key={o}>{isolate(o)}</option>
             ))}
           </select>
         );
@@ -302,7 +302,7 @@ function Wires({ flow, node, setFlow, locked }: { flow: Flow; node: FlowNode; se
   const list = (edges: FlowEdge[], text: (e: FlowEdge) => string) =>
     edges.map((e, i) => (
       <li key={i}>
-        <span className="edge-row-main">{text(e)}</span>
+        <span className="edge-row-main">{isolate(text(e))}</span>
         {locked ? null : (
           <Button size="sm" onClick={() => setFlow(disconnect(flow, e))}>
             {tr("Remove")}
@@ -327,7 +327,7 @@ function Wires({ flow, node, setFlow, locked }: { flow: Flow; node: FlowNode; se
             <Field label={tr("Going out of")} htmlFor={`${id}-p`}>
               <select id={`${id}-p`} className="input" value={port} onChange={(e) => setPort(e.target.value)}>
                 {outs.map((p) => (
-                  <option key={p}>{p}</option>
+                  <option key={p}>{isolate(p)}</option>
                 ))}
               </select>
             </Field>
@@ -339,7 +339,7 @@ function Wires({ flow, node, setFlow, locked }: { flow: Flow; node: FlowNode; se
                 .filter((n) => n.id !== node.id && kindOf(n.kind).group !== "Listen")
                 .map((n) => (
                   <option key={n.id} value={n.id}>
-                    {label(n.id)}
+                    {isolate(label(n.id))}
                   </option>
                 ))}
             </select>
@@ -352,12 +352,12 @@ function Wires({ flow, node, setFlow, locked }: { flow: Flow; node: FlowNode; se
             <Field label={tr("Into")} htmlFor={`${id}-i`}>
               <select id={`${id}-i`} className="input" value={edge.input} onChange={(e) => setInput(e.target.value)}>
                 {accepts.map((p) => (
-                  <option key={p}>{p}</option>
+                  <option key={p}>{isolate(p)}</option>
                 ))}
               </select>
             </Field>
           ) : null}
-          {refused ? <p className="edge-why">{refused}</p> : null}
+          {refused ? <p className="edge-why">{isolate(refused)}</p> : null}
           <Button disabled={!to || refused !== null} onClick={() => setFlow(connect(flow, edge))}>
             {tr("Join them")}
           </Button>
@@ -373,9 +373,9 @@ function Inspector({ flow, setFlow, id, select, locked }: { flow: Flow; setFlow:
   if (!node) return null;
   const k = kindOf(node.kind);
   return (
-    <section className="card card-pad stack edge-inspector" aria-label={`Settings of ${node.label ?? k.label}`}>
+    <section className="card card-pad stack edge-inspector" aria-label={tr("Settings of {value}", { value: node.label ?? k.label })}>
       <div className="edge-head">
-        <h2 className="edge-section">{k.label}</h2>
+        <h2 className="edge-section">{isolate(k.label)}</h2>
         {locked ? null : (
           <Button
             size="sm"
@@ -388,7 +388,7 @@ function Inspector({ flow, setFlow, id, select, locked }: { flow: Flow; setFlow:
           </Button>
         )}
       </div>
-      <p className="muted">{k.says}</p>
+      <p className="muted">{isolate(k.says)}</p>
       <Field label={tr("Called")} htmlFor={nameId}>
         <input id={nameId} className="input" disabled={locked} placeholder={k.label} value={node.label ?? ""} onChange={(e) => setFlow(change(flow, node.id, { label: e.target.value }))} />
       </Field>
@@ -425,7 +425,7 @@ function Simulation({
     <section className="card card-pad stack" aria-label={tr("Simulate")}>
       <h2 className="edge-section">{tr("Simulate")}</h2>
       <p className="muted">
-        {tr("Say what happens and when, and watch what this flow does, by the code a gateway runs. Nothing reaches a device.")}{canRecord ? " A version must be simulated before it can go for review." : ""}
+        {tr("Say what happens and when, and watch what this flow does, by the code a gateway runs. Nothing reaches a device.")}{canRecord ? tr(" A version must be simulated before it can go for review.") : ""}
       </p>
       {lines.map((l, i) => (
         <div key={i} className="edge-line">
@@ -451,7 +451,7 @@ function Simulation({
           <Field label={tr("Value")} htmlFor={`${id}-${i}-v`}>
             <input id={`${id}-${i}-v`} className="input" value={l.value} onChange={(e) => edit(i, { value: e.target.value })} />
           </Field>
-          <Button size="sm" aria-label={`Remove line ${i + 1}`} onClick={() => setLines((x) => x.filter((_, j) => j !== i))}>
+          <Button size="sm" aria-label={tr("Remove line {value}", { value: i + 1 })} onClick={() => setLines((x) => x.filter((_, j) => j !== i))}>
             {tr("Remove")}
           </Button>
         </div>
@@ -463,7 +463,7 @@ function Simulation({
           {tr("Simulate it")}
         </Button>
       </div>
-      {result && !result.ok ? <Alert tone="error">{result.error}</Alert> : null}
+      {result && !result.ok ? <Alert tone="error">{isolate(result.error ?? "")}</Alert> : null}
       {result?.ok && result.moments?.length === 0 ? <Alert tone="info">{tr("Nothing happened.")}</Alert> : null}
       {result?.ok && result.moments?.length ? (
         <ol className="edge-timeline">
@@ -471,10 +471,10 @@ function Simulation({
             <li key={m.at}>
               <button type="button" className={chosen?.at === m.at ? "edge-moment edge-on" : "edge-moment"} onClick={() => choose(chosen?.at === m.at ? null : m)}>
                 <strong>{tr("After {at} s", { at: m.at })}</strong>
-                {m.effects.length ? m.effects.map((e, i) => <span key={i}>{sayEffect(e)}</span>) : <span className="faint">{tr("Passed through {length}", { length: m.trace.length })} {m.trace.length === 1 ? "step" : "steps"}{tr(", and nothing came of it yet")}</span>}
+                {m.effects.length ? m.effects.map((e, i) => <span key={i}>{isolate(sayEffect(e))}</span>) : <span className="faint">{tr("Passed through {length}", { length: m.trace.length })} {m.trace.length === 1 ? tr("step") : tr("steps")}{tr(", and nothing came of it yet")}</span>}
                 {m.problems.map((p) => (
                   <span key={p} className="edge-why">
-                    {p}
+                    {isolate(p)}
                   </span>
                 ))}
               </button>
@@ -495,7 +495,7 @@ function Stages({ doc, digest }: { doc: FlowDoc; digest: string | undefined }) {
     <ol className="edge-stages" aria-label={tr("Where this flow stands")}>
       {STAGES.map((s, i) => (
         <li key={s} className={i < at ? "edge-stage-done" : i === at ? "edge-stage-now" : ""} aria-current={i === at ? "step" : undefined}>
-          {s}
+          {isolate(s)}
         </li>
       ))}
     </ol>
@@ -531,7 +531,7 @@ export function FlowEditor() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["edge", "flow", id], queryFn: () => flowDoc(id) });
   const doc = q.data;
-  useShellTitle(doc?.flow_name ?? "Flow");
+  useShellTitle(doc?.flow_name ?? tr("Flow"));
   const [flow, setFlow] = useState<Flow>({ nodes: [], edges: [] });
   const [saved, setSaved] = useState("");
   const [selected, select] = useState<string | null>(null);
@@ -602,7 +602,7 @@ export function FlowEditor() {
   };
   const move = useCallback((nid: string, x: number, y: number) => setFlow((f) => ({ ...f, nodes: f.nodes.map((n) => (n.id === nid ? { ...n, x, y } : n)) })), []);
   const stop = async () => {
-    if (await confirmDialog({ title: "Stop this flow?", message: "Gateways stop it at their next exchange. Whatever it was watching goes unwatched until it runs again.", confirmLabel: "Stop it" })) {
+    if (await confirmDialog({ title: tr("Stop this flow?"), message: tr("Gateways stop it at their next exchange. Whatever it was watching goes unwatched until it runs again."), confirmLabel: tr("Stop it") })) {
       act.mutate({ name: "stop", done: "Stopped. Gateways drop it at their next exchange." });
     }
   };
@@ -614,7 +614,7 @@ export function FlowEditor() {
     <div className="edge-page">
       <div className="edge-bar">
         <Link to="/flows">{tr("Flows")}</Link>
-        <strong className="edge-title">{d.flow_name}</strong>
+        <strong className="edge-title">{isolate(d.flow_name)}</strong>
         <span className="edge-grow" />
         <Button onClick={() => download(d.flow_name, text)}>{tr("Download")}</Button>
         {locked ? null : (
@@ -661,7 +661,7 @@ export function FlowEditor() {
       ) : null}
       {problem ? (
         <Alert tone="warning">
-          <span role="status">{problem}</span>
+          <span role="status">{isolate(problem)}</span>
         </Alert>
       ) : null}
       <div className="edge-editor">
@@ -669,7 +669,7 @@ export function FlowEditor() {
           <section className="card card-pad edge-palette" aria-label={tr("Steps you can add")}>
             {GROUPS.map(({ group, label }) => (
               <div key={group} className="edge-palette-group">
-                <h2 className="edge-section">{label}</h2>
+                <h2 className="edge-section">{isolate(label)}</h2>
                 <div className="edge-palette-items">
                   {KINDS.filter((k) => k.group === group).map((k) => (
                     <button
@@ -684,7 +684,7 @@ export function FlowEditor() {
                         select(made.id);
                       }}
                     >
-                      {k.label}
+                      {isolate(k.label)}
                     </button>
                   ))}
                 </div>
@@ -694,7 +694,7 @@ export function FlowEditor() {
         )}
         <div className="edge-board">
           <div className="edge-bar">
-            {picked ? <span className="faint">{tr("Choose where it goes: a dot on the left of a step. Esc cancels.")}</span> : <span className="faint">{locked ? "This version is locked." : "Click a dot on the right of a step, then one on the left of another, to join them."}</span>}
+            {picked ? <span className="faint">{tr("Choose where it goes: a dot on the left of a step. Esc cancels.")}</span> : <span className="faint">{locked ? tr("This version is locked.") : tr("Click a dot on the right of a step, then one on the left of another, to join them.")}</span>}
             <span className="edge-grow" />
             {locked ? null : <Button size="sm" onClick={() => setFlow(arrange(flow))}>{tr("Tidy up")}</Button>}
           </div>
@@ -733,7 +733,7 @@ function SiteChoice({ doc, locked }: { doc: FlowDoc; locked: boolean }) {
   });
   return (
     <div className="edge-fields">
-      <Field label={tr("Runs on")} htmlFor={`${id}-on`} hint={doc.runs_at === "Platform" ? "The platform sees across sites, a minute at a time, and stops when the link does." : "A gateway hears every reading and keeps working with the link down."}>
+      <Field label={tr("Runs on")} htmlFor={`${id}-on`} hint={doc.runs_at === "Platform" ? tr("The platform sees across sites, a minute at a time, and stops when the link does.") : tr("A gateway hears every reading and keeps working with the link down.")}>
         <select id={`${id}-on`} className="input" value={doc.runs_at ?? "Gateway"} disabled={locked} onChange={(e) => set.mutate({ runs_at: e.target.value as FlowDoc["runs_at"] })}>
           <option value="Gateway">{tr("Each gateway")}</option>
           <option value="Platform">{tr("The platform")}</option>
@@ -767,7 +767,7 @@ function Versions({ doc, locked, draft }: { doc: FlowDoc; locked: boolean; draft
           <li key={v.revision}>
             <strong>{tr("Version {revision}", { revision: v.revision })}</strong>
             <span className="faint">
-              {tr("Run by {by},", { by: v.by })} {relativeTime(v.at)}
+              {tr("Run by {by},", { by: v.by })} {isolate(relativeTime(v.at))}
             </span>
             <span className="edge-grow" />
             <Button size="sm" onClick={() => download(`${doc.flow_name} ${v.revision}`, v.body)}>
@@ -835,12 +835,12 @@ function Watching({ doc, writable, chosen, choose }: { doc: FlowDoc; writable: b
         <span className="edge-grow" />
         {writable ? (
           <Button size="sm" loading={turn.isPending} onClick={() => turn.mutate(watching ? 0 : WATCH_MINUTES)}>
-            {watching ? "Stop watching" : `Watch for ${WATCH_MINUTES} minutes`}
+            {watching ? tr("Stop watching") : tr("Watch for {WATCH_MINUTES} minutes", { WATCH_MINUTES })}
           </Button>
         ) : null}
       </div>
       <p className="muted" role="status">
-        {watching ? `What passes through arrives here as it is reported, until ${formatMoment(until, { timeStyle: "medium" })}.` : "See what real messages do at each step. Nothing is reported until someone asks, and it stops by itself."}
+        {watching ? tr("What passes through arrives here as it is reported, until {until}.", { until: formatMoment(until, { timeStyle: "medium" }) }) : tr("See what real messages do at each step. Nothing is reported until someone asks, and it stops by itself.")}
       </p>
       {seen.length ? (
         <div className="edge-scroll">
@@ -857,14 +857,14 @@ function Watching({ doc, writable, chosen, choose }: { doc: FlowDoc; writable: b
             <tbody>
               {[...seen].reverse().map((t) => (
                 <tr key={t.id} className={chosen === t.node ? "edge-on" : undefined}>
-                  <td>{formatMoment(t.at, { timeStyle: "medium" })}</td>
+                  <td>{isolate(formatMoment(t.at, { timeStyle: "medium" }))}</td>
                   <td>
                     <button type="button" className="edge-step-link" onClick={() => choose(chosen === t.node ? null : t.node)}>
-                      {t.node}
+                      {isolate(t.node)}
                     </button>
                   </td>
                   <td>{t.device ?? ""}</td>
-                  <td className="edge-said">{say(t.value)}</td>
+                  <td className="edge-said">{isolate(say(t.value))}</td>
                   <td>{t.ports.join(", ") || <span className="faint">{tr("It stopped here")}</span>}</td>
                 </tr>
               ))}

@@ -4,7 +4,7 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { shell, t } from "@ferrum/client";
+import { isolate, shell, t, wordsReady } from "@ferrum/client";
 import { EmptyState, PageLoading, useShellTitle } from "@ferrum/kit";
 import type { Board } from "./layout";
 import { Grid } from "./Boards";
@@ -32,22 +32,25 @@ async function load(link: { tenant: string; token: string }): Promise<Shared> {
 function Page() {
   const link = locate(window.location.pathname);
   const q = useQuery({ queryKey: ["shared"], enabled: Boolean(link), refetchInterval: 10_000, retry: false, queryFn: () => load(link!) });
-  useShellTitle(q.data?.name ?? "Dashboard");
+  useShellTitle(q.data?.name ?? t("Dashboard"));
   useEffect(() => shell().ready(), []);
   if (!link || q.isError) return <EmptyState title={t("This link does not lead anywhere")} icon="chart" />;
   if (q.isPending) return <PageLoading />;
   return (
     <main className="edge-page edge-shared">
-      <h1>{q.data.name}</h1>
+      <h1>{isolate(q.data.name)}</h1>
       <Grid board={q.data.board} data={q.data.data} live={false} />
     </main>
   );
 }
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false } } })}>
-      <Page />
-    </QueryClientProvider>
-  </StrictMode>,
+// Drawn once the page's words are in (its language's catalogs, fetched as the page starts).
+void wordsReady().then(() =>
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false } } })}>
+        <Page />
+      </QueryClientProvider>
+    </StrictMode>,
+  ),
 );

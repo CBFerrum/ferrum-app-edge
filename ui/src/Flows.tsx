@@ -3,7 +3,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { refusal, t } from "@ferrum/client";
+import { refusal, t, isolate } from "@ferrum/client";
 import { Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { can, useEntityMeta } from "@ferrum/records";
 import { type FlowDoc, flowList, newFlow } from "./data";
@@ -41,7 +41,7 @@ function Start({ onClose }: { onClose: () => void }) {
         <Field label={t("Name")} htmlFor={`${id}-n`} required>
           <input id={`${id}-n`} className="input" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label={t("Or from a file")} htmlFor={`${id}-f`} hint={file ? `Starting from ${file.name}.` : "A flow someone downloaded. It starts as a draft here, and goes through review like any other."}>
+        <Field label={t("Or from a file")} htmlFor={`${id}-f`} hint={file ? t("Starting from {name}.", { name: file.name }) : t("A flow someone downloaded. It starts as a draft here, and goes through review like any other.")}>
           <input
             id={`${id}-f`}
             type="file"
@@ -77,8 +77,8 @@ function Start({ onClose }: { onClose: () => void }) {
                 }}
               />
               <span>
-                <strong>{s.name}</strong>
-                <span className="faint">{s.says}</span>
+                <strong>{isolate(s.name)}</strong>
+                <span className="faint">{isolate(s.says)}</span>
               </span>
             </label>
           ))}
@@ -89,12 +89,12 @@ function Start({ onClose }: { onClose: () => void }) {
 }
 
 function Stage({ f }: { f: FlowDoc }) {
-  if (f.live) return <Badge tone="green">{f.status === "Draft" ? "Running, and being changed" : "Running"}</Badge>;
-  return <Badge tone={f.status === "Approved" ? "blue" : f.status === "In Review" ? "amber" : "neutral"}>{f.status}</Badge>;
+  if (f.live) return <Badge tone="green">{f.status === "Draft" ? t("Running, and being changed") : t("Running")}</Badge>;
+  return <Badge tone={f.status === "Approved" ? "blue" : f.status === "In Review" ? "amber" : "neutral"}>{isolate(f.status)}</Badge>;
 }
 
 export function Flows() {
-  useShellTitle("Flows");
+  useShellTitle(t("Flows"));
   const q = useQuery({ queryKey: ["edge", "flows"], queryFn: flowList });
   const [starting, setStarting] = useState(false);
   const meta = useEntityMeta("EdgeFlow");
@@ -121,10 +121,10 @@ export function Flows() {
           {q.data.rows.map((f) => (
             <li key={f.id}>
               <Link to={`/flows/${f.id}`} className="edge-row-main">
-                <strong>{f.flow_name}</strong>
+                <strong>{isolate(f.flow_name)}</strong>
                 <div className="faint">
-                  {f.site ? (f._titles?.site ?? "One site") : "Every site"}
-                  {f.revision ? `, version ${f.revision}` : ""}
+                  {f.site ? (f._titles?.site ?? t("One site")) : t("Every site")}
+                  {f.revision ? t(", version {revision}", { revision: f.revision }) : ""}
                 </div>
               </Link>
               <Stage f={f} />

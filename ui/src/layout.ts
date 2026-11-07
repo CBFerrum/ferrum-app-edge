@@ -1,3 +1,4 @@
+import { t } from "@ferrum/client";
 // A dashboard as data: what is on it and where. The server works out what each widget reads, so a
 // shared dashboard can read nothing else (`src/data.rs`).
 
@@ -70,49 +71,49 @@ export interface Kind {
   params: Param[];
 }
 
-const device: Param = { name: "device", label: "Device", type: "device" };
-const metric: Param = { name: "metric", label: "Metric", type: "metric", hint: "What its definition calls it" };
-const attribute: Param = { name: "attribute", label: "Or an attribute", type: "text", hint: "Instead of a metric" };
-const unit: Param = { name: "unit", label: "Unit", type: "text" };
-const decimals: Param = { name: "decimals", label: "Decimals", type: "number" };
-const min: Param = { name: "min", label: "Lowest", type: "number" };
-const max: Param = { name: "max", label: "Highest", type: "number" };
-const warn: Param = { name: "warn", label: "Amber at", type: "number" };
-const bad: Param = { name: "bad", label: "Red at", type: "number", hint: "Lower than amber means low is what is wrong" };
-const on: Param = { name: "on", label: "On when it is", type: "text", hint: "Any value but 0, false or off, if empty" };
-const sources: Param = { name: "sources", label: "Lines", type: "sources" };
-const limit: Param = { name: "limit", label: "Rows", type: "number" };
+const device: Param = { name: "device", get label() { return t("Device"); }, type: "device" };
+const metric: Param = { name: "metric", get label() { return t("Metric"); }, type: "metric", get hint() { return t("What its definition calls it"); } };
+const attribute: Param = { name: "attribute", get label() { return t("Or an attribute"); }, type: "text", get hint() { return t("Instead of a metric"); } };
+const unit: Param = { name: "unit", get label() { return t("Unit"); }, type: "text" };
+const decimals: Param = { name: "decimals", get label() { return t("Decimals"); }, type: "number" };
+const min: Param = { name: "min", get label() { return t("Lowest"); }, type: "number" };
+const max: Param = { name: "max", get label() { return t("Highest"); }, type: "number" };
+const warn: Param = { name: "warn", get label() { return t("Amber at"); }, type: "number" };
+const bad: Param = { name: "bad", get label() { return t("Red at"); }, type: "number", get hint() { return t("Lower than amber means low is what is wrong"); } };
+const on: Param = { name: "on", get label() { return t("On when it is"); }, type: "text", get hint() { return t("Any value but 0, false or off, if empty"); } };
+const sources: Param = { name: "sources", get label() { return t("Lines"); }, type: "sources" };
+const limit: Param = { name: "limit", get label() { return t("Rows"); }, type: "number" };
 
 export const KINDS: Kind[] = [
-  { type: "value", label: "Value", group: "Show", w: 3, h: 3, params: [device, metric, attribute, unit, decimals, warn, bad] },
-  { type: "gauge", label: "Gauge", group: "Show", w: 3, h: 4, params: [device, metric, unit, min, max, warn, bad] },
-  { type: "level", label: "Tank level", group: "Show", w: 2, h: 5, params: [device, metric, unit, min, max, warn, bad] },
-  { type: "state", label: "State", group: "Show", w: 2, h: 2, params: [device, metric, attribute, on] },
-  { type: "symbol", label: "Equipment", group: "Show", w: 2, h: 4, params: [{ name: "symbol", label: "Symbol", type: "symbol" }, device, metric, attribute, on] },
-  { type: "line", label: "Line chart", group: "Over time", w: 6, h: 6, params: [sources, warn, bad] },
-  { type: "bars", label: "Bar chart", group: "Over time", w: 6, h: 6, params: [sources] },
+  { type: "value", get label() { return t("Value"); }, group: "Show", w: 3, h: 3, params: [device, metric, attribute, unit, decimals, warn, bad] },
+  { type: "gauge", get label() { return t("Gauge"); }, group: "Show", w: 3, h: 4, params: [device, metric, unit, min, max, warn, bad] },
+  { type: "level", get label() { return t("Tank level"); }, group: "Show", w: 2, h: 5, params: [device, metric, unit, min, max, warn, bad] },
+  { type: "state", get label() { return t("State"); }, group: "Show", w: 2, h: 2, params: [device, metric, attribute, on] },
+  { type: "symbol", get label() { return t("Equipment"); }, group: "Show", w: 2, h: 4, params: [{ name: "symbol", get label() { return t("Symbol"); }, type: "symbol" }, device, metric, attribute, on] },
+  { type: "line", get label() { return t("Line chart"); }, group: "Over time", w: 6, h: 6, params: [sources, warn, bad] },
+  { type: "bars", get label() { return t("Bar chart"); }, group: "Over time", w: 6, h: 6, params: [sources] },
   {
     type: "table",
-    label: "Device table",
+    get label() { return t("Device table"); },
     group: "Lists",
     w: 6,
     h: 5,
-    params: [{ name: "board", label: "Rows open the dashboard", type: "text", hint: "Its address, after /dashboards/. Each row sets its device variable" }, { name: "kind", label: "Kind of device", type: "text", hint: "Every kind, if empty" }, { name: "columns", label: "Metrics to show", type: "text", hint: "Separated by commas" }, limit],
+    params: [{ name: "board", get label() { return t("Rows open the dashboard"); }, type: "text", get hint() { return t("Its address, after /dashboards/. Each row sets its device variable"); } }, { name: "kind", get label() { return t("Kind of device"); }, type: "text", get hint() { return t("Every kind, if empty"); } }, { name: "columns", get label() { return t("Metrics to show"); }, type: "text", get hint() { return t("Separated by commas"); } }, limit],
   },
-  { type: "alarms", label: "Alarms", group: "Lists", w: 6, h: 5, params: [{ ...device, hint: "Every device, if empty" }, limit] },
-  { type: "events", label: "Events", group: "Lists", w: 6, h: 5, params: [device, limit] },
-  { type: "map", label: "Robot map", group: "Lists", w: 6, h: 7, params: [] },
+  { type: "alarms", get label() { return t("Alarms"); }, group: "Lists", w: 6, h: 5, params: [{ ...device, get hint() { return t("Every device, if empty"); } }, limit] },
+  { type: "events", get label() { return t("Events"); }, group: "Lists", w: 6, h: 5, params: [device, limit] },
+  { type: "map", get label() { return t("Robot map"); }, group: "Lists", w: 6, h: 7, params: [] },
   {
     type: "button",
-    label: "Command button",
+    get label() { return t("Command button"); },
     group: "Control",
     w: 2,
     h: 2,
-    params: [device, { name: "operation", label: "Operation", type: "text", hint: "It goes through the ledger like any other command" }, { name: "payload", label: "With", type: "long", hint: "JSON" }],
+    params: [device, { name: "operation", get label() { return t("Operation"); }, type: "text", get hint() { return t("It goes through the ledger like any other command"); } }, { name: "payload", get label() { return t("With"); }, type: "long", get hint() { return t("JSON"); } }],
   },
-  { type: "setpoint", label: "Set a value", group: "Control", w: 3, h: 3, params: [device, { name: "attribute", label: "Attribute", type: "text" }, unit] },
-  { type: "link", label: "A link to a dashboard", group: "Words", w: 3, h: 2, params: [{ name: "board", label: "Dashboard", type: "text", hint: "Its address, after /dashboards/" }, { name: "text", label: "Says", type: "text" }, device] },
-  { type: "text", label: "Text", group: "Words", w: 4, h: 3, params: [{ name: "text", label: "Text", type: "long", hint: "Markdown" }] },
+  { type: "setpoint", get label() { return t("Set a value"); }, group: "Control", w: 3, h: 3, params: [device, { name: "attribute", get label() { return t("Attribute"); }, type: "text" }, unit] },
+  { type: "link", get label() { return t("A link to a dashboard"); }, group: "Words", w: 3, h: 2, params: [{ name: "board", get label() { return t("Dashboard"); }, type: "text", get hint() { return t("Its address, after /dashboards/"); } }, { name: "text", get label() { return t("Says"); }, type: "text" }, device] },
+  { type: "text", get label() { return t("Text"); }, group: "Words", w: 4, h: 3, params: [{ name: "text", get label() { return t("Text"); }, type: "long", get hint() { return t("Markdown"); } }] },
 ];
 
 export const SYMBOLS: [string, string][] = [

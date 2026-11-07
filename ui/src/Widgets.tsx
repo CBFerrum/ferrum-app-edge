@@ -4,7 +4,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useId, useRef, useState } from "react";
 import { Link } from "react-router";
-import { refusal, relativeTime, t as tr } from "@ferrum/client";
+import { refusal, relativeTime, t as tr, isolate } from "@ferrum/client";
 import { Badge, Button, confirmDialog, Markdown, toast } from "@ferrum/kit";
 import { isOn, share, tone, type Widget } from "./layout";
 import { Chart, COLORS } from "./Chart";
@@ -63,7 +63,7 @@ export function reading(w: Widget, result: Result | undefined): { value: unknown
   return row ? { value: row.value, at: row.at, stale: (row.age_secs ?? 0) > STALE_SECS } : null;
 }
 
-const Nothing = ({ why }: { why?: string }) => <p className="edge-widget-empty">{why ?? "Nothing reported yet"}</p>;
+const Nothing = ({ why }: { why?: string }) => <p className="edge-widget-empty">{why ?? tr("Nothing reported yet")}</p>;
 
 function ValueView({ w, result }: { w: Widget; result?: Result }) {
   const r = reading(w, result);
@@ -72,8 +72,8 @@ function ValueView({ w, result }: { w: Widget; result?: Result }) {
   return (
     <div className="edge-widget-value" data-tone={n === null ? "ok" : tone(n, w)} data-stale={r.stale || undefined}>
       <strong>{n === null ? String(r.value) : number(n, w.decimals)}</strong>
-      {w.unit ? <span>{w.unit}</span> : null}
-      {r.at ? <small>{relativeTime(r.at)}</small> : null}
+      {w.unit ? <span>{isolate(w.unit)}</span> : null}
+      {r.at ? <small>{isolate(relativeTime(r.at))}</small> : null}
     </div>
   );
 }
@@ -90,7 +90,7 @@ function GaugeView({ w, result }: { w: Widget; result?: Result }) {
       <circle className="edge-gauge-track" cx="60" cy="60" r={radius} strokeDasharray={`${arc} ${whole}`} transform="rotate(150 60 60)" />
       <circle className="edge-gauge-fill" cx="60" cy="60" r={radius} strokeDasharray={`${arc * share(r.value, min, max)} ${whole}`} transform="rotate(150 60 60)" />
       <text x="60" y="62" textAnchor="middle" className="edge-gauge-value">
-        {number(r.value, w.decimals)}
+        {isolate(number(r.value, w.decimals))}
       </text>
       <text x="60" y="78" textAnchor="middle" className="edge-gauge-unit">
         {w.unit ?? ""}
@@ -115,7 +115,7 @@ function LevelView({ w, result }: { w: Widget; result?: Result }) {
         <div className="edge-level-fill" style={{ height: `${f * 100}%` }} />
       </div>
       <strong>
-        {number(r.value, w.decimals)} {w.unit ?? ""}
+        {isolate(number(r.value, w.decimals))} {w.unit ?? ""}
       </strong>
     </div>
   );
@@ -128,7 +128,7 @@ function StateView({ w, result }: { w: Widget; result?: Result }) {
   return (
     <div className="edge-state" data-on={on} data-stale={r.stale || undefined}>
       <span className="edge-state-lamp" />
-      <strong>{String(r.value)}</strong>
+      <strong>{isolate(String(r.value))}</strong>
     </div>
   );
 }
@@ -207,7 +207,7 @@ function SymbolView({ w, result }: { w: Widget; result?: Result }) {
   return (
     <div className="edge-symbol-box" data-stale={r?.stale || undefined}>
       <Symbol name={w.symbol ?? "pump"} on={r ? isOn(r.value, w.on) : false} level={level} />
-      <small>{r ? String(r.value) : "Nothing reported yet"}</small>
+      <small>{r ? String(r.value) : tr("Nothing reported yet")}</small>
     </div>
   );
 }
@@ -218,8 +218,8 @@ const linesOf = (w: Widget, d: LineData): Line[] =>
 function LineView({ w, result }: { w: Widget; result?: Result }) {
   const d = result?.data as LineData | undefined;
   if (!d) return <Nothing />;
-  const marks = [...(w.warn === undefined ? [] : [{ value: w.warn, label: "Amber" }]), ...(w.bad === undefined ? [] : [{ value: w.bad, label: "Red" }])];
-  return <Chart lines={linesOf(w, d)} from={Date.parse(d.from)} to={Date.parse(d.to)} gap={Math.max(d.bucket_secs * 3, 300) * 1000} height={200} fill marks={marks} label={w.title ?? "Chart"} />;
+  const marks = [...(w.warn === undefined ? [] : [{ value: w.warn, label: tr("Amber") }]), ...(w.bad === undefined ? [] : [{ value: w.bad, label: tr("Red") }])];
+  return <Chart lines={linesOf(w, d)} from={Date.parse(d.from)} to={Date.parse(d.to)} gap={Math.max(d.bucket_secs * 3, 300) * 1000} height={200} fill marks={marks} label={w.title ?? tr("Chart")} />;
 }
 
 function BarsView({ w, result }: { w: Widget; result?: Result }) {
@@ -232,7 +232,7 @@ function BarsView({ w, result }: { w: Widget; result?: Result }) {
   if (at.length === 0) return <Nothing />;
   const width = 100 / at.length;
   return (
-    <svg className="edge-bars" viewBox="0 0 100 60" preserveAspectRatio="none" role="img" aria-label={w.title ?? "Bars"}>
+    <svg className="edge-bars" viewBox="0 0 100 60" preserveAspectRatio="none" role="img" aria-label={w.title ?? tr("Bars")}>
       {at.map((t, i) =>
         lines.map((l, j) => {
           const v = l.points.find((p) => p.at === t)?.value ?? 0;
@@ -255,7 +255,7 @@ function TableView({ w, result, live }: { w: Widget; result?: Result; live: bool
           <th scope="col">{tr("Device")}</th>
           {columns.map((c) => (
             <th key={c} scope="col">
-              {c}
+              {isolate(c)}
             </th>
           ))}
           <th scope="col">{tr("Alarms")}</th>
@@ -264,7 +264,7 @@ function TableView({ w, result, live }: { w: Widget; result?: Result; live: bool
       <tbody>
         {rows.map((d) => (
           <tr key={d.id}>
-            <th scope="row">{live ? <Link to={w.board ? `/dashboards/${w.board}?device=${d.id}` : `/d/${d.id}`}>{d.name}</Link> : d.name}</th>
+            <th scope="row">{live ? <Link to={w.board ? `/dashboards/${w.board}?device=${d.id}` : `/d/${d.id}`}>{isolate(d.name)}</Link> : d.name}</th>
             {columns.map((c) => (
               <td key={c}>{d.latest[c] ? number(d.latest[c].value, w.decimals) : "–"}</td>
             ))}
@@ -284,10 +284,10 @@ function AlarmsView({ result }: { result?: Result }) {
       {rows.map((a) => (
         <li key={a.id}>
           <div className="edge-row-main">
-            <strong>{a.summary}</strong>
-            <div className="faint">{tr("Raised")} {relativeTime(a.raised_at)}</div>
+            <strong>{isolate(a.summary)}</strong>
+            <div className="faint">{tr("Raised")} {isolate(relativeTime(a.raised_at))}</div>
           </div>
-          <Badge tone={a.severity === "Critical" ? "red" : a.severity === "Warning" ? "amber" : "neutral"}>{a.severity}</Badge>
+          <Badge tone={a.severity === "Critical" ? "red" : a.severity === "Warning" ? "amber" : "neutral"}>{isolate(a.severity)}</Badge>
         </li>
       ))}
     </ul>
@@ -302,10 +302,10 @@ function EventsView({ result }: { result?: Result }) {
       {rows.map((e, i) => (
         <li key={`${e.at}-${i}`}>
           <div className="edge-row-main">
-            <strong>{e.name}</strong>
+            <strong>{isolate(e.name)}</strong>
             <div className="faint">{typeof e.value === "string" ? e.value : JSON.stringify(e.value)}</div>
           </div>
-          <span className="faint">{relativeTime(e.at)}</span>
+          <span className="faint">{isolate(relativeTime(e.at))}</span>
         </li>
       ))}
     </ul>
@@ -320,7 +320,7 @@ function MapView({ result }: { result?: Result }) {
   seen.current = grown(seen.current, list);
   const toScreen = fit(seen.current, 640, 360, 32);
   return (
-    <svg className="edge-map" viewBox="0 0 640 360" role="img" aria-label={`${list.length} robots`}>
+    <svg className="edge-map" viewBox="0 0 640 360" role="img" aria-label={tr("{length} robots", { length: list.length })}>
       <rect x="0" y="0" width="640" height="360" className="edge-map-floor" />
       {list.map((p) => {
         const { x, y } = toScreen(p);
@@ -330,7 +330,7 @@ function MapView({ result }: { result?: Result }) {
             {heading ? <line x1={x} y1={y} x2={heading.x} y2={heading.y} /> : null}
             <circle cx={x} cy={y} r={8} />
             <text x={x + 13} y={y + 4}>
-              {p.robot.code}
+              {isolate(p.robot.code)}
             </text>
           </g>
         );
@@ -347,12 +347,12 @@ function ButtonView({ w }: { w: Widget }) {
       const payload = w.payload?.trim() ? (JSON.parse(w.payload) as unknown) : {};
       return sendCommand(w.device!, w.operation!, payload, 600);
     },
-    onSuccess: (made) => toast(made.state === "Proposed" ? "Sent for approval. Nothing moves until someone says so." : "Sent."),
+    onSuccess: (made) => toast(made.state === "Proposed" ? tr("Sent for approval. Nothing moves until someone says so.") : tr("Sent.")),
     onError: (e) => toast(refusal(e), "error"),
   });
   if (!w.device || !w.operation || w.device.startsWith("$")) return <Nothing why="Choose a device and an operation" />;
   const press = async () => {
-    if (await confirmDialog({ title: `Send ${w.operation}?`, message: "It goes through the ledger, and the device must have been commissioned for it.", confirmLabel: "Send it" })) send.mutate();
+    if (await confirmDialog({ title: tr("Send {operation}?", { operation: String(w.operation) }), message: tr("It goes through the ledger, and the device must have been commissioned for it."), confirmLabel: tr("Send it") })) send.mutate();
   };
   return (
     <div className="edge-widget-center">
@@ -391,8 +391,8 @@ function SetpointView({ w, result }: { w: Widget; result?: Result }) {
       }}
     >
       <div className="faint">
-        {tr("Now")} {row ? String(row.value) : "unknown"} {w.unit ?? ""}
-        {out ? `, asked for ${String(row?.desired)}` : ""}
+        {tr("Now")} {row ? String(row.value) : tr("unknown")} {w.unit ?? ""}
+        {out ? tr(", asked for {value}", { value: String(row?.desired) }) : ""}
       </div>
       <label className="sr-only" htmlFor={id}>
         {tr("New value")}
@@ -426,7 +426,7 @@ export function WidgetBody({ w, result, live }: { w: Widget; result?: Result; li
     case "table":
       return <TableView w={w} result={result} live={live} />;
     case "link":
-      return live && w.board ? <Link to={`/dashboards/${w.board}${w.device ? `?device=${w.device}` : ""}`}>{w.text || "Open"}</Link> : <Nothing why="This opens from inside" />;
+      return live && w.board ? <Link to={`/dashboards/${w.board}${w.device ? `?device=${w.device}` : ""}`}>{w.text || tr("Open")}</Link> : <Nothing why="This opens from inside" />;
     case "alarms":
       return <AlarmsView result={result} />;
     case "events":

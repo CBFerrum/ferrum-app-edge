@@ -3,7 +3,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { refusal, t } from "@ferrum/client";
+import { refusal, t, isolate } from "@ferrum/client";
 import { Alert, Button, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { can, useEntityMeta } from "@ferrum/records";
 import { exportSolution, installBundle, installSolution, type Installed, solutions } from "./data";
@@ -11,11 +11,11 @@ import { Tabs } from "./Tabs";
 
 function said(items: Installed[]) {
   const left = items.filter((i) => !i.added);
-  return left.length ? `${items.length - left.length} added, and ${left.length} left as they were.` : `${items.length} added.`;
+  return left.length ? t("{value} added, and {length} left as they were.", { value: items.length - left.length, length: left.length }) : t("{length} added.", { length: items.length });
 }
 
 export function Solutions() {
-  useShellTitle("Solutions");
+  useShellTitle(t("Solutions"));
   const q = useQuery({ queryKey: ["edge", "solutions"], queryFn: solutions });
   const meta = useEntityMeta("DeviceDefinition");
   const writable = meta.data ? can(meta.data.permissions, "write") : false;
@@ -42,7 +42,7 @@ export function Solutions() {
     <div className="edge-page">
       <Tabs />
       <p className="muted">{t("What goes together for one kind of job. It arrives as drafts: definitions to publish and flows to simulate and review, and nothing runs by itself.")}</p>
-      {done ? <Alert tone="info">{said(done)}</Alert> : null}
+      {done ? <Alert tone="info">{isolate(said(done))}</Alert> : null}
       {writable ? (
         <div className="edge-bar">
           <Field label={t("From a file")} htmlFor="edge-bundle">
@@ -78,8 +78,8 @@ export function Solutions() {
           {q.data.solutions.map((s) => (
             <li key={s.name}>
               <div className="edge-row-main">
-                <strong>{s.name}</strong>
-                <div className="faint">{s.about}</div>
+                <strong>{isolate(s.name)}</strong>
+                <div className="faint">{isolate(s.about)}</div>
               </div>
               {writable ? (
                 <Button loading={install.isPending && install.variables === s.name} onClick={() => install.mutate(s.name)}>

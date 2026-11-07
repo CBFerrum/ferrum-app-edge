@@ -4,7 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
-import { api, errorMessage, t } from "@ferrum/client";
+import { api, errorMessage, t, isolate } from "@ferrum/client";
 import { Badge, Button, EmptyState, ErrorState, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { Grid } from "./Boards";
 import { portalBase } from "./data";
@@ -31,11 +31,11 @@ interface Laid {
   data: Record<string, Result>;
 }
 
-const when = (s?: string | null) => (s ? new Date(s).toLocaleString() : "Not heard from");
+const when = (s?: string | null) => (s ? new Date(s).toLocaleString() : t("Not heard from"));
 const tone = (severity: string) => (severity === "Critical" || severity === "Major" ? "red" : "amber");
 
 export function PortalDevices() {
-  useShellTitle("Your devices");
+  useShellTitle(t("Your devices"));
   const q = useQuery({ queryKey: ["edge", "portal"], queryFn: () => api.get<Mine>(`${portalBase}/devices`), refetchInterval: SLOW_POLL_MS });
   if (q.isPending) return <PageLoading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
@@ -47,14 +47,14 @@ export function PortalDevices() {
     );
   return (
     <div className="stack">
-      <h1>{customers.join(", ")}</h1>
+      <h1>{isolate(customers.join(", "))}</h1>
       {dashboards.length ? (
         <section className="card card-pad stack" aria-label={t("Dashboards")}>
           <h2 className="edge-section">{t("Dashboards")}</h2>
           <ul className="edge-plain">
             {dashboards.map((b) => (
               <li key={b.id}>
-                <Link to={`/b/${b.id}`}>{b.name}</Link> {b.description ? <span className="muted">{b.description}</span> : null}
+                <Link to={`/b/${b.id}`}>{isolate(b.name)}</Link> {b.description ? <span className="muted">{isolate(b.description)}</span> : null}
               </li>
             ))}
           </ul>
@@ -79,11 +79,11 @@ export function PortalDevices() {
                 {devices.map((d) => (
                   <tr key={d.id}>
                     <th scope="row">
-                      <Link to={`/d/${d.id}`}>{d.name}</Link>
+                      <Link to={`/d/${d.id}`}>{isolate(d.name)}</Link>
                     </th>
                     <td>{d.site ?? ""}</td>
-                    <td>{when(d.last_seen)}</td>
-                    <td>{d.alarms ? <Badge tone="red">{d.alarms}</Badge> : "None"}</td>
+                    <td>{isolate(when(d.last_seen))}</td>
+                    <td>{d.alarms ? <Badge tone="red">{d.alarms}</Badge> : t("None")}</td>
                   </tr>
                 ))}
               </tbody>
@@ -107,7 +107,7 @@ export function PortalDevice() {
     },
     onError: (e) => toast(errorMessage(e), "error"),
   });
-  useShellTitle(q.data?.device.name ?? "Device");
+  useShellTitle(q.data?.device.name ?? t("Device"));
   if (q.isPending) return <PageLoading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   const { device, latest, alarms } = q.data;
@@ -116,8 +116,8 @@ export function PortalDevice() {
       <p>
         <Link to="/">{t("Your devices")}</Link>
       </p>
-      <h1>{device.name}</h1>
-      <p className="muted">{[device.code, device.site].filter(Boolean).join(" · ")}</p>
+      <h1>{isolate(device.name)}</h1>
+      <p className="muted">{isolate([device.code, device.site].filter(Boolean).join(" · "))}</p>
       {latest.length ? (
         <section className="card card-pad stack" aria-label={t("Now")}>
           <h2 className="edge-section">{t("Now")}</h2>
@@ -126,9 +126,9 @@ export function PortalDevice() {
               <tbody>
                 {latest.map((m) => (
                   <tr key={m.metric}>
-                    <th scope="row">{m.metric}</th>
-                    <td>{m.value.toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
-                    <td className="muted">{when(m.at)}</td>
+                    <th scope="row">{isolate(m.metric)}</th>
+                    <td>{isolate(m.value.toLocaleString(undefined, { maximumFractionDigits: 3 }))}</td>
+                    <td className="muted">{isolate(when(m.at))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -147,11 +147,11 @@ export function PortalDevice() {
               <tbody>
                 {alarms.map((a) => (
                   <tr key={a.id}>
-                    <th scope="row">{a.summary}</th>
+                    <th scope="row">{isolate(a.summary)}</th>
                     <td>
-                      <Badge tone={a.status === "Cleared" ? undefined : tone(a.severity)}>{a.status === "Cleared" ? "Cleared" : a.severity}</Badge>
+                      <Badge tone={a.status === "Cleared" ? undefined : tone(a.severity)}>{a.status === "Cleared" ? t("Cleared") : a.severity}</Badge>
                     </td>
-                    <td className="muted">{when(a.raised_at)}</td>
+                    <td className="muted">{isolate(when(a.raised_at))}</td>
                     <td>
                       {a.status === "Active" ? (
                         <Button size="sm" disabled={ack.isPending} onClick={() => ack.mutate(a.id)}>
@@ -175,7 +175,7 @@ export function PortalDevice() {
 export function PortalBoard() {
   const { id } = useParams() as { id: string };
   const q = useQuery({ queryKey: ["edge", "portal", "board", id], queryFn: () => api.get<Laid>(`${portalBase}/dashboards/${id}`), refetchInterval: SLOW_POLL_MS });
-  useShellTitle(q.data?.name ?? "Dashboard");
+  useShellTitle(q.data?.name ?? t("Dashboard"));
   if (q.isPending) return <PageLoading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   return (
@@ -183,7 +183,7 @@ export function PortalBoard() {
       <p>
         <Link to="/">{t("Your devices")}</Link>
       </p>
-      <h1>{q.data.name}</h1>
+      <h1>{isolate(q.data.name)}</h1>
       <Grid board={q.data.board} data={q.data.data} live={false} />
     </div>
   );

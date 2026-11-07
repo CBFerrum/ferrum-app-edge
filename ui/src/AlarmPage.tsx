@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useParams } from "react-router";
-import { refusal, relativeTime, t } from "@ferrum/client";
+import { refusal, relativeTime, t, isolate } from "@ferrum/client";
 import { Badge, Button, Dialog, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { can, useEntityMeta, useMe } from "@ferrum/records";
 import { Acknowledge } from "./Alarms";
@@ -60,7 +60,7 @@ export function AlarmPage() {
   const me = useMe().data?.user;
   const [text, setText] = useState("");
   const [closing, setClosing] = useState(false);
-  useShellTitle(q.data?.summary ?? "Alarm");
+  useShellTitle(q.data?.summary ?? t("Alarm"));
   const done = () => void qc.invalidateQueries({ queryKey: ["edge", "alarm", id] });
   const failed = (e: unknown) => toast(refusal(e), "error");
   const say = useMutation({
@@ -83,8 +83,8 @@ export function AlarmPage() {
       <Tabs />
       <div className="edge-bar">
         <Link to="/alarms">{t("Alarms")}</Link>
-        <Badge tone={severityTone(a.severity)}>{a.severity}</Badge>
-        <Badge>{a.status}</Badge>
+        <Badge tone={severityTone(a.severity)}>{isolate(a.severity)}</Badge>
+        <Badge>{isolate(a.status)}</Badge>
         {shelved ? <Badge tone="amber">{t("Shelved")}</Badge> : null}
         <span className="edge-grow" />
         {writable && open ? (
@@ -115,7 +115,7 @@ export function AlarmPage() {
                 <option value="">{t("Shelve…")}</option>
                 {SHELVES.map(([label, minutes]) => (
                   <option key={minutes} value={minutes}>
-                    {label}
+                    {isolate(label)}
                   </option>
                 ))}
               </select>
@@ -127,27 +127,27 @@ export function AlarmPage() {
         ) : null}
       </div>
       <section className="card card-pad stack" aria-label={t("What happened")}>
-        <h1 className="edge-section">{a.summary}</h1>
+        <h1 className="edge-section">{isolate(a.summary)}</h1>
         <p className="faint">
-          {t("Raised")} {relativeTime(a.raised_at)}
+          {t("Raised")} {isolate(relativeTime(a.raised_at))}
           {a.code ? (
             <>
-              {" "}
-              on{" "}
+              {isolate(" ")}
+              {t("on")}{isolate(" ")}
               <Link to={`/d/${a.device}`}>
-                {a.code}
+                {isolate(a.code)}
               </Link>
             </>
           ) : null}
-          {a.value !== null && a.value !== undefined ? `, at ${a.value}` : ""}
-          {a.assignee_email ? `, with ${a.assignee_email}` : ""}
-          {a.cleared_by ? `, closed by ${a.cleared_by}` : ""}
+          {a.value !== null && a.value !== undefined ? t(", at {value}", { value: a.value }) : ""}
+          {a.assignee_email ? t(", with {assignee_email}", { assignee_email: a.assignee_email }) : ""}
+          {a.cleared_by ? t(", closed by {cleared_by}", { cleared_by: a.cleared_by }) : ""}
         </p>
         <ol className="edge-timeline">
           {a.notes.map((n, i) => (
             <li key={i}>
-              <strong>{n.kind}</strong> <span className="faint">{n.by}, {relativeTime(n.at)}</span>
-              {n.text ? <div>{n.text}</div> : null}
+              <strong>{isolate(n.kind)}</strong> <span className="faint">{isolate(n.by)}, {isolate(relativeTime(n.at))}</span>
+              {n.text ? <div>{isolate(n.text)}</div> : null}
             </li>
           ))}
         </ol>
@@ -181,11 +181,11 @@ export function AlarmPage() {
             {a.notices.map((n, i) => (
               <li key={i}>
                 <div className="edge-row-main">
-                  <strong>{n.channel}</strong> <span className="faint">{n.target}</span>
-                  {n.error ? <div className="edge-why">{n.error}</div> : null}
+                  <strong>{isolate(n.channel)}</strong> <span className="faint">{isolate(n.target)}</span>
+                  {n.error ? <div className="edge-why">{isolate(n.error)}</div> : null}
                 </div>
-                <span className="faint">{n.sent_at ? relativeTime(n.sent_at) : n.status === "Waiting" ? `Due ${relativeTime(n.due_at)}` : ""}</span>
-                <Badge tone={n.status === "Failed" ? "red" : n.status === "Sent" ? "green" : "neutral"}>{n.status}</Badge>
+                <span className="faint">{n.sent_at ? relativeTime(n.sent_at) : n.status === "Waiting" ? t("Due {value}", { value: relativeTime(n.due_at) }) : ""}</span>
+                <Badge tone={n.status === "Failed" ? "red" : n.status === "Sent" ? "green" : "neutral"}>{isolate(n.status)}</Badge>
               </li>
             ))}
           </ul>

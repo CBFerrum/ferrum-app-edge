@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { refusal, relativeTime, t } from "@ferrum/client";
+import { refusal, relativeTime, t, isolate } from "@ferrum/client";
 import { Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
 import { acknowledge, alarms } from "./data";
 import { Tabs } from "./Tabs";
@@ -54,7 +54,7 @@ export function Acknowledge({ id }: { id: string }) {
 const tone = (s: string) => (s === "Critical" || s === "Major" ? "red" : s === "Warning" || s === "Minor" ? "amber" : "blue");
 
 export function Alarms() {
-  useShellTitle("Alarms");
+  useShellTitle(t("Alarms"));
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const all = params.has("all");
@@ -84,19 +84,19 @@ export function Alarms() {
             <li key={a.id}>
               <div className="edge-row-main">
                 <Link to={`/alarms/${a.id}`}>
-                  <strong>{a.summary}</strong>
+                  <strong>{isolate(a.summary)}</strong>
                 </Link>
                 <div className="faint">
-                  {a.status === "Cleared" && a.cleared_at ? `Cleared ${relativeTime(a.cleared_at)}` : `Raised ${relativeTime(a.raised_at)}`}
-                  {a.flow ? `, by the flow ${a.flow}` : a.rule ? `, by the rule ${a.rule}` : ""}
-                  {a.acknowledged_by ? `, seen by ${a.acknowledged_by}` : ""}
-                  {a.assignee_email ? `, with ${a.assignee_email}` : ""}
+                  {a.status === "Cleared" && a.cleared_at ? t("Cleared {value}", { value: relativeTime(a.cleared_at) }) : t("Raised {value}", { value: relativeTime(a.raised_at) })}
+                  {a.flow ? t(", by the flow {flow}", { flow: a.flow }) : a.rule ? t(", by the rule {rule}", { rule: a.rule }) : ""}
+                  {a.acknowledged_by ? t(", seen by {acknowledged_by}", { acknowledged_by: a.acknowledged_by }) : ""}
+                  {a.assignee_email ? t(", with {assignee_email}", { assignee_email: a.assignee_email }) : ""}
                 </div>
-                {a.note ? <div className="faint">{a.note}</div> : null}
+                {a.note ? <div className="faint">{isolate(a.note)}</div> : null}
               </div>
-              <Badge tone={tone(a.severity)}>{a.severity}</Badge>
+              <Badge tone={tone(a.severity)}>{isolate(a.severity)}</Badge>
               {a.shelved_until && Date.parse(a.shelved_until) > Date.now() ? <Badge tone="amber">{t("Shelved")}</Badge> : null}
-              {a.status === "Active" ? <Acknowledge id={a.id} /> : <Badge>{a.status}</Badge>}
+              {a.status === "Active" ? <Acknowledge id={a.id} /> : <Badge>{isolate(a.status)}</Badge>}
             </li>
           ))}
         </ul>

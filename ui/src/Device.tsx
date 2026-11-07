@@ -5,7 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useParams } from "react-router";
-import { refusal, relativeTime, t as tr } from "@ferrum/client";
+import { refusal, relativeTime, t as tr, isolate } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { tries } from "./connecting";
 import { type Attribute, connection, desire, device, deviceRecord, type Issued, issueCredentials, revokeCredentials, sendCommand } from "./data";
@@ -41,7 +41,7 @@ function Ask({ id, attribute, onClose }: { id: string; attribute: Attribute | nu
   return (
     <Dialog
       open
-      title={attribute ? `Change ${attribute.key}` : "Ask for a value"}
+      title={attribute ? tr("Change {key}", { key: attribute.key }) : tr("Ask for a value")}
       onClose={onClose}
       footer={
         <>
@@ -83,7 +83,7 @@ function Send({ id, operations, onClose }: { id: string; operations: string[]; o
   const send = useMutation({
     mutationFn: () => sendCommand(id, operation, parsed.value, minutes * 60),
     onSuccess: (made) => {
-      toast(made.state === "Proposed" ? "Sent for approval. Nothing moves until someone says so." : "Sent. Operations shows how it goes.");
+      toast(made.state === "Proposed" ? tr("Sent for approval. Nothing moves until someone says so.") : tr("Sent. Operations shows how it goes."));
       onClose();
     },
     onError: (e) => toast(refusal(e), "error"),
@@ -106,7 +106,7 @@ function Send({ id, operations, onClose }: { id: string; operations: string[]; o
         <Field label={tr("Operation")} htmlFor={`${form}-o`} required>
           <select id={`${form}-o`} className="input" value={operation} onChange={(e) => setOperation(e.target.value)}>
             {operations.map((o) => (
-              <option key={o}>{o}</option>
+              <option key={o}>{isolate(o)}</option>
             ))}
           </select>
         </Field>
@@ -168,7 +168,7 @@ function Connect({ id, onClose }: { id: string; onClose: () => void }) {
                 setIssued(null);
               }}
             >
-              {{ token: "Token", password: "Password", certificate: "Certificate" }[k]}
+              {isolate({ token: "Token", password: "Password", certificate: "Certificate" }[k])}
             </button>
           ))}
         </div>
@@ -189,7 +189,7 @@ function Connect({ id, onClose }: { id: string; onClose: () => void }) {
         ) : null}
         <div className="edge-bar">
           <Button variant="primary" loading={issue.isPending} disabled={kind === "certificate" && !certificate.trim()} onClick={() => issue.mutate()}>
-            {has ? "Replace it" : kind === "certificate" ? "Use this certificate" : "Make one"}
+            {has ? tr("Replace it") : kind === "certificate" ? tr("Use this certificate") : tr("Make one")}
           </Button>
           {has ? (
             <Button loading={revoke.isPending} onClick={() => revoke.mutate()}>
@@ -203,12 +203,12 @@ function Connect({ id, onClose }: { id: string; onClose: () => void }) {
             <code className="edge-token">{issued.token ?? issued.password}</code>
           </>
         ) : null}
-        {issued?.fingerprint ? <code className="edge-token">{issued.fingerprint}</code> : null}
+        {issued?.fingerprint ? <code className="edge-token">{isolate(issued.fingerprint)}</code> : null}
         {issued?.token && q.data?.calls_in
           ? tries(q.data.addresses, issued.token).map((t) => (
               <div key={t.how}>
-                <div className="faint">{t.how}</div>
-                <code className="edge-token">{t.command}</code>
+                <div className="faint">{isolate(t.how)}</div>
+                <code className="edge-token">{isolate(t.command)}</code>
               </div>
             ))
           : null}
@@ -225,7 +225,7 @@ export function DevicePage() {
   const [sending, setSending] = useState(false);
   const record = useQuery({ queryKey: ["edge", "device-record", id], queryFn: () => deviceRecord(id) });
   const operations = record.data?.operations?.map((o) => o.operation) ?? [];
-  useShellTitle(record.data?.device_name ?? "Device");
+  useShellTitle(record.data?.device_name ?? tr("Device"));
   if (q.isPending) return <PageLoading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   const d = q.data;
@@ -252,11 +252,11 @@ export function DevicePage() {
             {d.alarms.map((a) => (
               <li key={a.id}>
                 <div className="edge-row-main">
-                  <strong>{a.summary}</strong>
-                  <div className="faint">{tr("Raised")} {relativeTime(a.raised_at)}</div>
+                  <strong>{isolate(a.summary)}</strong>
+                  <div className="faint">{tr("Raised")} {isolate(relativeTime(a.raised_at))}</div>
                 </div>
-                <Badge tone={a.severity === "Critical" ? "red" : "amber"}>{a.severity}</Badge>
-                {a.status === "Active" ? <Acknowledge id={a.id} /> : <Badge>{a.status}</Badge>}
+                <Badge tone={a.severity === "Critical" ? "red" : "amber"}>{isolate(a.severity)}</Badge>
+                {a.status === "Active" ? <Acknowledge id={a.id} /> : <Badge>{isolate(a.status)}</Badge>}
               </li>
             ))}
           </ul>
@@ -270,9 +270,9 @@ export function DevicePage() {
           <dl className="edge-values">
             {metrics.map((m) => (
               <div key={m.metric}>
-                <dt>{m.metric}</dt>
-                <dd>{m.value.toLocaleString(undefined, { maximumFractionDigits: 3 })}</dd>
-                <dd className="faint">{relativeTime(m.at)}</dd>
+                <dt>{isolate(m.metric)}</dt>
+                <dd>{isolate(m.value.toLocaleString(undefined, { maximumFractionDigits: 3 }))}</dd>
+                <dd className="faint">{isolate(relativeTime(m.at))}</dd>
               </div>
             ))}
           </dl>
@@ -284,7 +284,7 @@ export function DevicePage() {
           <ul className="edge-plain">
             {d.related.map((r) => (
               <li key={r.id}>
-                {r.out ? r.relation : `${r.relation} (from)`} <Link to={`/d/${r.to}`}>{r.name}</Link> <span className="muted">{r.code}</span>
+                {r.out ? r.relation : tr("{relation} (from)", { relation: r.relation })} <Link to={`/d/${r.to}`}>{isolate(r.name)}</Link> <span className="muted">{isolate(r.code)}</span>
               </li>
             ))}
           </ul>
@@ -300,10 +300,10 @@ export function DevicePage() {
             {d.attributes.map((a) => (
               <li key={a.key}>
                 <div className="edge-row-main">
-                  <strong>{a.key}</strong>
+                  <strong>{isolate(a.key)}</strong>
                   <div className="faint">
-                    {shown(a.value)}
-                    {a.in_step === false ? `, asked for ${shown(a.desired)}` : ""}
+                    {isolate(shown(a.value))}
+                    {a.in_step === false ? tr(", asked for {value}", { value: shown(a.desired) }) : ""}
                   </div>
                 </div>
                 {a.in_step === false ? <Badge tone="amber">{tr("Out of step")}</Badge> : null}
@@ -324,10 +324,10 @@ export function DevicePage() {
             {d.events.map((e, i) => (
               <li key={`${e.at}-${i}`}>
                 <div className="edge-row-main">
-                  <strong>{e.name}</strong>
-                  <div className="faint">{shown(e.value)}</div>
+                  <strong>{isolate(e.name)}</strong>
+                  <div className="faint">{isolate(shown(e.value))}</div>
                 </div>
-                <span className="faint">{relativeTime(e.at)}</span>
+                <span className="faint">{isolate(relativeTime(e.at))}</span>
               </li>
             ))}
           </ul>
