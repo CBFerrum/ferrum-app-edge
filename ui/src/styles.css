@@ -873,9 +873,9 @@ a.edge-row-main:hover strong {
 
 .edge-level-fill {
   position: absolute;
-  right: 0;
+  inset-inline-end: 0;
   bottom: 0;
-  left: 0;
+  inset-inline-start: 0;
   background: var(--edge-tone, var(--primary));
   transition: height 300ms;
 }
@@ -1066,7 +1066,7 @@ a.edge-row-main:hover strong {
   margin: 0;
   max-height: 240px;
   overflow: auto;
-  padding-left: 18px;
+  padding-inline-start: 18px;
 }
 
 .edge-check {

@@ -385,6 +385,7 @@ CHANGELOG.md  what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.5.3** | Rebuilt with Ferrum-Frontend d5d98f2: a workspace's own interface words; pictures in attachment fields; a duplicate value said so; its own screens mirror right to left. |
 | **0.5.2** | Rebuilt with Ferrum-Frontend 63280d3: right to left, pages mirror; the records pages' words in Arabic and Hindi. |
 | **0.5.1** | Rebuilt with Ferrum-Frontend a64416a: a box whose default is 1 shows ticked. |
 | **0.5.0** | Gateways in the workspace's support report, as counts, for partners and the control plane. Rebuilt with Ferrum-Frontend 922fcfb. |
