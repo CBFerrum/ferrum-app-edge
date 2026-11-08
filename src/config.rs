@@ -3,6 +3,7 @@
 
 use chrono::{DateTime, Utc};
 use ferrum_edge_contract::edge::{Basic, Comparison, Credentials, DeviceLink, EdgeConfig, Export, FlowSpec, Provisioning, Release, Rule};
+use ferrum_edge_contract::flow::Transition;
 use ferrum_kernel::{Result, Tx};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -190,15 +191,25 @@ pub async fn for_gateway(tx: &mut Tx, tenant: Uuid, gateway: Uuid, site: Option<
             sign_with: e.sign_with.filter(|s| !s.is_empty()),
         })
         .collect();
-    let flows: Vec<(Uuid, String, i64, String, bool)> = sqlx::query_as(
-        "select id, flow_name, revision, published_body, coalesce(debug_until > now(), false) from e_edge_flow \
+    let flows: Vec<(Uuid, String, i64, String, bool, Option<String>)> = sqlx::query_as(
+        "select id, flow_name, revision, published_body, coalesce(debug_until > now(), false), transition from e_edge_flow \
          where tenant_id = $1 and live and published_body is not null and (site is null or site = $2) and runs_at = 'Gateway' order by flow_name",
     )
     .bind(tenant)
     .bind(site)
     .fetch_all(&mut **tx)
     .await?;
-    let flows = flows.into_iter().map(|(id, name, revision, body, debug)| FlowSpec { id, name, revision, body, debug }).collect();
+    let flows = flows
+        .into_iter()
+        .map(|(id, name, revision, body, debug, transition)| {
+            let transition = match transition.as_deref() {
+                Some("Drain First") => Transition::Drain,
+                Some("Keep Unchanged") => Transition::Migrate,
+                _ => Transition::Reset,
+            };
+            FlowSpec { id, name, revision, body, debug, transition }
+        })
+        .collect();
     let release: Option<ReleaseRow> = sqlx::query_as(
         "select release_version as version, url, sha256, signature, expires_at, percent::text as percent from e_edge_release \
          where tenant_id = $1 and status = 'Rolling Out' and (site is null or site = $2) and expires_at > now() order by created_at desc limit 1",

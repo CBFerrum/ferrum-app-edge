@@ -14,8 +14,10 @@
 //! the site, so what a reviewer saw is what runs.
 
 use crate::driver::{at_path, parse_duration, render_json};
+use crate::pipeline::{self, Episode, EpisodeRule, Happened, Quality, Said, WindowRule, Windows};
 use chrono::{DateTime, TimeDelta, Utc};
 use ferrum_calc::formula::Formula;
+use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value, json};
@@ -37,6 +39,11 @@ const MAX_SPLIT: usize = 1_000;
 const MAX_KNOWN: usize = 100_000;
 /// Readings before an anomaly can mean anything.
 const ANOMALY_MIN: usize = 10;
+/// Keys a whole flow keeps memory for, every node together: untrusted device codes cannot grow a
+/// gateway's memory without bound, and what is left out is said (FLC-EDGE-004).
+const MAX_FLOW_KEYS: usize = 50_000;
+/// Times of readings a business-critical flow remembers per source, to know one it has had.
+const MAX_SEEN: usize = 256;
 /// The longest stretch of time a simulation will walk through, second by second.
 pub const MAX_SIMULATED_SECS: i64 = 6 * 3600;
 
@@ -288,7 +295,72 @@ pub enum Kind {
     Reassign {
         to: String,
     },
+    /// Raw counts to engineering units, exactly: `value × scale + offset`, with `unit`. The raw value
+    /// stays with the reading as its provenance. What is not a number, or lands outside `min`..`max`,
+    /// leaves by `quarantine` and is never a normal reading (FLC-EDGE-002).
+    Normalize {
+        #[serde(default = "decimal_one")]
+        scale: Decimal,
+        #[serde(default)]
+        offset: Decimal,
+        #[serde(default)]
+        unit: Option<String>,
+        #[serde(default)]
+        min: Option<Decimal>,
+        #[serde(default)]
+        max: Option<Decimal>,
+    },
+    /// Sends a reading on by how far it can be trusted: `good`, `uncertain` or `bad`, or `stale` when it
+    /// was seen longer ago than `stale` (FLC-EDGE-003).
+    #[serde(rename = "quality")]
+    QualityGate {
+        #[serde(default, deserialize_with = "some_period")]
+        stale: Option<Duration>,
+    },
+    /// A statistic for each stretch of the time readings were *seen*: `out` once the watermark (the
+    /// latest time seen, less `wait`) passes a window's end, `revised` for a late reading within
+    /// `lateness` after that, `late` for one later still. A device quiet for `idle` closes what it has
+    /// open, marked partial (FLC-EDGE-006).
+    EventWindow {
+        #[serde(deserialize_with = "period")]
+        size: Duration,
+        stat: Stat,
+        #[serde(default = "no_time", deserialize_with = "period")]
+        wait: Duration,
+        #[serde(default = "no_time", deserialize_with = "period")]
+        lateness: Duration,
+        #[serde(default, deserialize_with = "some_period")]
+        idle: Option<Duration>,
+        #[serde(default)]
+        across: bool,
+    },
+    /// A sustained condition with one identity: `opened` once it has held above `above` (or below
+    /// `below`) for `on_delay`, `closed` once it has stayed past `close` for `off_delay`, the band
+    /// between a deadband; `reopened` if it holds again within `reopen` of closing; `evidence` for each
+    /// reading meanwhile, and `stale` once when good readings stop. Only a good reading moves it
+    /// (FLC-EDGE-007).
+    Episode {
+        #[serde(default)]
+        above: Option<f64>,
+        #[serde(default)]
+        below: Option<f64>,
+        close: f64,
+        #[serde(default = "no_time", deserialize_with = "period")]
+        on_delay: Duration,
+        #[serde(default = "no_time", deserialize_with = "period")]
+        off_delay: Duration,
+        #[serde(default = "no_time", deserialize_with = "period")]
+        reopen: Duration,
+        #[serde(default, deserialize_with = "some_period")]
+        stale: Option<Duration>,
+    },
 
+    /// Hands an episode to the platform as a condition: one case for each episode, whatever its gateway
+    /// says twice, with its evidence and how it ended. What happens next is a process the workspace
+    /// runs, reviewed like any other.
+    Case {
+        title: String,
+    },
     /// A way out of a flow other flows use. On its own, it only says what reached it.
     Output {
         name: String,
@@ -388,6 +460,14 @@ fn five_minutes() -> Duration {
     Duration::from_secs(300)
 }
 
+fn no_time() -> Duration {
+    Duration::ZERO
+}
+
+fn decimal_one() -> Decimal {
+    Decimal::ONE
+}
+
 impl Kind {
     fn is_source(&self) -> bool {
         matches!(self, Kind::Input { .. } | Kind::Metric { .. } | Kind::State { .. } | Kind::Event { .. } | Kind::Attribute { .. } | Kind::Timer { .. })
@@ -406,6 +486,7 @@ impl Kind {
                 | Kind::Reply { .. }
                 | Kind::Log { .. }
                 | Kind::Output { .. }
+                | Kind::Case { .. }
         )
     }
 
@@ -418,6 +499,10 @@ impl Kind {
             Kind::Switch { cases, .. } => cases.iter().cloned().chain(["other".to_string()]).collect(),
             Kind::Geofence { .. } => ["inside", "outside", "entered", "left"].map(String::from).to_vec(),
             Kind::Anomaly { .. } => vec!["normal".into(), "odd".into()],
+            Kind::Normalize { .. } => vec!["out".into(), "quarantine".into()],
+            Kind::QualityGate { .. } => ["good", "uncertain", "bad", "stale"].map(String::from).to_vec(),
+            Kind::EventWindow { .. } => ["out", "revised", "late"].map(String::from).to_vec(),
+            Kind::Episode { .. } => ["opened", "reopened", "evidence", "stale", "closed", "interrupted"].map(String::from).to_vec(),
             k if k.is_action() => vec![],
             _ => vec!["out".into()],
         }
@@ -475,21 +560,87 @@ pub struct Input {
     pub attribute: Option<String>,
     #[serde(default)]
     pub value: Value,
+    /// When the device saw it, if it says: what event-time steps go by. Otherwise when it arrived.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<DateTime<Utc>>,
+    /// How far it can be trusted: good unless the device or its gateway said otherwise.
+    #[serde(default, skip_serializing_if = "Quality::is_good")]
+    pub quality: Quality,
 }
 
 /// What a flow did.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "effect", rename_all = "snake_case")]
 pub enum Effect {
-    Alarm { node: String, name: String, severity: String, device: Option<String>, raised: bool, value: Option<f64> },
-    Event { device: Option<String>, name: String, value: Value },
-    Metric { device: Option<String>, name: String, value: f64, unit: Option<String> },
-    Attribute { device: Option<String>, key: String, value: Value },
-    Notify { device: Option<String>, title: String },
-    Export { to: String, body: Value },
-    Command { node: String, device: Option<String>, operation: String, payload: Value, expires_secs: i64 },
-    Reply { device: Option<String>, id: String, value: Value },
-    Log { node: String, device: Option<String>, text: String },
+    Alarm {
+        node: String,
+        name: String,
+        severity: String,
+        device: Option<String>,
+        raised: bool,
+        value: Option<f64>,
+    },
+    Event {
+        device: Option<String>,
+        name: String,
+        value: Value,
+    },
+    Metric {
+        device: Option<String>,
+        name: String,
+        value: f64,
+        unit: Option<String>,
+    },
+    Attribute {
+        device: Option<String>,
+        key: String,
+        value: Value,
+    },
+    Notify {
+        device: Option<String>,
+        title: String,
+    },
+    Export {
+        to: String,
+        body: Value,
+    },
+    Command {
+        node: String,
+        device: Option<String>,
+        operation: String,
+        payload: Value,
+        expires_secs: i64,
+    },
+    Reply {
+        device: Option<String>,
+        id: String,
+        value: Value,
+    },
+    Log {
+        node: String,
+        device: Option<String>,
+        text: String,
+    },
+    /// An episode for the platform: `phase` is `opened`, `reopened`, `evidence`, `stale`, `closed` or
+    /// `interrupted`. `episode` names it however often it is said, so the platform keeps one condition and
+    /// starts one case for it; `at` is when it was seen, and `raw` the reading before it was normalized.
+    Condition {
+        node: String,
+        device: Option<String>,
+        episode: String,
+        phase: String,
+        title: String,
+        at: DateTime<Utc>,
+        value: Option<f64>,
+        /// The furthest past its limit the episode has gone.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        peak: Option<f64>,
+        quality: Quality,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        raw: Option<Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit: Option<String>,
+    },
 }
 
 /// What a flow can look up about devices: their newest numbers and what they said about themselves.
@@ -540,6 +691,9 @@ pub struct Output {
     pub trace: Vec<Trace>,
     /// Why something did not happen, for the person who drew it.
     pub problems: Vec<String>,
+    /// A business-critical flow had this reading already: nothing came of it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub duplicate: bool,
 }
 
 /// What a flow needs to hear and to look up, for whatever feeds it.
@@ -568,6 +722,10 @@ struct Memory {
     inputs: BTreeMap<String, (DateTime<Utc>, Value)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     device: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    windows: Option<Windows>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    episode: Option<Episode>,
 }
 
 /// Everything a running flow remembers, by node and device. It survives a restart in the journal,
@@ -575,6 +733,17 @@ struct Memory {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct State {
     nodes: BTreeMap<String, BTreeMap<String, Memory>>,
+    /// For a business-critical flow: the times of the latest readings had from each source, so the
+    /// same reading delivered again changes nothing (FLC-EDGE-005).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    seen: BTreeMap<String, VecDeque<i64>>,
+}
+
+impl State {
+    /// How many keys every node holds together.
+    pub fn keys(&self) -> usize {
+        self.nodes.values().map(BTreeMap::len).sum()
+    }
 }
 
 #[derive(Debug)]
@@ -593,10 +762,18 @@ pub struct Compiled {
     /// By node, the inputs something is wired to.
     wired: Vec<BTreeSet<String>>,
     formulas: Vec<Option<Formula>>,
+    /// `profile: critical`: a reading had already is known and changes nothing, and its gateway writes
+    /// where the flow stands with what it did, in one transaction, after each reading.
+    pub critical: bool,
+    /// What episode identities are scoped by: the flow's id where it runs, so two flows never name the
+    /// same episode.
+    pub scope: String,
 }
 
 fn number(v: &Value) -> Option<f64> {
     match v {
+        // What an event window or an episode sends on: its number is its value.
+        Value::Object(m) if m.contains_key("end") || m.contains_key("episode") => m.get("value").and_then(number),
         Value::Number(n) => n.as_f64(),
         Value::Bool(b) => Some(f64::from(u8::from(*b))),
         Value::String(s) => s.trim().parse().ok(),
@@ -658,6 +835,12 @@ fn span(d: Duration) -> TimeDelta {
 /// stands between a draft and a review.
 pub fn parse(text: &str) -> Result<Compiled, String> {
     let body: Value = serde_yaml::from_str(text).map_err(|e| e.to_string())?;
+    let critical = match body.get("profile") {
+        None | Some(Value::Null) => false,
+        Some(p) if p == "standard" => false,
+        Some(p) if p == "critical" => true,
+        Some(other) => return Err(format!("profile is standard or critical, not {other}")),
+    };
     let raw = body["nodes"].as_array().ok_or("a flow needs nodes")?;
     if raw.len() > MAX_NODES {
         return Err(format!("a flow has at most {MAX_NODES} nodes"));
@@ -772,6 +955,30 @@ pub fn parse(text: &str) -> Result<Compiled, String> {
                 return Err(format!("{}: look back over {ANOMALY_MIN} to {MAX_HELD} readings, by more than zero deviations", n.id));
             }
             Kind::Reassign { to } if to.is_empty() => return Err(format!("{}: say whose it becomes", n.id)),
+            Kind::Normalize { scale, .. } if scale.is_zero() => return Err(format!("{}: a scale of zero makes every reading the same", n.id)),
+            Kind::Normalize { min: Some(lo), max: Some(hi), .. } if lo > hi => return Err(format!("{}: {lo} is above {hi}", n.id)),
+            Kind::EventWindow { size, lateness, idle, .. } => {
+                if *size < Duration::from_secs(1) || *size > Duration::from_secs(86_400) {
+                    return Err(format!("{}: a window is between a second and a day long", n.id));
+                }
+                if *lateness > Duration::from_secs(7 * 86_400) {
+                    return Err(format!("{}: corrections are taken for a week at most", n.id));
+                }
+                if idle.is_some_and(|i| i < Duration::from_secs(1)) {
+                    return Err(format!("{}: a source is idle after a second at least", n.id));
+                }
+            }
+            Kind::Episode { above, below, close, .. } => match (above, below) {
+                (Some(open), None) if close > open => {
+                    return Err(format!("{}: it closes at or under {open}, where it opens, or it would close as it opens", n.id));
+                }
+                (None, Some(open)) if close < open => {
+                    return Err(format!("{}: it closes at or over {open}, where it opens, or it would close as it opens", n.id));
+                }
+                (Some(_), None) | (None, Some(_)) => {}
+                _ => return Err(format!("{}: say where it opens: above a value, or below one", n.id)),
+            },
+            Kind::Case { title } if title.trim().is_empty() => return Err(format!("{}: give the case a title", n.id)),
             _ => {}
         }
         let text = match &n.kind {
@@ -781,10 +988,17 @@ pub fn parse(text: &str) -> Result<Compiled, String> {
         };
         formulas.push(text.map(|t| Formula::parse(t, &|name| Ok(name.to_string()))).transpose().map_err(|e| format!("{}: {e}", n.id))?);
     }
+    for (from, out) in wires.iter().enumerate() {
+        for w in out {
+            if matches!(nodes[w.to].kind, Kind::Case { .. }) && !matches!(nodes[from].kind, Kind::Episode { .. }) {
+                return Err(format!("{}: a case takes an episode: wire it from one", nodes[w.to].id));
+            }
+        }
+    }
     if !nodes.iter().any(|n| n.kind.is_action()) {
         return Err("this flow does nothing: add an action".into());
     }
-    Ok(Compiled { nodes, digest: hex::encode(Sha256::digest(text.as_bytes())), wires, wired, formulas })
+    Ok(Compiled { nodes, digest: hex::encode(Sha256::digest(text.as_bytes())), wires, wired, formulas, critical, scope: String::new() })
 }
 
 struct Run<'a> {
@@ -792,6 +1006,18 @@ struct Run<'a> {
     at: DateTime<Utc>,
     out: Output,
     known: &'a Known,
+    /// About the reading being followed: when it was seen, how far it can be trusted, and, once a step
+    /// normalized it, what it was before and in which unit.
+    event_at: DateTime<Utc>,
+    quality: Quality,
+    raw: Option<Value>,
+    unit: Option<String>,
+}
+
+impl<'a> Run<'a> {
+    fn new(state: &'a mut State, at: DateTime<Utc>, known: &'a Known) -> Run<'a> {
+        Run { state, at, out: Output::default(), known, event_at: at, quality: Quality::Good, raw: None, unit: None }
+    }
 }
 
 pub fn minutes_of(text: &str) -> Option<i32> {
@@ -838,8 +1064,13 @@ fn in_polygon(point: (f64, f64), corners: &[[f64; 2]]) -> bool {
 
 impl Run<'_> {
     fn memory(&mut self, node: &str, key: &str) -> Option<&mut Memory> {
+        let new = !self.state.nodes.get(node).is_some_and(|k| k.contains_key(key));
+        if new && self.state.keys() >= MAX_FLOW_KEYS {
+            self.out.problems.push(format!("this flow is keeping track of {MAX_FLOW_KEYS} things already: {key} at {node} was left out"));
+            return None;
+        }
         let keys = self.state.nodes.entry(node.to_string()).or_default();
-        if !keys.contains_key(key) && keys.len() >= MAX_KEYS {
+        if new && keys.len() >= MAX_KEYS {
             self.out.problems.push(format!("{node} is keeping track of too many devices: {key} was left out"));
             return None;
         }
@@ -879,6 +1110,39 @@ fn row_of(value: &Value) -> Map<String, Value> {
 
 fn fill(template: &Value, value: &Value, device: Option<&str>) -> Result<Value, String> {
     render_json(template, &json!({"value": value, "device": device}))
+}
+
+/// When what a message is about was seen, in milliseconds: an event window's end for its result, or
+/// the reading's own time.
+fn seen_ms(value: &Value, run: &Run<'_>) -> i64 {
+    value.get("end").and_then(Value::as_str).and_then(|s| s.parse::<DateTime<Utc>>().ok()).map_or_else(|| pipeline::ms(run.event_at), pipeline::ms)
+}
+
+fn window_rule(size: Duration, wait: Duration, lateness: Duration, idle: Option<Duration>) -> WindowRule {
+    let ms = |d: Duration| i64::try_from(d.as_millis()).unwrap_or(i64::MAX);
+    WindowRule { size_ms: ms(size).max(1), wait_ms: ms(wait), lateness_ms: ms(lateness), idle_ms: idle.map(ms) }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn episode_rule(above: Option<f64>, below: Option<f64>, close: f64, on: Duration, off: Duration, reopen: Duration, stale: Option<Duration>) -> EpisodeRule {
+    let ms = |d: Duration| i64::try_from(d.as_millis()).unwrap_or(i64::MAX);
+    EpisodeRule {
+        high: above.is_some(),
+        open: above.or(below).unwrap_or_default(),
+        close,
+        on_delay_ms: ms(on),
+        off_delay_ms: ms(off),
+        reopen_ms: ms(reopen),
+        stale_ms: stale.map(ms),
+    }
+}
+
+fn said(out: Vec<Said>) -> Leaving {
+    out.iter().map(|s| (s.port.to_string(), s.message())).collect()
+}
+
+fn happened(out: Vec<Happened>, device: Option<&str>) -> Leaving {
+    out.iter().map(|h| (h.port.to_string(), h.message(device))).collect()
 }
 
 impl Compiled {
@@ -1153,6 +1417,40 @@ impl Compiled {
                 out_of(if odd { "odd" } else { "normal" }, value)
             }
             Kind::Reassign { .. } => out_of("out", value),
+            Kind::Normalize { scale, offset, unit, min, max } => match pipeline::normalize(&value, *scale, *offset, *min, *max) {
+                Ok(n) => match n.to_f64() {
+                    Some(f) => {
+                        run.raw = Some(value);
+                        run.unit = unit.clone();
+                        out_of("out", json!(f))
+                    }
+                    None => out_of("quarantine", json!({"raw": value, "why": "out of range", "device": device})),
+                },
+                Err(why) => out_of("quarantine", json!({"raw": value, "why": why, "device": device})),
+            },
+            Kind::QualityGate { stale } => {
+                let old = stale.is_some_and(|s| at - run.event_at > span(s));
+                out_of(if old { "stale" } else { run.quality.word() }, value)
+            }
+            Kind::EventWindow { size, stat, wait, lateness, idle, across } => {
+                // Only what can be trusted goes into a statistic.
+                if !run.quality.is_good() {
+                    return vec![];
+                }
+                let Some(n) = number(&value) else { return vec![] };
+                let (rule, stat, seen, now) = (window_rule(*size, *wait, *lateness, *idle), *stat, seen_ms(&value, run), pipeline::ms(at));
+                let Some(m) = run.memory(id, if *across { "" } else { key }) else { return vec![] };
+                m.device = if *across { None } else { device.map(str::to_string) };
+                said(m.windows.get_or_insert_with(Windows::default).observe(seen, n, now, &rule, |v| statistic(stat, v)))
+            }
+            Kind::Episode { above, below, close, on_delay, off_delay, reopen, stale } => {
+                let Some(n) = number(&value) else { return vec![] };
+                let rule = episode_rule(*above, *below, *close, *on_delay, *off_delay, *reopen, *stale);
+                let (seen, now, quality, scope) = (seen_ms(&value, run), pipeline::ms(at), run.quality, self.scope.clone());
+                let Some(m) = run.memory(id, key) else { return vec![] };
+                m.device = device.map(str::to_string);
+                happened(m.episode.get_or_insert_with(Episode::default).observe(&scope, id, key, seen, n, quality, now, &rule), device)
+            }
             Kind::Alarm { name, severity, device: fixed } => {
                 let device = fixed.as_deref().or(device);
                 let Some(m) = run.memory(id, device.unwrap_or_default()) else { return vec![] };
@@ -1211,6 +1509,29 @@ impl Compiled {
                     Ok(answer) => run.out.effects.push(Effect::Reply { device: device.map(str::to_string), id: asked, value: answer }),
                     Err(why) => run.out.problems.push(format!("{id}: {why}")),
                 }
+                vec![]
+            }
+            Kind::Case { title } => {
+                let (Some(episode), Some(phase)) = (value.get("episode").and_then(Value::as_str), value.get("phase").and_then(Value::as_str)) else {
+                    run.out.problems.push(format!("{id}: only an episode opens a case"));
+                    return vec![];
+                };
+                let seen = value.get("at").and_then(Value::as_str).and_then(|s| s.parse::<DateTime<Utc>>().ok()).unwrap_or(run.event_at);
+                let quality = value.get("quality").and_then(|q| serde_json::from_value(q.clone()).ok()).unwrap_or(run.quality);
+                let title = fill(&json!(title), &value, device).map_or_else(|_| title.clone(), |t| word(&t));
+                run.out.effects.push(Effect::Condition {
+                    node: id.to_string(),
+                    device: device.map(str::to_string),
+                    episode: episode.to_string(),
+                    phase: phase.to_string(),
+                    title,
+                    at: seen,
+                    value: value.get("value").and_then(number),
+                    peak: value.get("peak").and_then(Value::as_f64),
+                    quality,
+                    raw: run.raw.clone(),
+                    unit: run.unit.clone(),
+                });
                 vec![]
             }
             Kind::Output { name } => {
@@ -1309,7 +1630,26 @@ impl Compiled {
 
     /// The same, for a flow that looks things up.
     pub fn input_knowing(&self, state: &mut State, input: &Input, at: DateTime<Utc>, known: &Known) -> Output {
-        let mut run = Run { state, at, out: Output::default(), known };
+        if self.critical
+            && let Some(seen) = input.observed_at
+        {
+            let source = format!(
+                "{}|{}",
+                input.device,
+                input.metric.as_deref().or(input.event.as_deref()).or(input.attribute.as_deref()).or(input.state.as_ref().map(|_| "state")).unwrap_or_default()
+            );
+            let times = state.seen.entry(source).or_default();
+            if times.contains(&pipeline::ms(seen)) {
+                return Output { duplicate: true, ..Output::default() };
+            }
+            if times.len() >= MAX_SEEN {
+                times.pop_front();
+            }
+            times.push_back(pipeline::ms(seen));
+        }
+        let mut run = Run::new(state, at, known);
+        run.event_at = input.observed_at.unwrap_or(at);
+        run.quality = input.quality;
         let matched = |n: &Node| match &n.kind {
             Kind::Metric { device, metric } => input.metric.as_ref() == Some(metric) && device_matches(device, &input.device),
             Kind::Input { name } => input.metric.as_ref() == Some(name),
@@ -1331,7 +1671,7 @@ impl Compiled {
     }
 
     pub fn tick_knowing(&self, state: &mut State, at: DateTime<Utc>, known: &Known) -> Output {
-        let mut run = Run { state, at, out: Output::default(), known };
+        let mut run = Run::new(state, at, known);
         let mut queue = VecDeque::new();
         for (i, n) in self.nodes.iter().enumerate() {
             let id = n.id.as_str();
@@ -1358,6 +1698,23 @@ impl Compiled {
                         _ => vec![],
                     };
                     for (device, leaving) in Self::each_key(run.state, id, fire) {
+                        self.send_on(i, device, Value::Null, leaving, &mut queue, &mut run);
+                    }
+                }
+                Kind::EventWindow { size, stat, wait, lateness, idle, .. } => {
+                    let (rule, stat, now) = (window_rule(*size, *wait, *lateness, *idle), *stat, pipeline::ms(at));
+                    let due = |m: &mut Memory| m.windows.as_mut().map_or(vec![], |w| said(w.due(now, &rule, &|v| statistic(stat, v))));
+                    for (device, leaving) in Self::each_key(run.state, id, due) {
+                        self.send_on(i, device, Value::Null, leaving, &mut queue, &mut run);
+                    }
+                }
+                Kind::Episode { above, below, close, on_delay, off_delay, reopen, stale } => {
+                    let (rule, now) = (episode_rule(*above, *below, *close, *on_delay, *off_delay, *reopen, *stale), pipeline::ms(at));
+                    let due = |m: &mut Memory| {
+                        let device = m.device.clone();
+                        m.episode.as_mut().map_or(vec![], |e| happened(e.due(now, &rule), device.as_deref()))
+                    };
+                    for (device, leaving) in Self::each_key(run.state, id, due) {
                         self.send_on(i, device, Value::Null, leaving, &mut queue, &mut run);
                     }
                 }
@@ -1407,6 +1764,89 @@ impl Compiled {
         self.nodes.iter().find(|n| matches!(n.kind, Kind::Reply { .. } | Kind::Export { .. })).map(|n| n.id.as_str())
     }
 
+    /// Whether it wants readings that cannot be trusted as well, with their quality: a flow that judges
+    /// quality, normalizes, keeps episodes or event-time windows, or is business-critical. Any other
+    /// hears only what passed its device's quality limits, as before.
+    pub fn wants_quality(&self) -> bool {
+        self.critical
+            || self.nodes.iter().any(|n| matches!(n.kind, Kind::QualityGate { .. } | Kind::Episode { .. } | Kind::Normalize { .. } | Kind::EventWindow { .. }))
+    }
+
+    /// The same flow, naming its episodes by `scope`: where it runs, the flow's id.
+    pub fn scoped(mut self, scope: impl Into<String>) -> Compiled {
+        self.scope = scope.into();
+        self
+    }
+
+    /// Before another revision takes over by draining this one: every open event window says what it
+    /// has, marked partial, and every open episode is said to be interrupted, not closed, since nothing
+    /// saw its condition clear. What comes of that is acted on like anything else (FLC-EDGE-010).
+    pub fn drain(&self, state: &mut State, at: DateTime<Utc>) -> Output {
+        let known = Known::default();
+        let mut run = Run::new(state, at, &known);
+        let mut queue = VecDeque::new();
+        let now = pipeline::ms(at);
+        for (i, n) in self.nodes.iter().enumerate() {
+            let id = n.id.as_str();
+            let leaving: Vec<(Option<String>, Leaving)> = match &n.kind {
+                Kind::EventWindow { size, stat, wait, lateness, idle, .. } => {
+                    let (rule, stat) = (window_rule(*size, *wait, *lateness, *idle), *stat);
+                    Self::each_key(run.state, id, |m| m.windows.as_mut().map_or(vec![], |w| said(w.drain(&rule, &|v| statistic(stat, v)))))
+                }
+                Kind::Episode { .. } => Self::each_key(run.state, id, |m| {
+                    let device = m.device.clone();
+                    m.episode.as_mut().map_or(vec![], |e| happened(e.drain(now), device.as_deref()))
+                }),
+                _ => vec![],
+            };
+            for (device, out) in leaving {
+                self.send_on(i, device, Value::Null, out, &mut queue, &mut run);
+            }
+        }
+        let start: Vec<_> = queue.into();
+        self.follow(start, &mut run);
+        run.out
+    }
+
+    /// What this revision keeps of what an earlier one remembered: a step with the same id and the same
+    /// settings keeps its memory, and any other starts with nothing. The plan says which, so a person
+    /// chooses knowing it (FLC-EDGE-010).
+    pub fn migrate(&self, old: &Compiled, state: &State) -> (State, Vec<Carried>) {
+        let mut next = State { nodes: BTreeMap::new(), seen: state.seen.clone() };
+        let mut plan = Vec::new();
+        for (node, memory) in &state.nodes {
+            let before = old.nodes.iter().find(|n| &n.id == node);
+            let after = self.nodes.iter().find(|n| &n.id == node);
+            let why = match (before, after) {
+                (_, None) => Some("it is gone"),
+                (Some(b), Some(a)) if b.kind == a.kind => None,
+                (Some(_), Some(_)) => Some("its settings changed, so what it remembered may mean something else now"),
+                (None, Some(_)) => Some("it is new"),
+            };
+            if why.is_none() {
+                next.nodes.insert(node.clone(), memory.clone());
+            }
+            plan.push(Carried { node: node.clone(), keys: memory.len(), kept: why.is_none(), why: why.map(str::to_string) });
+        }
+        (next, plan)
+    }
+
+    /// Before any state is at hand: which steps of `old` this revision would let keep their memory, by the
+    /// same rule as [`Compiled::migrate`], for the person choosing how it takes over.
+    pub fn plan(&self, old: &Compiled) -> Vec<Carried> {
+        old.nodes
+            .iter()
+            .map(|b| {
+                let why = match self.nodes.iter().find(|a| a.id == b.id) {
+                    None => Some("it is gone"),
+                    Some(a) if a.kind == b.kind => None,
+                    Some(_) => Some("its settings changed, so what it remembered may mean something else now"),
+                };
+                Carried { node: b.id.clone(), keys: 0, kept: why.is_none(), why: why.map(str::to_string) }
+            })
+            .collect()
+    }
+
     fn each_key(state: &mut State, node: &str, mut f: impl FnMut(&mut Memory) -> Leaving) -> Vec<(Option<String>, Leaving)> {
         let Some(keys) = state.nodes.get_mut(node) else { return vec![] };
         keys.values_mut()
@@ -1418,12 +1858,40 @@ impl Compiled {
     }
 }
 
+/// What one step keeps, or not, when a new revision takes over by migrating.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Carried {
+    pub node: String,
+    /// How many devices it remembered something about.
+    pub keys: usize,
+    pub kept: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+}
+
+/// What a new revision does with what the one before it remembered.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Transition {
+    /// It starts with nothing remembered: its steps may mean something else now.
+    #[default]
+    Reset,
+    /// What is open in the old one says what it has first, then the new one starts with nothing.
+    Drain,
+    /// Steps whose settings did not change keep what they remembered; the rest start with nothing.
+    Migrate,
+}
+
 /// One line of what a simulation is told happened.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Scripted {
     /// Seconds after the start.
     #[serde(default)]
     pub at: i64,
+    /// Seconds after the start the device saw it, when that is not when it arrived: a late or an
+    /// out-of-order reading.
+    #[serde(default)]
+    pub seen: Option<i64>,
     #[serde(flatten)]
     pub input: Input,
 }
@@ -1444,7 +1912,11 @@ pub fn simulate(flow: &Compiled, script: &[Scripted], until: i64) -> Result<Vec<
     if last > MAX_SIMULATED_SECS || script.iter().any(|s| s.at < 0) {
         return Err(format!("a simulation covers up to {MAX_SIMULATED_SECS} seconds"));
     }
-    let start = Utc::now();
+    let now = Utc::now();
+    // Event-time windows are aligned on the clock: simulating one from midnight puts a script's seconds
+    // in the same windows each time, so what a reviewer saw does not change with when they looked.
+    let windows = flow.nodes.iter().any(|n| matches!(n.kind, Kind::EventWindow { .. }));
+    let start = if windows { now.date_naive().and_time(chrono::NaiveTime::MIN).and_utc() } else { now };
     let mut state = State::default();
     let mut known = Known::default();
     let mut moments = Vec::new();
@@ -1452,11 +1924,16 @@ pub fn simulate(flow: &Compiled, script: &[Scripted], until: i64) -> Result<Vec<
         let at = start + TimeDelta::seconds(second);
         let mut merged = flow.tick_knowing(&mut state, at, &known);
         for line in script.iter().filter(|s| s.at == second) {
-            known.note(&line.input);
-            let more = flow.input_knowing(&mut state, &line.input, at, &known);
+            let mut input = line.input.clone();
+            if let Some(seen) = line.seen {
+                input.observed_at = Some(start + TimeDelta::seconds(seen));
+            }
+            known.note(&input);
+            let more = flow.input_knowing(&mut state, &input, at, &known);
             merged.effects.extend(more.effects);
             merged.trace.extend(more.trace);
             merged.problems.extend(more.problems);
+            merged.duplicate |= more.duplicate;
         }
         if merged != Output::default() {
             moments.push(Moment { at: second, output: merged });
@@ -2077,5 +2554,257 @@ mod tests {
             parse("nodes:\n  - {id: s, kind: state, device: 'P*'}\n  - {id: e, kind: notify, title: '{device} is {value}'}\nedges:\n  - {from: s, to: e}\n")
                 .is_ok()
         );
+    }
+}
+
+/// Business-critical pipelines (FLC W5): readings with their own time and quality, through normalizing,
+/// event-time windows and episodes to a case, the same at a desk and at a gateway.
+#[cfg(test)]
+mod pipeline_flows {
+    use super::*;
+
+    fn flow(body: Value) -> Compiled {
+        parse(&body.to_string()).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    fn at(secs: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp(1_800_000_000 + secs, 0).unwrap()
+    }
+
+    fn reading(device: &str, value: Value, seen: i64, quality: Quality) -> Input {
+        Input { device: device.into(), metric: Some("raw".into()), value, observed_at: Some(at(seen)), quality, ..Default::default() }
+    }
+
+    /// Raw counts normalized, an episode over 80 °C held for 30 s, each phase handed on as a case.
+    fn oven() -> Compiled {
+        flow(json!({
+            "profile": "critical",
+            "nodes": [
+                {"id": "in", "kind": "metric", "metric": "raw"},
+                {"id": "norm", "kind": "normalize", "scale": "0.1", "offset": "-40", "unit": "°C", "min": "-50", "max": "400"},
+                {"id": "hot", "kind": "episode", "above": 80, "close": 75, "on_delay": "30s", "off_delay": "60s", "reopen": "5m", "stale": "2m"},
+                {"id": "case", "kind": "case", "title": "Oven {device} too hot"},
+                {"id": "odd", "kind": "log"},
+            ],
+            "edges": [
+                {"from": "in", "to": "norm"},
+                {"from": "norm", "to": "hot"},
+                {"from": "norm", "port": "quarantine", "to": "odd"},
+                {"from": "hot", "port": "opened", "to": "case"},
+                {"from": "hot", "port": "reopened", "to": "case"},
+                {"from": "hot", "port": "evidence", "to": "case"},
+                {"from": "hot", "port": "stale", "to": "case"},
+                {"from": "hot", "port": "closed", "to": "case"},
+                {"from": "hot", "port": "interrupted", "to": "case"},
+            ],
+        }))
+        .scoped("flow-1")
+    }
+
+    fn conditions(out: &Output) -> Vec<(String, String, Option<f64>, Option<Value>)> {
+        out.effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Condition { episode, phase, value, raw, .. } => Some((episode.clone(), phase.clone(), *value, raw.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn one_case_per_episode_through_duplicates_bad_readings_and_a_restart() {
+        let f = oven();
+        assert!(f.critical && f.wants_quality());
+        let mut state = State::default();
+        let mut all = vec![];
+        // 1250 counts is 85 °C: holding from second 0, opened at 30.
+        for s in [0, 10, 20, 30] {
+            all.extend(conditions(&f.input(&mut state, &reading("OVEN-1", json!(1250), s, Quality::Good), at(s))));
+        }
+        assert_eq!(all.iter().filter(|c| c.1 == "opened").count(), 1);
+        let episode = all[0].0.clone();
+        assert_eq!(episode, pipeline::episode_id("flow-1", "hot", "OVEN-1", pipeline::ms(at(0))));
+        assert_eq!((all[0].2, all[0].3.clone()), (Some(85.0), Some(json!(1250))), "the case keeps the reading and its raw counts");
+        // The same reading delivered again: known, nothing comes of it.
+        let again = f.input(&mut state, &reading("OVEN-1", json!(1250), 30, Quality::Good), at(31));
+        assert!(again.duplicate && again.effects.is_empty());
+        // What survives a power cut is where it stood: carry on from the saved state.
+        let saved = serde_json::to_string(&state).unwrap();
+        let mut state: State = serde_json::from_str(&saved).unwrap();
+        let resumed = f.input(&mut state, &reading("OVEN-1", json!(1250), 30, Quality::Good), at(40));
+        assert!(resumed.duplicate, "a reading had before the restart is still known after it");
+        let more = conditions(&f.input(&mut state, &reading("OVEN-1", json!(1300), 40, Quality::Good), at(41)));
+        assert_eq!((more[0].0.clone(), more[0].1.as_str()), (episode.clone(), "evidence"), "the same episode, with more evidence");
+        // A bad reading far under the limit is evidence, never a recovery.
+        let bad = conditions(&f.input(&mut state, &reading("OVEN-1", json!(100), 50, Quality::Bad), at(51)));
+        assert_eq!(bad.iter().map(|c| c.1.as_str()).collect::<Vec<_>>(), ["evidence"]);
+        // Silence while open is said once, as stale.
+        let quiet = conditions(&f.tick(&mut state, at(200)));
+        assert_eq!(quiet.iter().map(|c| c.1.as_str()).collect::<Vec<_>>(), ["stale"]);
+        // Cooled to 70 °C (1100) for a minute: closed, still the same episode.
+        let mut ended = vec![];
+        for s in [210, 240, 271] {
+            ended.extend(conditions(&f.input(&mut state, &reading("OVEN-1", json!(1100), s, Quality::Good), at(s))));
+        }
+        let closed: Vec<_> = ended.iter().filter(|c| c.1 == "closed").collect();
+        assert_eq!((closed.len(), closed[0].0.clone()), (1, episode));
+    }
+
+    #[test]
+    fn what_cannot_be_a_reading_is_quarantined_and_quality_is_routed() {
+        let f = oven();
+        let mut state = State::default();
+        let out = f.input(&mut state, &reading("OVEN-1", json!("hot"), 0, Quality::Good), at(0));
+        assert!(conditions(&out).is_empty());
+        assert!(out.effects.iter().any(|e| matches!(e, Effect::Log { text, .. } if text.contains("not a number"))), "{out:?}");
+        let out = f.input(&mut state, &reading("OVEN-1", json!(9000), 1, Quality::Good), at(1));
+        assert!(out.effects.iter().any(|e| matches!(e, Effect::Log { text, .. } if text.contains("outside what it can be"))), "860 °C is not an oven reading");
+        let gate = flow(json!({
+            "nodes": [
+                {"id": "in", "kind": "metric", "metric": "raw"},
+                {"id": "q", "kind": "quality", "stale": "1m"},
+                {"id": "good", "kind": "log", "text": "good"},
+                {"id": "bad", "kind": "log", "text": "bad"},
+                {"id": "old", "kind": "log", "text": "stale"},
+            ],
+            "edges": [
+                {"from": "in", "to": "q"},
+                {"from": "q", "port": "good", "to": "good"},
+                {"from": "q", "port": "bad", "to": "bad"},
+                {"from": "q", "port": "stale", "to": "old"},
+            ],
+        }));
+        let said = |input: Input, now: i64| match &gate.input(&mut State::default(), &input, at(now)).effects[..] {
+            [Effect::Log { text, .. }] => text.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(said(reading("D", json!(1), 0, Quality::Good), 1), "good");
+        assert_eq!(said(reading("D", json!(1), 0, Quality::Bad), 1), "bad");
+        assert_eq!(said(reading("D", json!(1), 0, Quality::Good), 120), "stale", "seen two minutes before it arrived");
+    }
+
+    #[test]
+    fn an_event_window_corrects_itself_without_repeating_the_action_it_led_to() {
+        // The minute's average says out once; a late reading revises the evidence, and only `out` is
+        // wired to the command.
+        let f = flow(json!({
+            "nodes": [
+                {"id": "in", "kind": "metric", "metric": "raw"},
+                {"id": "w", "kind": "event_window", "size": "1m", "stat": "avg", "wait": "10s", "lateness": "2m"},
+                {"id": "ask", "kind": "command", "operation": "vent", "every": "1s"},
+                {"id": "fix", "kind": "record_metric", "name": "avg_corrected"},
+                {"id": "lost", "kind": "log", "text": "too late"},
+            ],
+            "edges": [
+                {"from": "in", "to": "w"},
+                {"from": "w", "to": "ask"},
+                {"from": "w", "port": "revised", "to": "fix"},
+                {"from": "w", "port": "late", "to": "lost"},
+            ],
+        }));
+        let script: Vec<Scripted> = serde_json::from_value(json!([
+            {"at": 5, "seen": 5, "device": "D", "metric": "raw", "value": 10},
+            {"at": 20, "seen": 20, "device": "D", "metric": "raw", "value": 20},
+            {"at": 71, "seen": 71, "device": "D", "metric": "raw", "value": 1},
+            {"at": 80, "seen": 30, "device": "D", "metric": "raw", "value": 60},
+            {"at": 200, "seen": 200, "device": "D", "metric": "raw", "value": 2},
+            {"at": 201, "seen": 40, "device": "D", "metric": "raw", "value": 99},
+        ]))
+        .unwrap();
+        let moments = simulate(&f, &script, 210).unwrap();
+        let effects: Vec<&Effect> = moments.iter().flat_map(|m| &m.output.effects).collect();
+        let commands = effects.iter().filter(|e| matches!(e, Effect::Command { .. })).count();
+        let corrections: Vec<f64> = effects.iter().filter_map(|e| if let Effect::Metric { value, .. } = e { Some(*value) } else { None }).collect();
+        assert_eq!(commands, 2, "minute 0 and minute 1 each led to one request: {effects:?}");
+        assert_eq!(corrections, [30.0], "the late reading corrected minute 0's evidence once");
+        assert!(effects.iter().any(|e| matches!(e, Effect::Log { text, .. } if text == "too late")));
+    }
+
+    #[test]
+    fn a_new_revision_drains_or_keeps_only_what_still_means_the_same() {
+        let old = oven();
+        let mut state = State::default();
+        for s in [0, 10, 20, 30] {
+            old.input(&mut state, &reading("OVEN-1", json!(1250), s, Quality::Good), at(s));
+        }
+        // Drained: the open episode is said to be interrupted, not closed.
+        let drained = conditions(&old.drain(&mut state.clone(), at(60)));
+        assert_eq!(drained.iter().map(|c| c.1.as_str()).collect::<Vec<_>>(), ["interrupted"]);
+        // Migrated to a revision that only rewords the case: the episode carries on.
+        let same_rule = parse(&serde_json::to_string(&json!({
+            "profile": "critical",
+            "nodes": [
+                {"id": "in", "kind": "metric", "metric": "raw"},
+                {"id": "norm", "kind": "normalize", "scale": "0.1", "offset": "-40", "unit": "°C", "min": "-50", "max": "400"},
+                {"id": "hot", "kind": "episode", "above": 80, "close": 75, "on_delay": "30s", "off_delay": "60s", "reopen": "5m", "stale": "2m"},
+                {"id": "case", "kind": "case", "title": "Oven {device} running hot"},
+                {"id": "odd", "kind": "log"},
+            ],
+            "edges": [
+                {"from": "in", "to": "norm"}, {"from": "norm", "to": "hot"}, {"from": "norm", "port": "quarantine", "to": "odd"},
+                {"from": "hot", "port": "opened", "to": "case"}, {"from": "hot", "port": "evidence", "to": "case"}, {"from": "hot", "port": "closed", "to": "case"},
+            ],
+        })).unwrap())
+        .unwrap()
+        .scoped("flow-1");
+        let (mut kept, plan) = same_rule.migrate(&old, &state);
+        assert!(plan.iter().any(|c| c.node == "hot" && c.kept), "{plan:?}");
+        let next = conditions(&same_rule.input(&mut kept, &reading("OVEN-1", json!(1260), 40, Quality::Good), at(41)));
+        assert_eq!(next[0].1, "evidence", "the same episode goes on: no second case");
+        // A changed limit is a changed meaning: it starts with nothing, and the plan says why.
+        let changed = parse(
+            &serde_json::to_string(&json!({
+                "nodes": [
+                    {"id": "in", "kind": "metric", "metric": "raw"},
+                    {"id": "hot", "kind": "episode", "above": 90, "close": 85},
+                    {"id": "case", "kind": "case", "title": "Too hot"},
+                ],
+                "edges": [{"from": "in", "to": "hot"}, {"from": "hot", "port": "opened", "to": "case"}],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let (fresh, plan) = changed.migrate(&old, &state);
+        assert_eq!(fresh.keys(), 0);
+        assert!(plan.iter().any(|c| c.node == "hot" && !c.kept && c.why.as_deref().unwrap_or_default().contains("settings changed")));
+    }
+
+    #[test]
+    fn a_flow_keeps_track_of_a_bounded_number_of_untrusted_devices() {
+        let f = flow(json!({
+            "nodes": [
+                {"id": "in", "kind": "metric", "metric": "raw"},
+                {"id": "c", "kind": "changed"},
+                {"id": "l", "kind": "log"},
+            ],
+            "edges": [{"from": "in", "to": "c"}, {"from": "c", "to": "l"}],
+        }));
+        let mut state = State::default();
+        let mut problems = 0;
+        for i in 0..(MAX_KEYS + 10) {
+            problems += f
+                .input(&mut state, &Input { device: format!("D-{i}"), metric: Some("raw".into()), value: json!(1), ..Default::default() }, at(0))
+                .problems
+                .len();
+        }
+        assert_eq!(state.keys(), MAX_KEYS);
+        assert_eq!(problems, 10, "each device left out is said");
+    }
+
+    #[test]
+    fn the_flows_that_ship_parse_unchanged_and_hear_only_trusted_readings() {
+        for (name, text) in
+            [("cold-rooms", include_str!("../../solutions/cold-rooms.yaml")), ("energy-meters", include_str!("../../solutions/energy-meters.yaml"))]
+        {
+            let doc: Value = serde_yaml::from_str(text).unwrap();
+            for f in doc["flows"].as_array().into_iter().flatten() {
+                let compiled = parse(f["body"].as_str().unwrap()).unwrap_or_else(|e| panic!("{name}: {e}"));
+                assert!(!compiled.critical && !compiled.wants_quality(), "{name}: an existing flow keeps what it hears");
+            }
+        }
+        assert!(parse(&json!({"nodes": [{"id": "in", "kind": "metric", "metric": "m"}, {"id": "c", "kind": "case", "title": "x"}], "edges": [{"from": "in", "to": "c"}]}).to_string())
+            .unwrap_err()
+            .contains("a case takes an episode"));
+        assert!(parse(&json!({"profile": "fast", "nodes": []}).to_string()).unwrap_err().contains("standard or critical"));
     }
 }

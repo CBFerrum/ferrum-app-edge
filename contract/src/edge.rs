@@ -219,6 +219,14 @@ pub struct FlowSpec {
     /// Someone is watching it, so what passes through is reported.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub debug: bool,
+    /// What this revision does with what the one before it at the site remembered, as the person who set
+    /// it running chose: start with nothing, drain the old one first, or keep what unchanged steps knew.
+    #[serde(default, skip_serializing_if = "is_reset")]
+    pub transition: crate::flow::Transition,
+}
+
+fn is_reset(t: &crate::flow::Transition) -> bool {
+    *t == crate::flow::Transition::Reset
 }
 
 /// A message passing through a step of a flow someone is watching.

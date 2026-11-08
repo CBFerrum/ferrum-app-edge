@@ -419,6 +419,22 @@ impl Journal {
         Ok(next as i32)
     }
 
+    /// A business-critical flow's step, all at once: where it stands now and what it did, in one
+    /// transaction. A power cut leaves both or neither, so its readings are neither lost nor acted on twice
+    /// (FLC-EDGE-005).
+    pub fn commit_flow(&self, key: &str, state: &str, facts: &[Fact]) -> Result<()> {
+        let mut db = self.db();
+        let tx = db.transaction()?;
+        for f in facts {
+            tx.execute("insert or ignore into fact (id, body) values (?1, ?2)", params![f.fact_id.to_string(), serde_json::to_string(f)?])?;
+        }
+        tx.execute("insert into meta (key, value) values (?1, ?2) on conflict (key) do update set value = excluded.value", [key, state])?;
+        crate::crash_point("before_flow_commit");
+        tx.commit()?;
+        crate::crash_point("after_flow_commit");
+        Ok(())
+    }
+
     pub fn add_fact(&self, f: &Fact) -> Result<()> {
         self.db().execute("insert or ignore into fact (id, body) values (?1, ?2)", params![f.fact_id.to_string(), serde_json::to_string(f)?])?;
         Ok(())

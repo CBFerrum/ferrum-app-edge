@@ -696,6 +696,18 @@ export function FlowEditor() {
           <div className="edge-bar">
             {picked ? <span className="faint">{tr("Choose where it goes: a dot on the left of a step. Esc cancels.")}</span> : <span className="faint">{locked ? tr("This version is locked.") : tr("Click a dot on the right of a step, then one on the left of another, to join them.")}</span>}
             <span className="edge-grow" />
+            <label className="edge-critical" title={tr("A reading it has had changes nothing, and its gateway writes where it stands with what it did after each one: a power cut neither loses nor repeats what it decided")}>
+              <input
+                type="checkbox"
+                disabled={locked}
+                checked={flow.profile === "critical"}
+                onChange={(e) => setFlow((f) => {
+                  const { profile: _, ...rest } = f;
+                  return e.target.checked ? { ...rest, profile: "critical" } : rest;
+                })}
+              />{" "}
+              {tr("Business-critical")}
+            </label>
             {locked ? null : <Button size="sm" onClick={() => setFlow(arrange(flow))}>{tr("Tidy up")}</Button>}
           </div>
           <Canvas flow={flow} selected={selected} select={select} picked={picked} pick={pick} join={join} move={move} passed={passed} locked={locked} />

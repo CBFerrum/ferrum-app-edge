@@ -60,7 +60,7 @@ pub async fn run(k: &Kernel, ctx: &Ctx) -> Result<()> {
 
 async fn one(k: &Kernel, ctx: &Ctx, f: &Flow) -> Result<()> {
     let compiled = match flow::parse(&f.published_body) {
-        Ok(compiled) => compiled,
+        Ok(compiled) => compiled.scoped(f.id.to_string()),
         Err(why) => {
             tracing::warn!(flow = %f.flow_name, "{why}");
             return Ok(());
@@ -270,6 +270,7 @@ async fn act(
             | Effect::Attribute { device, .. }
             | Effect::Metric { device, .. }
             | Effect::Command { device, .. }
+            | Effect::Condition { device, .. }
             | Effect::Notify { device, .. } => places.of(tx, ctx.tenant, device.as_ref()).await?,
             _ => None,
         };
@@ -306,6 +307,13 @@ async fn act(
             Effect::Log { node, device, text } => {
                 tracing::info!(flow = %f.flow_name, node = %node, device = device.as_deref().unwrap_or("-"), "{text}");
                 continue;
+            }
+            Effect::Condition { node, episode, phase, title, at: seen, value, peak, quality, raw, unit, .. } => {
+                let Some(id) = id else { continue };
+                (
+                    "condition",
+                    json!({"flow": f.id, "node": node, "device": id, "episode": episode, "phase": phase, "title": title, "at": seen, "value": value, "peak": peak, "quality": quality, "raw": raw, "unit": unit}),
+                )
             }
             // Refused when it was run, and only here if a flow changed underneath that.
             Effect::Reply { .. } | Effect::Export { .. } => continue,
