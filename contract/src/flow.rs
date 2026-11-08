@@ -271,6 +271,10 @@ pub enum Kind {
         /// Another device, instead of the one this came from.
         #[serde(default)]
         device: Option<String>,
+        /// How old what it looks up may be, by when the device saw it (FLC-EDGE-008). Older, or of no known time,
+        /// it is left out: what a site last heard before it lost its link is not taken for what is so now.
+        #[serde(default, deserialize_with = "some_period")]
+        fresh: Option<Duration>,
     },
     /// `yes` between two times of day, on these days. `from` after `to` runs over midnight. Days are
     /// 1, Monday, to 7, and none means every day. `offset_minutes` is the site's distance from UTC.
@@ -647,8 +651,9 @@ pub enum Effect {
 /// It is kept up by whatever feeds the flow, the same at a desk, at a gateway and on the platform.
 #[derive(Debug, Clone, Default)]
 pub struct Known {
-    metrics: HashMap<(String, String), Value>,
-    attributes: HashMap<(String, String), Value>,
+    /// Each with when the device saw it, where it said.
+    metrics: HashMap<(String, String), (Value, Option<DateTime<Utc>>)>,
+    attributes: HashMap<(String, String), (Value, Option<DateTime<Utc>>)>,
 }
 
 impl Known {
@@ -662,16 +667,33 @@ impl Known {
         };
         let entry = (input.device.clone(), key.clone());
         if map.len() < MAX_KNOWN || map.contains_key(&entry) {
-            map.insert(entry, input.value.clone());
+            map.insert(entry, (input.value.clone(), input.observed_at));
         }
     }
 
     pub fn metric(&self, device: &str, name: &str) -> Option<&Value> {
-        self.metrics.get(&(device.to_string(), name.to_string()))
+        self.metrics.get(&(device.to_string(), name.to_string())).map(|(v, _)| v)
     }
 
     pub fn attribute(&self, device: &str, key: &str) -> Option<&Value> {
-        self.attributes.get(&(device.to_string(), key.to_string()))
+        self.attributes.get(&(device.to_string(), key.to_string())).map(|(v, _)| v)
+    }
+
+    /// A number, if it was seen no longer than `fresh` before `at`; any, without `fresh`.
+    fn metric_within(&self, device: &str, name: &str, at: DateTime<Utc>, fresh: Option<&Duration>) -> Option<&Value> {
+        within(self.metrics.get(&(device.to_string(), name.to_string())), at, fresh)
+    }
+
+    fn attribute_within(&self, device: &str, key: &str, at: DateTime<Utc>, fresh: Option<&Duration>) -> Option<&Value> {
+        within(self.attributes.get(&(device.to_string(), key.to_string())), at, fresh)
+    }
+}
+
+fn within<'a>(seen: Option<&'a (Value, Option<DateTime<Utc>>)>, at: DateTime<Utc>, fresh: Option<&Duration>) -> Option<&'a Value> {
+    let (v, when) = seen?;
+    match fresh {
+        None => Some(v),
+        Some(f) => when.filter(|w| at - *w <= span(*f)).map(|_| v),
     }
 }
 
@@ -1379,19 +1401,19 @@ impl Compiled {
                 }
                 out_of("out", Value::Object(to))
             }
-            Kind::Enrich { metrics, attributes, device: fixed } => {
+            Kind::Enrich { metrics, attributes, device: fixed, fresh } => {
                 let who = fixed.as_deref().or(device).unwrap_or_default();
                 let mut row = match value {
                     Value::Object(m) => m,
                     other => Map::from_iter([("value".to_string(), other)]),
                 };
                 for name in metrics {
-                    if let Some(v) = run.known.metric(who, name) {
+                    if let Some(v) = run.known.metric_within(who, name, at, fresh.as_ref()) {
                         row.insert(name.clone(), v.clone());
                     }
                 }
                 for name in attributes {
-                    if let Some(v) = run.known.attribute(who, name) {
+                    if let Some(v) = run.known.attribute_within(who, name, at, fresh.as_ref()) {
                         row.insert(name.clone(), v.clone());
                     }
                 }
@@ -2020,6 +2042,73 @@ mod tests {
         let mut again: State = serde_json::from_str(&saved).unwrap();
         assert!(raised(&f.input(&mut again, &metric("P1", 95.0), at(31))).is_empty(), "and a raised alarm is not raised twice");
         assert_eq!(raised(&f.input(&mut again, &metric("P1", 10.0), at(32))), [(Some("P1"), false)]);
+    }
+
+    #[test]
+    fn what_a_flow_looks_up_has_an_age_past_which_it_is_left_out() {
+        // AT-EDGE-008: a site that lost its link still knows what it last heard; a flow that says how old that may be
+        // leaves out what is older, or of no known time, rather than take it for what is so now.
+        let f = flow(json!({
+            "nodes": [
+                {"id": "s", "kind": "metric", "metric": "temp"},
+                {"id": "e", "kind": "enrich", "metrics": ["humidity"], "attributes": ["firmware"], "fresh": "5m"},
+                {"id": "r", "kind": "record_event", "name": "seen"},
+            ],
+            "edges": [{"from": "s", "to": "e"}, {"from": "e", "to": "r"}],
+        }));
+        let mut known = Known::default();
+        known.note(&Input { device: "M".into(), metric: Some("humidity".into()), value: json!(40), observed_at: Some(at(0)), ..Default::default() });
+        known.note(&Input { device: "M".into(), attribute: Some("firmware".into()), value: json!("1.2"), ..Default::default() });
+        let body = |o: &Output| o.effects.iter().find_map(|e| if let Effect::Event { value, .. } = e { Some(value.clone()) } else { None }).unwrap();
+        let soon = f.input_knowing(&mut State::default(), &metric("M", 20.0), at(60), &known);
+        assert_eq!(body(&soon)["humidity"], json!(40), "a minute old: still so");
+        assert!(body(&soon).get("firmware").is_none(), "of no known time, it is not taken for now");
+        let late = f.input_knowing(&mut State::default(), &metric("M", 20.0), at(600), &known);
+        assert!(body(&late).get("humidity").is_none(), "ten minutes old: left out");
+        assert!(parse(&json!({"nodes": [{"id": "s", "kind": "metric", "metric": "t"}, {"id": "e", "kind": "enrich", "fresh": "soon"}, {"id": "r", "kind": "record_event", "name": "x"}],
+            "edges": [{"from": "s", "to": "e"}, {"from": "e", "to": "r"}]}).to_string()).is_err());
+    }
+
+    #[test]
+    fn no_node_moves_equipment_and_no_formula_reads_a_clock() {
+        // AT-EDGE-012: a flow cannot write to a device. A node that would, of a kind not here or carrying a field its kind
+        // does not take, is refused when the flow is read; what reaches equipment is a command, which the flow only asks
+        // the platform's ledger for, under its authority.
+        let source = json!({"id": "s", "kind": "metric", "metric": "temp"});
+        let action = json!({"id": "e", "kind": "record_event", "name": "x"});
+        for node in [
+            json!({"id": "w", "kind": "write", "device": "PRESS-1", "register": 40001, "value": 0}),
+            json!({"id": "w", "kind": "set", "value": "0", "device": "PRESS-1"}),
+            json!({"id": "w", "kind": "math", "formula": "[value] * 2", "write_to": "PRESS-1"}),
+        ] {
+            let body = json!({"nodes": [source.clone(), node.clone(), action.clone()], "edges": [{"from": "s", "to": "w"}, {"from": "w", "to": "e"}]});
+            let said = parse(&body.to_string()).err().unwrap_or_else(|| panic!("{node} passed"));
+            assert!(said.contains("w:"), "{node}: {said}");
+        }
+        let asked = flow(
+            json!({"nodes": [source.clone(), {"id": "c", "kind": "command", "operation": "press.stop", "device": "PRESS-1"}], "edges": [{"from": "s", "to": "c"}]}),
+        );
+        let out = asked.input(&mut State::default(), &metric("PRESS-1", 95.0), at(0));
+        assert!(matches!(out.effects.as_slice(), [Effect::Command { operation, .. }] if operation == "press.stop"), "{:?}", out.effects);
+        // AT-COMP-003: a formula reads no clock and draws no number: such a function is refused when the flow is read.
+        // The formula engine is Ferrum's own, the one its server computes with, so the same input gives the same answer.
+        for formula in ["now() + [value]", "rand() * [value]", "today()"] {
+            let body = json!({"nodes": [source.clone(), {"id": "m", "kind": "math", "formula": formula}, action.clone()], "edges": [{"from": "s", "to": "m"}, {"from": "m", "to": "e"}]});
+            let said = parse(&body.to_string()).err().unwrap_or_default();
+            assert!(said.contains("unknown function"), "{formula}: {said}");
+        }
+        let at_the_edge = flow(
+            json!({"nodes": [source.clone(), {"id": "m", "kind": "math", "formula": "round([value] * 1.8 + 32, 2)"}, {"id": "r", "kind": "record_metric", "name": "fahrenheit"}],
+            "edges": [{"from": "s", "to": "m"}, {"from": "m", "to": "r"}]}),
+        );
+        let edge = at_the_edge.input(&mut State::default(), &metric("P", 36.65), at(0));
+        let on_the_server =
+            Formula::parse("round([value] * 1.8 + 32, 2)", &|name| Ok(name.to_string())).unwrap().eval(json!({"value": 36.65}).as_object().unwrap()).unwrap();
+        assert!(
+            matches!(edge.effects.as_slice(), [Effect::Metric { value, .. }] if value.to_string() == on_the_server.normalize().to_string()),
+            "{:?} against {on_the_server}",
+            edge.effects
+        );
     }
 
     #[test]
