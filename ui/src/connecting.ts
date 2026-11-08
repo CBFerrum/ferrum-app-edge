@@ -1,5 +1,6 @@
 // What a person runs to try a device, with their token in it.
 
+import { t } from "@ferrum/client";
 export interface Try {
   how: string;
   command: string;
@@ -31,7 +32,7 @@ export function tries(addresses: string[], token: string): Try[] {
         out.push({ how: "CoAP", command: `coap-client -m post -t json -e '${SAMPLE}' coap://GATEWAY:${port}/api/v1/${token}/telemetry` });
         break;
       case "listen+coaps":
-        out.push({ how: "CoAP over DTLS, whose key is the SHA-256 of the token", command: `coap-client -m post -t json -u DEVICE_CODE -k KEY -e '${SAMPLE}' coaps://GATEWAY:${port}/api/v1/${token}/telemetry` });
+        out.push({ how: t("CoAP over DTLS, whose key is the SHA-256 of the token"), command: `coap-client -m post -t json -u DEVICE_CODE -k KEY -e '${SAMPLE}' coaps://GATEWAY:${port}/api/v1/${token}/telemetry` });
         break;
     }
   }

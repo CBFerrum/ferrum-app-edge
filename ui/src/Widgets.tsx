@@ -246,7 +246,7 @@ function BarsView({ w, result }: { w: Widget; result?: Result }) {
 
 function TableView({ w, result, live }: { w: Widget; result?: Result; live: boolean }) {
   const rows = (result?.data as DeviceRow[] | undefined) ?? [];
-  if (rows.length === 0) return <Nothing why="No devices" />;
+  if (rows.length === 0) return <Nothing why={tr("No devices")} />;
   const columns = (w.columns ?? "").split(",").map((c) => c.trim()).filter(Boolean);
   return (
     <table className="edge-table">
@@ -278,7 +278,7 @@ function TableView({ w, result, live }: { w: Widget; result?: Result; live: bool
 
 function AlarmsView({ result }: { result?: Result }) {
   const rows = (result?.data as AlarmRow[] | undefined) ?? [];
-  if (rows.length === 0) return <Nothing why="No alarms" />;
+  if (rows.length === 0) return <Nothing why={tr("No alarms")} />;
   return (
     <ul className="edge-rows">
       {rows.map((a) => (
@@ -296,7 +296,7 @@ function AlarmsView({ result }: { result?: Result }) {
 
 function EventsView({ result }: { result?: Result }) {
   const rows = (result?.data as { name: string; value: unknown; at: string }[] | undefined) ?? [];
-  if (rows.length === 0) return <Nothing why="No events" />;
+  if (rows.length === 0) return <Nothing why={tr("No events")} />;
   return (
     <ul className="edge-rows">
       {rows.map((e, i) => (
@@ -316,7 +316,7 @@ function MapView({ result }: { result?: Result }) {
   const seen = useRef<Bounds | null>(null);
   const maps = placed((result?.data as Robot[] | undefined) ?? []);
   const list = [...maps.values()][0] ?? [];
-  if (list.length === 0) return <Nothing why="No robot has said where it is" />;
+  if (list.length === 0) return <Nothing why={tr("No robot has said where it is")} />;
   seen.current = grown(seen.current, list);
   const toScreen = fit(seen.current, 640, 360, 32);
   return (
@@ -350,7 +350,7 @@ function ButtonView({ w }: { w: Widget }) {
     onSuccess: (made) => toast(made.state === "Proposed" ? tr("Sent for approval. Nothing moves until someone says so.") : tr("Sent.")),
     onError: (e) => toast(refusal(e), "error"),
   });
-  if (!w.device || !w.operation || w.device.startsWith("$")) return <Nothing why="Choose a device and an operation" />;
+  if (!w.device || !w.operation || w.device.startsWith("$")) return <Nothing why={tr("Choose a device and an operation")} />;
   const press = async () => {
     if (await confirmDialog({ title: tr("Send {operation}?", { operation: String(w.operation) }), message: tr("It goes through the ledger, and the device must have been commissioned for it."), confirmLabel: tr("Send it") })) send.mutate();
   };
@@ -380,7 +380,7 @@ function SetpointView({ w, result }: { w: Widget; result?: Result }) {
     },
     onError: (e) => toast(refusal(e), "error"),
   });
-  if (!w.device || !w.attribute || w.device.startsWith("$")) return <Nothing why="Choose a device and an attribute" />;
+  if (!w.device || !w.attribute || w.device.startsWith("$")) return <Nothing why={tr("Choose a device and an attribute")} />;
   const out = row && row.desired !== null && row.desired !== undefined && JSON.stringify(row.desired) !== JSON.stringify(row.value);
   return (
     <form
@@ -426,7 +426,7 @@ export function WidgetBody({ w, result, live }: { w: Widget; result?: Result; li
     case "table":
       return <TableView w={w} result={result} live={live} />;
     case "link":
-      return live && w.board ? <Link to={`/dashboards/${w.board}${w.device ? `?device=${w.device}` : ""}`}>{w.text || tr("Open")}</Link> : <Nothing why="This opens from inside" />;
+      return live && w.board ? <Link to={`/dashboards/${w.board}${w.device ? `?device=${w.device}` : ""}`}>{w.text || tr("Open")}</Link> : <Nothing why={tr("This opens from inside")} />;
     case "alarms":
       return <AlarmsView result={result} />;
     case "events":

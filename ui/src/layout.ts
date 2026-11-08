@@ -116,14 +116,15 @@ export const KINDS: Kind[] = [
   { type: "text", get label() { return t("Text"); }, group: "Words", w: 4, h: 3, params: [{ name: "text", get label() { return t("Text"); }, type: "long", get hint() { return t("Markdown"); } }] },
 ];
 
-export const SYMBOLS: [string, string][] = [
-  ["pump", "Pump"],
-  ["valve", "Valve"],
-  ["fan", "Fan"],
-  ["motor", "Motor"],
-  ["heater", "Heater"],
-  ["conveyor", "Conveyor"],
-  ["tank", "Tank"],
+/** The symbols a board draws, each with its name in the page's language. */
+export const symbols = (): [string, string][] => [
+  ["pump", t("Pump")],
+  ["valve", t("Valve")],
+  ["fan", t("Fan")],
+  ["motor", t("Motor")],
+  ["heater", t("Heater")],
+  ["conveyor", t("Conveyor")],
+  ["tank", t("Tank")],
 ];
 
 export const kindOf = (type: string) => KINDS.find((k) => k.type === type);

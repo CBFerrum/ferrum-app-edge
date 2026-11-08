@@ -6,7 +6,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { bootstrap, refusal, t, isolate } from "@ferrum/client";
 import { Alert, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
 import { can, useEntityMeta } from "@ferrum/records";
-import { type Board, COLUMNS, added, kindOf, KINDS, moved, type Param, parse, resized, SYMBOLS, type Variable, type Widget } from "./layout";
+import { type Board, COLUMNS, added, kindOf, KINDS, moved, type Param, parse, resized, symbols, type Variable, type Widget } from "./layout";
 import { SLOW_POLL_MS } from "./live";
 import { boardData, boardDoc, boardList, device as deviceDetail, devices, newBoard, saveBoard, shareBoard, unshareBoard } from "./data";
 import { Tabs } from "./Tabs";
@@ -147,7 +147,7 @@ function Setting({ p, w, set, options, variables }: { p: Param; w: Widget; set: 
       case "symbol":
         return (
           <select id={id} className="input" value={w.symbol ?? "pump"} onChange={(e) => set({ symbol: e.target.value })}>
-            {SYMBOLS.map(([v, label]) => (
+            {symbols().map(([v, label]) => (
               <option key={v} value={v}>
                 {isolate(label)}
               </option>
@@ -467,8 +467,8 @@ export function BoardPage() {
               }}
             >
               <option value="">{t("Add a widget…")}</option>
-              {["Show", "Over time", "Lists", "Control", "Words"].map((group) => (
-                <optgroup key={group} label={group}>
+              {[t("Show"), t("Over time"), t("Lists"), t("Control"), t("Words")].map((group) => (
+                <optgroup key={group} label={isolate(group)}>
                   {KINDS.filter((k) => k.group === group).map((k) => (
                     <option key={k.type} value={k.type}>
                       {isolate(k.label)}

@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useParams } from "react-router";
 import { refusal, relativeTime, t, isolate } from "@ferrum/client";
-import { Badge, Button, Dialog, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
+import { Badge, Button, Dialog, ErrorState, Field, PageLoading, toast, useShellTitle, placed } from "@ferrum/kit";
 import { can, useEntityMeta, useMe } from "@ferrum/records";
 import { Acknowledge } from "./Alarms";
 import { alarmAssign, alarmClear, alarmDetail, alarmNote, alarmShelve } from "./data";
@@ -174,7 +174,7 @@ export function AlarmPage() {
         <h2 className="edge-section">{t("Who was told")}</h2>
         {a.notices.length === 0 ? (
           <p className="muted">
-            {t("No rule told anyone about this.")} <Link to="/e/EdgeNotifyRule">{t("Who is told what")}</Link> {t("is yours to set.")}
+            {placed(t("No rule told anyone about this. {p1} is yours to set."), { p1: <Link to="/e/EdgeNotifyRule">{t("Who is told what")}</Link> })}
           </p>
         ) : (
           <ul className="edge-rows">

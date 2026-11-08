@@ -59,18 +59,18 @@ export const KINDS: Kind[] = [
     kind: "metric",
     get label() { return t("A number"); },
     group: "Listen",
-    says: "A number a device reported",
+    get says() { return t("A number a device reported"); },
     params: [{ name: "metric", get label() { return t("Value"); }, type: "text", required: true, placeholder: "temp.c" }, device],
     ports: out,
     inputs: [],
     defaults: { metric: "" },
   },
-  { kind: "state", get label() { return t("A state change"); }, group: "Listen", says: "A device starting, stopping or going idle", params: [device], ports: out, inputs: [] },
+  { kind: "state", get label() { return t("A state change"); }, group: "Listen", get says() { return t("A device starting, stopping or going idle"); }, params: [device], ports: out, inputs: [] },
   {
     kind: "event",
     get label() { return t("An event"); },
     group: "Listen",
-    says: "Something a device said happened",
+    get says() { return t("Something a device said happened"); },
     params: [{ name: "name", get label() { return t("Event"); }, type: "text", required: true }, device],
     ports: out,
     inputs: [],
@@ -80,7 +80,7 @@ export const KINDS: Kind[] = [
     kind: "attribute",
     get label() { return t("An attribute"); },
     group: "Listen",
-    says: "A setting or fact about a device changing",
+    get says() { return t("A setting or fact about a device changing"); },
     params: [{ name: "key", get label() { return t("Attribute"); }, type: "text", required: true }, device],
     ports: out,
     inputs: [],
@@ -90,7 +90,7 @@ export const KINDS: Kind[] = [
     kind: "input",
     get label() { return t("Way into this flow"); },
     group: "Listen",
-    says: "For a flow other flows use: where they come in. On its own, a number of this name comes in here",
+    get says() { return t("For a flow other flows use: where they come in. On its own, a number of this name comes in here"); },
     params: [{ name: "name", get label() { return t("Name"); }, type: "text", required: true }],
     ports: out,
     inputs: [],
@@ -100,7 +100,7 @@ export const KINDS: Kind[] = [
     kind: "timer",
     get label() { return t("A timer"); },
     group: "Listen",
-    says: "Fires on its own, every so often",
+    get says() { return t("Fires on its own, every so often"); },
     params: [{ name: "every", get label() { return t("Every"); }, type: "duration", required: true }],
     ports: out,
     inputs: [],
@@ -110,7 +110,7 @@ export const KINDS: Kind[] = [
     kind: "compare",
     get label() { return t("Compare"); },
     group: "Decide",
-    says: "Sends it one way or the other",
+    get says() { return t("Sends it one way or the other"); },
     params: [
       { name: "op", get label() { return t("Is"); }, type: "select", options: [">", ">=", "<", "<=", "==", "!="], required: true },
       { name: "value", get label() { return t("Than"); }, type: "json", required: true, get hint() { return t("A number or some text"); } },
@@ -123,7 +123,7 @@ export const KINDS: Kind[] = [
     kind: "range",
     get label() { return t("In range"); },
     group: "Decide",
-    says: "Between two numbers or outside them",
+    get says() { return t("Between two numbers or outside them"); },
     params: [
       { name: "min", get label() { return t("From"); }, type: "number", required: true },
       { name: "max", get label() { return t("To"); }, type: "number", required: true },
@@ -136,7 +136,7 @@ export const KINDS: Kind[] = [
     kind: "hold",
     get label() { return t("Must last"); },
     group: "Decide",
-    says: "Passes once it has lasted this long. One spike is not an alarm.",
+    get says() { return t("Passes once it has lasted this long. One spike is not an alarm."); },
     params: [{ name: "for", get label() { return t("For"); }, type: "duration", required: true }],
     ports: out,
     inputs: ["in", "reset"],
@@ -146,7 +146,7 @@ export const KINDS: Kind[] = [
     kind: "silence",
     get label() { return t("Gone quiet"); },
     group: "Decide",
-    says: "Fires when nothing has arrived for this long",
+    get says() { return t("Fires when nothing has arrived for this long"); },
     params: [{ name: "for", get label() { return t("For"); }, type: "duration", required: true }],
     ports: out,
     inputs: ["in"],
@@ -156,7 +156,7 @@ export const KINDS: Kind[] = [
     kind: "changed",
     get label() { return t("Only changes"); },
     group: "Decide",
-    says: "Lets through what is different from last time",
+    get says() { return t("Lets through what is different from last time"); },
     params: [{ name: "by", get label() { return t("By at least"); }, type: "number", get placeholder() { return t("Any change"); } }],
     ports: out,
     inputs: ["in"],
@@ -165,7 +165,7 @@ export const KINDS: Kind[] = [
     kind: "limit",
     get label() { return t("Not too often"); },
     group: "Decide",
-    says: "At most one message this often",
+    get says() { return t("At most one message this often"); },
     params: [{ name: "every", get label() { return t("Every"); }, type: "duration", required: true }],
     ports: out,
     inputs: ["in"],
@@ -175,7 +175,7 @@ export const KINDS: Kind[] = [
     kind: "delay",
     get label() { return t("Wait"); },
     group: "Decide",
-    says: "Passes each message on later",
+    get says() { return t("Passes each message on later"); },
     params: [{ name: "for", get label() { return t("For"); }, type: "duration", required: true }],
     ports: out,
     inputs: ["in"],
@@ -185,7 +185,7 @@ export const KINDS: Kind[] = [
     kind: "count",
     get label() { return t("Count"); },
     group: "Decide",
-    says: "Passes when this many have arrived in a time",
+    get says() { return t("Passes when this many have arrived in a time"); },
     params: [
       { name: "of", get label() { return t("How many"); }, type: "number", required: true },
       { name: "within", get label() { return t("Within"); }, type: "duration", required: true },
@@ -198,7 +198,7 @@ export const KINDS: Kind[] = [
     kind: "window",
     get label() { return t("Average over time"); },
     group: "Decide",
-    says: "An average, highest, lowest or total of the last while",
+    get says() { return t("An average, highest, lowest or total of the last while"); },
     params: [
       { name: "stat", get label() { return t("Work out"); }, type: "select", options: ["avg", "min", "max", "sum", "count", "delta"], required: true },
       { name: "over", get label() { return t("Over"); }, type: "duration", required: true },
@@ -211,7 +211,7 @@ export const KINDS: Kind[] = [
     kind: "math",
     get label() { return t("Calculate"); },
     group: "Decide",
-    says: "Works something out from the value",
+    get says() { return t("Works something out from the value"); },
     params: [{ name: "formula", get label() { return t("Formula"); }, type: "text", required: true, get placeholder() { return t("[value] * 1.8 + 32"); }, get hint() { return t("+ - * / round abs min max"); } }],
     ports: out,
     inputs: ["in"],
@@ -221,7 +221,7 @@ export const KINDS: Kind[] = [
     kind: "combine",
     get label() { return t("Combine"); },
     group: "Decide",
-    says: "Waits for every input, then passes them together",
+    get says() { return t("Waits for every input, then passes them together"); },
     params: [{ name: "formula", get label() { return t("Formula"); }, type: "text", placeholder: "[a] * [b]", get hint() { return t("Inputs by the names on their wires"); } }, fresh, across],
     ports: out,
     inputs: null,
@@ -230,17 +230,17 @@ export const KINDS: Kind[] = [
     kind: "all",
     get label() { return t("All true"); },
     group: "Decide",
-    says: "Yes when every input is true, and no when that stops",
+    get says() { return t("Yes when every input is true, and no when that stops"); },
     params: [{ name: "any", get label() { return t("One is enough"); }, type: "check" }, fresh, across],
     ports: yesNo,
     inputs: null,
   },
-  { kind: "latch", get label() { return t("Remember"); }, group: "Decide", says: "Stays on from set until reset", params: [], ports: yesNo, inputs: ["set", "reset"] },
+  { kind: "latch", get label() { return t("Remember"); }, group: "Decide", get says() { return t("Stays on from set until reset"); }, params: [], ports: yesNo, inputs: ["set", "reset"] },
   {
     kind: "map",
     get label() { return t("Translate"); },
     group: "Decide",
-    says: "What a raw value means: 0 is Idle, 1 is Running",
+    get says() { return t("What a raw value means: 0 is Idle, 1 is Running"); },
     params: [
       { name: "map", get label() { return t("Meanings"); }, type: "json", required: true, hint: '{"0": "Idle", "1": "Running"}' },
       { name: "other", get label() { return t("Otherwise"); }, type: "json", get placeholder() { return t("Drop it"); } },
@@ -253,7 +253,7 @@ export const KINDS: Kind[] = [
     kind: "switch",
     get label() { return t("Choose by value"); },
     group: "Decide",
-    says: "One way out for each value",
+    get says() { return t("One way out for each value"); },
     params: [
       { name: "cases", get label() { return t("Values"); }, type: "list", required: true, get hint() { return t("One to a line"); } },
       { name: "on", get label() { return t("By the part at"); }, type: "text", get placeholder() { return t("The whole value"); }, get hint() { return t("$.method keeps the rest for what follows"); } },
@@ -266,7 +266,7 @@ export const KINDS: Kind[] = [
     kind: "set",
     get label() { return t("Replace"); },
     group: "Decide",
-    says: "Passes something else instead",
+    get says() { return t("Passes something else instead"); },
     params: [{ name: "value", get label() { return t("With"); }, type: "json", required: true, hint: "{value} and {device} work here" }],
     ports: out,
     inputs: ["in"],
@@ -276,7 +276,7 @@ export const KINDS: Kind[] = [
     kind: "field",
     get label() { return t("Take a part"); },
     group: "Decide",
-    says: "One thing out of a value with parts",
+    get says() { return t("One thing out of a value with parts"); },
     params: [{ name: "path", get label() { return t("Path"); }, type: "text", required: true, placeholder: "$.a.b" }],
     ports: out,
     inputs: ["in"],
@@ -286,7 +286,7 @@ export const KINDS: Kind[] = [
     kind: "has",
     get label() { return t("Has these parts"); },
     group: "Decide",
-    says: "Whether a value has what is needed",
+    get says() { return t("Whether a value has what is needed"); },
     params: [{ name: "paths", get label() { return t("Parts"); }, type: "list", required: true, get hint() { return t("One to a line: $.a.b"); } }],
     ports: yesNo,
     inputs: ["in"],
@@ -296,7 +296,7 @@ export const KINDS: Kind[] = [
     kind: "delta",
     get label() { return t("How far it went"); },
     group: "Decide",
-    says: "A counter's rise since last time. One that went backwards was reset, and says nothing.",
+    get says() { return t("A counter's rise since last time. One that went backwards was reset, and says nothing."); },
     params: [{ name: "per", get label() { return t("As a rate per"); }, type: "duration", get placeholder() { return t("Plain difference"); } }],
     ports: out,
     inputs: ["in"],
@@ -305,7 +305,7 @@ export const KINDS: Kind[] = [
     kind: "geofence",
     get label() { return t("In a place"); },
     group: "Decide",
-    says: "Inside or outside a circle or a polygon, and when that changes",
+    get says() { return t("Inside or outside a circle or a polygon, and when that changes"); },
     params: [
       { name: "lat", get label() { return t("Latitude at"); }, type: "text", get placeholder() { return t("$.lat"); } },
       { name: "lon", get label() { return t("Longitude at"); }, type: "text", get placeholder() { return t("$.lon"); } },
@@ -320,7 +320,7 @@ export const KINDS: Kind[] = [
     kind: "dedupe",
     get label() { return t("Only the first"); },
     group: "Decide",
-    says: "Lets the first through and not the same again for a while",
+    get says() { return t("Lets the first through and not the same again for a while"); },
     params: [
       { name: "within", get label() { return t("For"); }, type: "duration", required: true },
       { name: "key", get label() { return t("The same by"); }, type: "text", get placeholder() { return t("The whole value"); }, get hint() { return t("A part, like $.id"); } },
@@ -333,7 +333,7 @@ export const KINDS: Kind[] = [
     kind: "split",
     get label() { return t("One for each"); },
     group: "Decide",
-    says: "A message for each thing in a list",
+    get says() { return t("A message for each thing in a list"); },
     params: [{ name: "path", get label() { return t("The list at"); }, type: "text", get placeholder() { return t("The value itself"); } }],
     ports: out,
     inputs: ["in"],
@@ -342,7 +342,7 @@ export const KINDS: Kind[] = [
     kind: "keys",
     get label() { return t("Rename parts"); },
     group: "Decide",
-    says: "Renames the parts of a value and leaves some out",
+    get says() { return t("Renames the parts of a value and leaves some out"); },
     params: [
       { name: "rename", get label() { return t("Rename"); }, type: "json", hint: '{"old": "new"}' },
       { name: "drop", get label() { return t("Leave out"); }, type: "list", get hint() { return t("One to a line"); } },
@@ -355,7 +355,7 @@ export const KINDS: Kind[] = [
     kind: "enrich",
     get label() { return t("Add what is known"); },
     group: "Decide",
-    says: "Adds a device's newest numbers and what it said about itself",
+    get says() { return t("Adds a device's newest numbers and what it said about itself"); },
     params: [
       { name: "metrics", get label() { return t("Numbers"); }, type: "list", get hint() { return t("One to a line"); } },
       { name: "attributes", get label() { return t("Attributes"); }, type: "list", get hint() { return t("One to a line"); } },
@@ -368,7 +368,7 @@ export const KINDS: Kind[] = [
     kind: "schedule",
     get label() { return t("At these times"); },
     group: "Decide",
-    says: "Yes between two times of day, on these days",
+    get says() { return t("Yes between two times of day, on these days"); },
     params: [
       { name: "from", get label() { return t("From"); }, type: "text", required: true, placeholder: "08:00" },
       { name: "to", get label() { return t("Until"); }, type: "text", required: true, placeholder: "18:00" },
@@ -383,7 +383,7 @@ export const KINDS: Kind[] = [
     kind: "anomaly",
     get label() { return t("Unlike the rest"); },
     group: "Decide",
-    says: "A number unlike the last ones. It learns each device's normal, and an odd one does not teach it.",
+    get says() { return t("A number unlike the last ones. It learns each device's normal, and an odd one does not teach it."); },
     params: [
       { name: "window", get label() { return t("Readings to compare with"); }, type: "number", placeholder: "100" },
       { name: "sigma", get label() { return t("Standard deviations"); }, type: "number", placeholder: "3" },
@@ -395,7 +395,7 @@ export const KINDS: Kind[] = [
     kind: "use",
     get label() { return t("Use a flow"); },
     group: "Decide",
-    says: "An approved flow's steps, copied in when this is checked. What it uses is part of what is reviewed",
+    get says() { return t("An approved flow's steps, copied in when this is checked. What it uses is part of what is reviewed"); },
     params: [
       { name: "flow", get label() { return t("Flow"); }, type: "text", required: true },
       { name: "inputs", get label() { return t("Its ways in"); }, type: "list", get hint() { return t("One to a line, as it names them"); } },
@@ -409,7 +409,7 @@ export const KINDS: Kind[] = [
     kind: "reassign",
     get label() { return t("Make it another's"); },
     group: "Decide",
-    says: "What follows treats the message as another device's",
+    get says() { return t("What follows treats the message as another device's"); },
     params: [{ name: "to", get label() { return t("Device"); }, type: "text", required: true, hint: "{value} and {device} work here" }],
     ports: out,
     inputs: ["in"],
@@ -419,7 +419,7 @@ export const KINDS: Kind[] = [
     kind: "alarm",
     get label() { return t("Raise an alarm"); },
     group: "Do",
-    says: "Raises at the top input and clears at the other",
+    get says() { return t("Raises at the top input and clears at the other"); },
     params: [
       { name: "name", get label() { return t("Name"); }, type: "text", required: true },
       { name: "severity", get label() { return t("Severity"); }, type: "select", options: ["Info", "Warning", "Minor", "Major", "Critical"], required: true },
@@ -433,7 +433,7 @@ export const KINDS: Kind[] = [
     kind: "notify",
     get label() { return t("Tell someone"); },
     group: "Do",
-    says: "Tells whoever looks after IoT Edge",
+    get says() { return t("Tells whoever looks after IoT Edge"); },
     params: [
       { name: "title", get label() { return t("Message"); }, type: "text", required: true, hint: "{value} and {device} work here" },
       { name: "every", get label() { return t("At most every"); }, type: "duration" },
@@ -446,7 +446,7 @@ export const KINDS: Kind[] = [
     kind: "output",
     get label() { return t("Way out of this flow"); },
     group: "Do",
-    says: "For a flow other flows use: where they carry on from",
+    get says() { return t("For a flow other flows use: where they carry on from"); },
     params: [{ name: "name", get label() { return t("Name"); }, type: "text", required: true }],
     ports: [],
     inputs: ["in"],
@@ -456,7 +456,7 @@ export const KINDS: Kind[] = [
     kind: "reply",
     get label() { return t("Answer the device"); },
     group: "Do",
-    says: "Answers a device that asked something, from an event called rpc.request",
+    get says() { return t("Answers a device that asked something, from an event called rpc.request"); },
     params: [
       { name: "with", get label() { return t("With"); }, type: "json", hint: "{value} and {device} work here" },
       { name: "id", get label() { return t("Its question's id at"); }, type: "text", get placeholder() { return t("$.id"); } },
@@ -468,7 +468,7 @@ export const KINDS: Kind[] = [
     kind: "log",
     get label() { return t("Write to the log"); },
     group: "Do",
-    says: "For whoever is watching this flow",
+    get says() { return t("For whoever is watching this flow"); },
     params: [{ name: "text", get label() { return t("Text"); }, type: "text", get placeholder() { return t("The value"); }, hint: "{value} and {device} work here" }],
     ports: [],
     inputs: ["in"],
@@ -477,7 +477,7 @@ export const KINDS: Kind[] = [
     kind: "command",
     get label() { return t("Ask for a command"); },
     group: "Do",
-    says: "Asks the ledger. It waits for a person unless an automation envelope allows it.",
+    get says() { return t("Asks the ledger. It waits for a person unless an automation envelope allows it."); },
     params: [
       { name: "operation", get label() { return t("Operation"); }, type: "text", required: true, placeholder: "fan.start" },
       { name: "device", get label() { return t("Device"); }, type: "text", get placeholder() { return t("The one it came from"); } },
@@ -489,12 +489,12 @@ export const KINDS: Kind[] = [
     inputs: ["in"],
     defaults: { operation: "" },
   },
-  { kind: "record_event", get label() { return t("Record an event"); }, group: "Do", says: "Writes it on the device's history", params: [{ name: "name", get label() { return t("Event"); }, type: "text", required: true }], ports: [], inputs: ["in"], defaults: { name: "" } },
+  { kind: "record_event", get label() { return t("Record an event"); }, group: "Do", get says() { return t("Writes it on the device's history"); }, params: [{ name: "name", get label() { return t("Event"); }, type: "text", required: true }], ports: [], inputs: ["in"], defaults: { name: "" } },
   {
     kind: "record_metric",
     get label() { return t("Record a number"); },
     group: "Do",
-    says: "A new value of the device's, as if it had said it",
+    get says() { return t("A new value of the device's, as if it had said it"); },
     params: [
       { name: "name", get label() { return t("Value"); }, type: "text", required: true },
       { name: "unit", get label() { return t("Unit"); }, type: "text" },
@@ -503,8 +503,8 @@ export const KINDS: Kind[] = [
     inputs: ["in"],
     defaults: { name: "" },
   },
-  { kind: "record_attribute", get label() { return t("Set an attribute"); }, group: "Do", says: "Writes down a fact about the device", params: [{ name: "key", get label() { return t("Attribute"); }, type: "text", required: true }], ports: [], inputs: ["in"], defaults: { key: "" } },
-  { kind: "export", get label() { return t("Send elsewhere"); }, group: "Do", says: "Hands it to one of the site's exports, kept until delivered", params: [{ name: "to", get label() { return t("Export"); }, type: "text", required: true }], ports: [], inputs: ["in"], defaults: { to: "" } },
+  { kind: "record_attribute", get label() { return t("Set an attribute"); }, group: "Do", get says() { return t("Writes down a fact about the device"); }, params: [{ name: "key", get label() { return t("Attribute"); }, type: "text", required: true }], ports: [], inputs: ["in"], defaults: { key: "" } },
+  { kind: "export", get label() { return t("Send elsewhere"); }, group: "Do", get says() { return t("Hands it to one of the site's exports, kept until delivered"); }, params: [{ name: "to", get label() { return t("Export"); }, type: "text", required: true }], ports: [], inputs: ["in"], defaults: { to: "" } },
 ];
 
 const byKind = new Map(KINDS.map((k) => [k.kind, k]));
@@ -565,9 +565,9 @@ export function reaches(flow: Flow, from: string, to: string): boolean {
 
 /** Why this wire cannot be made, in words, or null. The server has the last word on all of this. */
 export function whyNot(flow: Flow, e: FlowEdge): string | null {
-  if (e.from === e.to) return "A step cannot lead to itself.";
-  if (reaches(flow, e.to, e.from)) return "That would go round in a circle, and a flow cannot.";
-  if (flow.edges.some((x) => x.from === e.from && (x.port ?? "out") === (e.port ?? "out") && x.to === e.to && (x.input ?? "in") === (e.input ?? "in"))) return "They are already joined that way.";
+  if (e.from === e.to) return t("A step cannot lead to itself.");
+  if (reaches(flow, e.to, e.from)) return t("That would go round in a circle, and a flow cannot.");
+  if (flow.edges.some((x) => x.from === e.from && (x.port ?? "out") === (e.port ?? "out") && x.to === e.to && (x.input ?? "in") === (e.input ?? "in"))) return t("They are already joined that way.");
   return null;
 }
 
@@ -634,7 +634,7 @@ export function parseFlow(text: string | null | undefined): Flow {
 
 const text = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
 
-const WORDS: Record<string, string> = { ">": "above", ">=": "at least", "<": "below", "<=": "at most", "==": "is", "!=": "is not" };
+const WORDS: Record<string, string> = { ">": "above", get ">="() { return t("at least"); }, "<": "below", get "<="() { return t("at most"); }, "==": "is", get "!="() { return t("is not"); } };
 
 /** One line on a step, saying what it has been set to. */
 export function summary(n: FlowNode): string {
@@ -643,7 +643,7 @@ export function summary(n: FlowNode): string {
     case "metric":
       return `${text(n.metric) || "Say which value"}${who}`;
     case "state":
-      return n.device ? text(n.device) : "Any device";
+      return n.device ? text(n.device) : t("Any device");
     case "event":
       return `${text(n.name) || "Say which event"}${who}`;
     case "attribute":
@@ -660,31 +660,31 @@ export function summary(n: FlowNode): string {
     case "delay":
       return t("For {value}", { value: text(n.for) });
     case "changed":
-      return n.by === undefined ? "Any change" : t("By {value}", { value: text(n.by) });
+      return n.by === undefined ? t("Any change") : t("By {value}", { value: text(n.by) });
     case "count":
       return t("{value} within {value2}", { value: text(n.of), value2: text(n.within) });
     case "window":
       return t("{value} over {value2}", { value: text(n.stat), value2: text(n.over) });
     case "math":
     case "combine":
-      return n.formula ? text(n.formula) : "Together";
+      return n.formula ? text(n.formula) : t("Together");
     case "all":
-      return n.any ? "Any input" : "Every input";
+      return n.any ? t("Any input") : t("Every input");
     case "alarm":
       return `${text(n.name) || "Name it"} (${text(n.severity)})`;
     case "notify":
-      return text(n.title) || "Say what";
+      return text(n.title) || t("Say what");
     case "command":
-      return text(n.operation) || "Say which";
+      return text(n.operation) || t("Say which");
     case "export":
-      return t("To {value}", { value: text(n.to) || "which?" });
+      return t("To {value}", { value: text(n.to) || t("which?") });
     case "record_event":
     case "record_metric":
-      return text(n.name) || "Name it";
+      return text(n.name) || t("Name it");
     case "record_attribute":
-      return text(n.key) || "Name it";
+      return text(n.key) || t("Name it");
     case "field":
-      return text(n.path) || "Say where";
+      return text(n.path) || t("Say where");
     case "switch":
       return ((n.cases as string[]) ?? []).join(", ");
     default:
@@ -706,7 +706,7 @@ export function sayEffect(e: Effect): string {
     case "event":
       return t("Records {value}{on}", { value: text(e.name), on });
     case "metric":
-      return `Records ${text(e.name)} = ${text(e.value)}${on}`;
+      return t("Records {name} = {value}{on}", { name: text(e.name), value: text(e.value), on });
     case "attribute":
       return t("Sets {value} to {value2}{on}", { value: text(e.key), value2: text(e.value), on });
     case "notify":
@@ -769,14 +769,14 @@ export function waitFor(flow: Flow, lines: ScriptLine[]): number {
 /** Ways to begin, for someone looking at an empty canvas. */
 export const STARTS: { name: string; says: string; flow: Flow }[] = [
   {
-    name: "Alarm when a number stays high",
-    says: "A number above a limit for a while raises an alarm, and coming back down clears it.",
+    get name() { return t("Alarm when a number stays high"); },
+    get says() { return t("A number above a limit for a while raises an alarm, and coming back down clears it."); },
     flow: {
       nodes: [
         { id: "reading", kind: "metric", metric: "temp.c", x: 32, y: 64 },
         { id: "high", kind: "compare", op: ">", value: 80, x: 276, y: 64 },
         { id: "lasted", kind: "hold", for: "30s", x: 520, y: 32 },
-        { id: "alarm", kind: "alarm", name: "Running hot", severity: "Warning", x: 764, y: 64 },
+        { id: "alarm", kind: "alarm", get name() { return t("Running hot"); }, severity: "Warning", x: 764, y: 64 },
       ],
       edges: [
         { from: "reading", to: "high" },
@@ -788,8 +788,8 @@ export const STARTS: { name: string; says: string; flow: Flow }[] = [
     },
   },
   {
-    name: "Tell someone when a device goes quiet",
-    says: "Nothing heard for a while tells the people who look after it.",
+    get name() { return t("Tell someone when a device goes quiet"); },
+    get says() { return t("Nothing heard for a while tells the people who look after it."); },
     flow: {
       nodes: [
         { id: "reading", kind: "metric", metric: "temp.c", x: 32, y: 64 },
@@ -803,8 +803,8 @@ export const STARTS: { name: string; says: string; flow: Flow }[] = [
     },
   },
   {
-    name: "Ask for a charge when the battery is low",
-    says: "A low battery asks for a command. It waits for a person unless an envelope allows it.",
+    get name() { return t("Ask for a charge when the battery is low"); },
+    get says() { return t("A low battery asks for a command. It waits for a person unless an envelope allows it."); },
     flow: {
       nodes: [
         { id: "battery", kind: "metric", metric: "battery.percent", x: 32, y: 64 },
@@ -818,8 +818,8 @@ export const STARTS: { name: string; says: string; flow: Flow }[] = [
     },
   },
   {
-    name: "Work out power from volts and amps",
-    says: "Two numbers from one device become a third, kept like any other.",
+    get name() { return t("Work out power from volts and amps"); },
+    get says() { return t("Two numbers from one device become a third, kept like any other."); },
     flow: {
       nodes: [
         { id: "volts", kind: "metric", metric: "volts", x: 32, y: 32 },
