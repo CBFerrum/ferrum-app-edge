@@ -271,6 +271,30 @@ impl DocHook for FlowHook {
                     .bind(&me)
                     .execute(&mut **hc.tx)
                     .await?;
+                // What the new revision does with what the running one remembered, as the person chose, and
+                // which steps that keeps, said before it happens (FLC-EDGE-010).
+                let transition = params.get("transition").and_then(Value::as_str).unwrap_or("Start Empty");
+                if !["Start Empty", "Drain First", "Keep Unchanged"].contains(&transition) {
+                    return Err(Error::field("transition", "is Start Empty, Drain First or Keep Unchanged"));
+                }
+                let before = s(doc, "published_body").and_then(|b| ferrum_edge_contract::flow::parse(b).ok());
+                let note = match (transition, before) {
+                    ("Keep Unchanged", Some(old)) => {
+                        let plan = parsed(&whole)?.plan(&old);
+                        let kept: Vec<&str> = plan.iter().filter(|c| c.kept).map(|c| c.node.as_str()).collect();
+                        let lost: Vec<String> =
+                            plan.iter().filter(|c| !c.kept).map(|c| format!("{} ({})", c.node, c.why.clone().unwrap_or_default())).collect();
+                        format!(
+                            "Keeps what {} remembered. Starts empty: {}",
+                            if kept.is_empty() { "no step".into() } else { kept.join(", ") },
+                            if lost.is_empty() { "nothing".into() } else { lost.join("; ") }
+                        )
+                    }
+                    ("Drain First", Some(_)) => "What was open in the revision before said what it had, then this one started empty".into(),
+                    _ => "Started with nothing remembered".into(),
+                };
+                values.insert("transition".into(), json!(transition));
+                values.insert("transition_note".into(), json!(note));
                 values.insert("published_body".into(), json!(whole));
                 values.insert("revision".into(), json!(revision));
                 values.insert("live".into(), json!(true));

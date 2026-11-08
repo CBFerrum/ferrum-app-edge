@@ -17,7 +17,8 @@ use crate::peer::Peer;
 use crate::update::{self, Pending};
 use chrono::{DateTime, Utc};
 use ferrum_edge_contract::edge::{AlarmChange, Comparison, ConfigRequest, ConfigResponse, EdgeConfig, Export, FlowSpec, FlowTrace, Release, Rule, Watch};
-use ferrum_edge_contract::flow::{self, Effect};
+use ferrum_edge_contract::flow::{self, Effect, Transition};
+use ferrum_edge_contract::pipeline::Quality as Trust;
 use ferrum_ops_contract::command::Report;
 use ferrum_ops_contract::schedule::{self, Held, Resource, Task};
 use ferrum_ops_contract::sync::{Fact, Health, SiteDevice};
@@ -288,10 +289,13 @@ impl Runtime {
         *self.exports.lock().unwrap_or_else(|e| e.into_inner()) = managed.exports;
     }
 
-    /// Becomes the flows it was given. One unchanged keeps what it remembers, and a new revision
-    /// starts afresh: its nodes may mean something else now.
+    /// Becomes the flows it was given. One unchanged keeps what it remembers. A new revision starts
+    /// afresh, its nodes may mean something else now, unless the person who set it running chose to
+    /// drain the old one first or to keep what its unchanged steps remembered (FLC-EDGE-010).
     fn start_flows(&self, specs: Vec<FlowSpec>) -> Vec<String> {
         let saved: HashMap<String, flow::State> = self.journal.get("flow_state").ok().flatten().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        let devices: HashMap<String, SiteDevice> = self.journal.devices().unwrap_or_default().into_iter().map(|d| (d.code.clone(), d)).collect();
+        let mut drained = Vec::new();
         let mut running = self.flows.lock().unwrap_or_else(|e| e.into_inner());
         let mut was: Vec<RunningFlow> = running.drain(..).collect();
         let mut problems = Vec::new();
@@ -304,25 +308,87 @@ impl Runtime {
             }
             match flow::parse(&spec.body) {
                 Ok(compiled) => {
-                    let state = saved.get(&format!("{}:{}", spec.id, spec.revision)).cloned().unwrap_or_default();
+                    let compiled = compiled.scoped(spec.id.to_string());
+                    let key = format!("{}:{}", spec.id, spec.revision);
+                    // A business-critical flow's state is written with each step it takes, under its own key.
+                    let mut state = self
+                        .journal
+                        .get(&format!("flow_state:{key}"))
+                        .ok()
+                        .flatten()
+                        .and_then(|t| serde_json::from_str(&t).ok())
+                        .or_else(|| saved.get(&key).cloned())
+                        .unwrap_or_default();
+                    if let Some(i) = was.iter().position(|f| f.id == spec.id) {
+                        let mut old = was.swap_remove(i);
+                        match spec.transition {
+                            Transition::Reset => {}
+                            Transition::Drain => drained.push((old.id, old.name.clone(), old.compiled.drain(&mut old.state, self.clock.now()))),
+                            Transition::Migrate => {
+                                let (kept, plan) = compiled.migrate(&old.compiled, &old.state);
+                                state = kept;
+                                let lost: Vec<String> =
+                                    plan.iter().filter(|c| !c.kept).map(|c| format!("{} ({})", c.node, c.why.clone().unwrap_or_default())).collect();
+                                if !lost.is_empty() {
+                                    let _ = self.journal.notice(
+                                        self.clock.now_ms(),
+                                        &format!("flow {} revision {}: started with nothing remembered at {}", spec.name, spec.revision, lost.join(", ")),
+                                    );
+                                }
+                            }
+                        }
+                    }
                     running.push(RunningFlow { id: spec.id, name: spec.name, revision: spec.revision, compiled, state, debug: spec.debug });
                 }
                 Err(why) => problems.push(format!("flow {}: {why}", spec.name)),
             }
         }
+        drop(running);
+        // What a drained revision still had to say is done like anything else a flow decides.
+        let mut batch = Vec::new();
+        for (id, name, output) in drained {
+            let _ = self.act(id, &name, output, &devices, &mut batch, false);
+        }
+        if let Err(e) = self.journal.add_samples(&batch) {
+            tracing::warn!("measurements not kept: {e}");
+        }
         problems
+    }
+
+    /// After a business-critical flow's step: where it stands and what it did, written together.
+    fn settle_flow(&self, f: &RunningFlow, facts: Vec<Fact>) {
+        let key = format!("flow_state:{}:{}", f.id, f.revision);
+        let state = json!(f.state).to_string();
+        if let Err(e) = self.journal.commit_flow(&key, &state, &facts) {
+            // Neither was written: the reading will be had again, and decided again, once.
+            tracing::error!(flow = %f.name, "a business-critical step was not written: {e}");
+        }
     }
 
     /// Passes something a device did to every flow, and does what they make of it.
     fn feed(&self, input: &flow::Input, devices: &HashMap<String, SiteDevice>, batch: &mut Vec<Measurement>) {
         let now = self.clock.now();
         let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
-        known.note(input);
+        // What a flow can look up about a device is what could be trusted.
+        if input.quality != Trust::Bad {
+            known.note(input);
+        }
         let mut running = self.flows.lock().unwrap_or_else(|e| e.into_inner());
         for f in running.iter_mut() {
+            // A reading its device's limits call bad reaches only a flow that says it judges quality.
+            if input.quality == Trust::Bad && !f.compiled.wants_quality() {
+                continue;
+            }
             let output = f.compiled.input_knowing(&mut f.state, input, now, &known);
+            if output.duplicate {
+                continue;
+            }
             self.watched(f, &output, now);
-            self.act(f.id, &f.name, output, devices, batch);
+            let critical = f.compiled.critical;
+            let facts = self.act(f.id, &f.name, output, devices, batch, critical);
+            if critical {
+                self.settle_flow(f, facts);
+            }
         }
     }
 
@@ -334,12 +400,23 @@ impl Runtime {
         for f in running.iter_mut() {
             let output = f.compiled.tick_knowing(&mut f.state, now, &known);
             self.watched(f, &output, now);
-            self.act(f.id, &f.name, output, devices, batch);
+            let critical = f.compiled.critical;
+            let quiet = output.effects.is_empty();
+            let facts = self.act(f.id, &f.name, output, devices, batch, critical);
+            // A tick that changed nothing in what it did need not be written: what it remembered is
+            // written with the next step that does something, or by the periodic save below.
+            if critical && !quiet {
+                self.settle_flow(f, facts);
+            }
         }
         let now_ms = self.clock.now_ms();
         if !running.is_empty() && now_ms - self.flows_saved.load(Ordering::Relaxed) >= FLOW_SAVE_MS {
             self.flows_saved.store(now_ms, Ordering::Relaxed);
-            let states: HashMap<String, &flow::State> = running.iter().map(|f| (format!("{}:{}", f.id, f.revision), &f.state)).collect();
+            for f in running.iter().filter(|f| f.compiled.critical) {
+                self.settle_flow(f, vec![]);
+            }
+            let states: HashMap<String, &flow::State> =
+                running.iter().filter(|f| !f.compiled.critical).map(|f| (format!("{}:{}", f.id, f.revision), &f.state)).collect();
             let _ = self.journal.set("flow_state", &json!(states).to_string());
         }
     }
@@ -356,12 +433,20 @@ impl Runtime {
 
     /// Does what a flow decided. Everything here is recorded before it counts, and nothing here
     /// reaches equipment: a command is only a request, for the ledger to decide.
-    fn act(&self, id: Uuid, name: &str, output: flow::Output, devices: &HashMap<String, SiteDevice>, batch: &mut Vec<Measurement>) {
+    /// For a business-critical flow (`hold`) the facts come back instead, for [`Runtime::settle_flow`] to write
+    /// with where the flow stands.
+    fn act(&self, id: Uuid, name: &str, output: flow::Output, devices: &HashMap<String, SiteDevice>, batch: &mut Vec<Measurement>, hold: bool) -> Vec<Fact> {
         for p in output.problems {
             tracing::warn!(flow = %name, "{p}");
         }
+        let held = std::cell::RefCell::new(Vec::new());
         let fact = |kind: &str, body: Value| {
-            let _ = self.journal.add_fact(&Fact { fact_id: Uuid::now_v7(), kind: kind.into(), at_source: self.clock.now(), actor: None, body });
+            let f = Fact { fact_id: Uuid::now_v7(), kind: kind.into(), at_source: self.clock.now(), actor: None, body };
+            if hold {
+                held.borrow_mut().push(f);
+            } else {
+                let _ = self.journal.add_fact(&f);
+            }
         };
         let known = |code: &Option<String>| code.as_ref().and_then(|c| devices.get(c));
         for effect in output.effects {
@@ -426,8 +511,22 @@ impl Runtime {
                         json!({"flow": id, "node": node, "device": d.id, "operation": operation, "payload": payload, "expires_secs": expires_secs}),
                     );
                 }
+                Effect::Condition { node, device, episode, phase, title, at, value, peak, quality, raw, unit } => {
+                    let Some(d) = known(&device) else {
+                        tracing::warn!(flow = %name, "{node} has no device to hand a condition on for");
+                        continue;
+                    };
+                    fact(
+                        "edge.condition",
+                        json!({
+                            "flow": id, "node": node, "device": d.id, "episode": episode, "phase": phase, "title": title, "at": at,
+                            "value": value, "peak": peak, "quality": quality, "raw": raw, "unit": unit,
+                        }),
+                    );
+                }
             }
         }
+        held.into_inner()
     }
 
     /// An adapter on this machine, for a peer that asks. What is itself reached through a peer is
@@ -1155,12 +1254,26 @@ impl Runtime {
                 };
                 let limits: Limits = d.limits.get(&metric).cloned().unwrap_or_default();
                 let quality = limits.judge(value, repeats);
+                let trust = match quality {
+                    ferrum_ops_contract::Quality::Good => Trust::Good,
+                    ferrum_ops_contract::Quality::Uncertain => Trust::Uncertain,
+                    ferrum_ops_contract::Quality::Bad => Trust::Bad,
+                };
                 if quality != ferrum_ops_contract::Quality::Bad {
                     self.latest.lock().unwrap_or_else(|e| e.into_inner()).insert(key, value);
                     self.judge(&device, d.id, &metric, value);
-                    let input = flow::Input { device: device.clone(), metric: Some(metric.clone()), value: json!(value), ..Default::default() };
-                    self.feed(&input, devices, batch);
                 }
+                // Every flow hears what passed its device's limits; one that judges quality hears the rest too,
+                // marked, with when the device saw it.
+                let input = flow::Input {
+                    device: device.clone(),
+                    metric: Some(metric.clone()),
+                    value: json!(value),
+                    observed_at: source_time,
+                    quality: trust,
+                    ..Default::default()
+                };
+                self.feed(&input, devices, batch);
                 batch.push(Measurement {
                     device_id: d.id,
                     metric,

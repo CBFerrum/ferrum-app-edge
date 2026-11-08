@@ -1,5 +1,5 @@
 package: edge
-version: 0.4.0
+version: 0.5.0
 label: IoT Edge
 description: Device definitions, edge rules and flows, alarms, exports and releases
 depends: [ops]
@@ -10,7 +10,7 @@ modules:
     label: IoT Edge
     icon: factory
     order: 61
-    items: [DeviceDefinition, EdgeRule, EdgeFlow, EdgeAlarm, EdgeNotifyRule, EdgeExport, EdgeRelease, EdgeDashboard, EdgeAsset, EdgeFirmware, EdgeRollout, EdgeSchedule, EdgeCustomer, EdgeRelation, EdgeReportSchedule]
+    items: [DeviceDefinition, EdgeRule, EdgeFlow, EdgeAlarm, EdgeCondition, EdgeNotifyRule, EdgeExport, EdgeRelease, EdgeDashboard, EdgeAsset, EdgeFirmware, EdgeRollout, EdgeSchedule, EdgeCustomer, EdgeRelation, EdgeReportSchedule]
 
 overlays:
   - entity: Device
@@ -38,6 +38,7 @@ roles:
       - {entity: EdgeRule, read: true}
       - {entity: EdgeFlow, read: true}
       - {entity: EdgeAlarm, read: true}
+      - {entity: EdgeCondition, read: true}
       - {entity: EdgeExport, read: true}
       - {entity: EdgeRelease, read: true}
       - {entity: EdgeDashboard, read: true}
@@ -58,6 +59,7 @@ roles:
       - {entity: EdgeRule, read: true, write: true, create: true, delete: true, export: true, import: true}
       - {entity: EdgeFlow, read: true, write: true, create: true, delete: true, export: true, import: true}
       - {entity: EdgeAlarm, read: true, export: true}
+      - {entity: EdgeCondition, read: true, export: true}
       - {entity: EdgeExport, read: true, write: true, create: true, delete: true}
       - {entity: EdgeRelease, read: true, write: true, create: true}
       - {entity: EdgeDashboard, read: true, write: true, create: true, delete: true, export: true, import: true}
@@ -81,10 +83,19 @@ roles:
       - {entity: DeviceDefinition, read: true}
       - {entity: EdgeRule, read: true}
       - {entity: EdgeAlarm, read: true}
+      - {entity: EdgeCondition, read: true}
       - {entity: EdgeExport, read: true}
       - {entity: EdgeDashboard, read: true}
       - {entity: Device, read: true}
       - {entity: Site, read: true}
+
+# What a business-critical flow's episodes become on the platform: each said once per episode, with the
+# episode as `subject`, so a process starts once for it and waits for how it ends (docs/flows.md).
+events:
+  - {name: condition_opened, label: Edge condition opened, entity: EdgeCondition, payload: {type: object, properties: {episode: {type: string}, subject: {type: string}, condition: {type: string, format: uuid}, device: {type: string, format: uuid}, flow: {type: string, format: uuid}, title: {type: string}, at: {type: string, format: date-time}, value: {type: [number, "null"]}}}}
+  - {name: condition_reopened, label: Edge condition held again, entity: EdgeCondition, payload: {type: object, properties: {episode: {type: string}, subject: {type: string}, condition: {type: string, format: uuid}, device: {type: string, format: uuid}, flow: {type: string, format: uuid}, title: {type: string}, at: {type: string, format: date-time}, value: {type: [number, "null"]}}}}
+  - {name: condition_closed, label: Edge condition cleared, entity: EdgeCondition, payload: {type: object, properties: {episode: {type: string}, subject: {type: string}, condition: {type: string, format: uuid}, device: {type: string, format: uuid}, flow: {type: string, format: uuid}, title: {type: string}, at: {type: string, format: date-time}, value: {type: [number, "null"]}}}}
+  - {name: condition_interrupted, label: Edge condition interrupted, entity: EdgeCondition, payload: {type: object, properties: {episode: {type: string}, subject: {type: string}, condition: {type: string, format: uuid}, device: {type: string, format: uuid}, flow: {type: string, format: uuid}, title: {type: string}, at: {type: string, format: date-time}, value: {type: [number, "null"]}}}}
 
 personal_data:
   - {entity: EdgeCustomer, match: people.user_email, erase: [people]}

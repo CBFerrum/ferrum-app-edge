@@ -65,6 +65,7 @@ pub async fn apply(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: &str, payload: &Val
         "request" => request(ctx, tx, payload, at).await?,
         "joined" => joined(k, ctx, tx, payload).await?,
         "transaction" => crate::charging::heard(tx, ctx.tenant, body).await?,
+        "condition" => condition(k, ctx, tx, payload, at).await?,
         _ => {}
     }
     Ok(())
@@ -150,6 +151,157 @@ async fn request(ctx: &Ctx, tx: &mut Tx, payload: &Value, at: DateTime<Utc>) -> 
             .bind(at)
             .execute(&mut **tx)
             .await?;
+    }
+    Ok(())
+}
+
+/// Most readings a condition keeps as evidence.
+const MAX_EVIDENCE: i64 = 1_000;
+
+fn uuid_of(v: &Value) -> Option<Uuid> {
+    v.as_str().and_then(|s| s.parse().ok())
+}
+
+/// An episode from a business-critical flow (FLC-EDGE-007). One condition for each episode, however often
+/// its gateway says so; each reading kept once, by the fact that carried it; and each turn it takes
+/// published once, with the episode as its subject, for the processes the workspace runs. Facts can
+/// come late and out of order: whichever arrives first makes the condition, and it says it opened.
+async fn condition(k: &Kernel, ctx: &Ctx, tx: &mut Tx, payload: &Value, reported: DateTime<Utc>) -> Result<()> {
+    let body = &payload["body"];
+    let (Some(episode), Some(phase), Some(device), Some(fact)) =
+        (body["episode"].as_str().filter(|e| !e.is_empty() && e.len() <= 64), body["phase"].as_str(), uuid_of(&body["device"]), uuid_of(&payload["fact"]))
+    else {
+        return Ok(());
+    };
+    let flow = uuid_of(&body["flow"]);
+    // A gateway speaks for its own site: a condition about a device somewhere else is not taken from it
+    // (FLC-EDGE-001). The site is the one the gateway signed for, never anything its payload says.
+    if let Some(site) = uuid_of(&payload["site"]) {
+        let here: Option<i32> = sqlx::query_scalar("select 1 from e_device where tenant_id = $1 and id = $2 and site = $3")
+            .bind(ctx.tenant)
+            .bind(device)
+            .bind(site)
+            .fetch_optional(&mut **tx)
+            .await?;
+        if here.is_none() {
+            tracing::warn!(%device, %site, "a condition about a device of another site was not taken");
+            return Ok(());
+        }
+    }
+    let at = body["at"].as_str().and_then(|t| t.parse::<DateTime<Utc>>().ok()).unwrap_or(reported);
+    let value = body["value"].as_f64();
+    // The flow's row is locked, so two reports of one episode cannot both make its condition.
+    if let Some(flow) = flow {
+        sqlx::query("select 1 from e_edge_flow where tenant_id = $1 and id = $2 for update").bind(ctx.tenant).bind(flow).execute(&mut **tx).await?;
+    }
+    let found: Option<(Uuid, String)> = sqlx::query_as("select id, status from e_edge_condition where tenant_id = $1 and episode = $2 for update")
+        .bind(ctx.tenant)
+        .bind(episode)
+        .fetch_optional(&mut **tx)
+        .await?;
+    let title = body["title"].as_str().unwrap_or("A condition at a site").chars().take(200).collect::<String>();
+    let mut turns: Vec<&str> = Vec::new();
+    let id = match found {
+        Some((id, status)) => {
+            let mut v = Doc::new();
+            match (phase, status.as_str()) {
+                ("reopened", s) if s != "Open" => {
+                    v.insert("status".into(), json!("Open"));
+                    v.insert("closed_at".into(), Value::Null);
+                    turns.push("condition_reopened");
+                }
+                ("closed", "Open") => {
+                    v.insert("status".into(), json!("Closed"));
+                    v.insert("closed_at".into(), json!(at.to_rfc3339()));
+                    turns.push("condition_closed");
+                }
+                ("interrupted", "Open") => {
+                    v.insert("status".into(), json!("Interrupted"));
+                    turns.push("condition_interrupted");
+                }
+                ("stale", _) => drop(v.insert("stale".into(), json!(true))),
+                _ => {}
+            }
+            if !v.is_empty() {
+                k.set_values_tx(&sys(ctx), tx, "EdgeCondition", id, v).await?;
+            }
+            id
+        }
+        None => {
+            let status = match phase {
+                "closed" => "Closed",
+                "interrupted" => "Interrupted",
+                _ => "Open",
+            };
+            let doc = json!({
+                "condition_title": title, "episode": episode, "device": device, "flow": flow, "flow_node": body["node"],
+                "status": status, "opened_at": body["opened"].as_str().unwrap_or(&at.to_rfc3339()), "last_value": value,
+                "peak": body["peak"], "unit": body["unit"], "evidence_count": 0, "stale": phase == "stale",
+                "closed_at": (status == "Closed").then(|| at.to_rfc3339()),
+            });
+            let made = k.insert_tx(&elevated(ctx), tx, "EdgeCondition", doc.as_object().cloned().unwrap_or_default()).await?;
+            let Some(id) = made.get("id").and_then(Value::as_str).and_then(|i| i.parse().ok()) else { return Ok(()) };
+            turns.push("condition_opened");
+            match status {
+                "Closed" => turns.push("condition_closed"),
+                "Interrupted" => turns.push("condition_interrupted"),
+                _ => {}
+            }
+            id
+        }
+    };
+    // The reading itself, once, by the fact that carried it; the condition counts it only then.
+    let kept: i64 = sqlx::query_scalar("select count(*) from edge_condition_evidence where tenant_id = $1 and condition_id = $2")
+        .bind(ctx.tenant)
+        .bind(id)
+        .fetch_one(&mut **tx)
+        .await?;
+    // Past what it keeps a reading is neither kept nor counted: the count says what was kept.
+    let new = kept < MAX_EVIDENCE
+        && sqlx::query(
+            "insert into edge_condition_evidence (tenant_id, fact_id, condition_id, phase, at, value, quality, raw) values ($1, $2, $3, $4, $5, $6, $7, $8) \
+             on conflict do nothing",
+        )
+        .bind(ctx.tenant)
+        .bind(fact)
+        .bind(id)
+        .bind(phase)
+        .bind(at)
+        .bind(value)
+        .bind(body["quality"].as_str().unwrap_or("good"))
+        .bind(&body["raw"])
+        .execute(&mut **tx)
+        .await?
+        .rows_affected()
+            == 1;
+    // A reading moves the condition's figures; a notice that it went quiet carries none.
+    if new && value.is_some() && phase != "stale" {
+        sqlx::query(
+            "update e_edge_condition set evidence_count = coalesce(evidence_count, 0) + 1, \
+               last_value = case when last_seen_at is null or last_seen_at <= $3 then $4::float8::numeric else last_value end, \
+               last_seen_at = greatest(last_seen_at, $3), peak = coalesce($5::float8::numeric, peak), \
+               stale = case when $6 = 'good' then false else stale end \
+             where tenant_id = $1 and id = $2",
+        )
+        .bind(ctx.tenant)
+        .bind(id)
+        .bind(at)
+        .bind(value)
+        .bind(body["peak"].as_f64())
+        .bind(body["quality"].as_str().unwrap_or("good"))
+        .execute(&mut **tx)
+        .await?;
+    }
+    for name in turns {
+        ferrum_kernel::outbox::enqueue(
+            tx,
+            ctx.tenant,
+            &format!("edge.{name}"),
+            Some("EdgeCondition"),
+            Some(id),
+            json!({"subject": episode, "episode": episode, "condition": id, "device": device, "flow": flow, "title": title, "at": at, "value": value}),
+        )
+        .await?;
     }
     Ok(())
 }
