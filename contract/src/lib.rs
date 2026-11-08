@@ -9,6 +9,7 @@ pub mod edge;
 pub mod flow;
 pub mod mbus;
 pub mod ocpp;
+pub mod pipeline;
 pub mod sparkplug;
 pub mod subflow;
 pub mod tags;

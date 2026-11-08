@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0
+
+Business-critical flows (Ferrum's Logic Platform, W5; docs/flows.md). A flow marked `profile: critical` hears each reading with when the device saw it and how far it can be trusted (bad ones too, marked), leaves a reading it has had alone, and is written at its gateway with what it did after each step, in one transaction, so a power cut neither loses nor repeats a decision (tested by killing the gateway at either side of that write). New steps: *bring to units* (exact scale and offset, the raw value kept, what cannot be a reading quarantined), *by quality*, *average over the time seen* (event-time windows with a watermark, corrections within a declared lateness on `revised`, later readings on `late`, quiet devices closing what they have), *an episode* (a deadband, on and off delays, reopening, staleness that is not recovery, an identity that is the same however often it is said) and *open a case*. The platform keeps one Edge Condition for each episode, each reading once, and publishes `edge.condition_opened`, `_reopened`, `_closed` and `_interrupted` once each, so a process the workspace runs starts once per episode. Whoever runs a new revision chooses whether it starts empty, drains the running one first, or keeps what unchanged steps remembered. A flow keeps track of 50,000 things at most. Rebuilt with Ferrum-Frontend e60e032.
+
 ## 0.5.9
 
 The reports it defines in code (their titles and parameters) have names in Arabic and Hindi too, with its models' and manifest's (281 each in ui/src/locales/names). Translated by the model, to be reviewed by native speakers.

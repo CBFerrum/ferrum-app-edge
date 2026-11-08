@@ -65,13 +65,19 @@
     - {name: activated_at, type: datetime, read_only: true, no_copy: true}
     - {name: review_note, type: text, read_only: true, no_copy: true}
     - {name: debug_until, type: datetime, read_only: true, no_copy: true, label: Watched Until}
+    - {name: transition, type: select, options: [Start Empty, Drain First, Keep Unchanged], default: Start Empty, read_only: true, no_copy: true, label: How It Took Over, description: "What this revision did with what the one before it remembered at each site"}
+    - {name: transition_note, type: text, read_only: true, no_copy: true, label: What It Kept}
     - {name: notes, type: text}
   actions:
     - {name: watch, label: Watch It, permission: write}
     - {name: submit_for_review, label: Send for Review, permission: write}
     - {name: send_back, label: Send Back, permission: write}
     - {name: approve, label: Approve, permission: write}
-    - {name: activate, label: Run It, permission: write}
+    - name: activate
+      label: Run It
+      permission: write
+      params:
+        - {name: transition, label: What It Remembers, type: select, options: [Start Empty, Drain First, Keep Unchanged], description: "Start Empty: the new revision remembers nothing. Drain First: what is open in the running one (windows, episodes) says what it has, then the new one starts empty. Keep Unchanged: steps whose settings did not change keep what they remembered, the rest start empty."}
     - {name: stop, label: Stop It, permission: write}
     - {name: revise, label: Change It, permission: write}
   list: {columns: [flow_name, status, live, revision, site], sort: flow_name asc}
@@ -104,6 +110,30 @@
     - {name: acknowledged_at, type: datetime, read_only: true}
     - {name: note, type: text, read_only: true}
   list: {columns: [summary, device, severity, status, raised_at], sort: raised_at desc}
+
+- name: EdgeCondition
+  label: Edge Condition
+  label_plural: Edge Conditions
+  kind: master
+  module: edge
+  title_field: condition_title
+  description: A sustained condition a business-critical flow saw at a site, from when it held until it cleared, with what was seen meanwhile. One for each episode, however often its gateway said so; what the workspace does about it is a process of its own.
+  fields:
+    - {name: condition_title, type: data, read_only: true, in_list: true, label: Condition}
+    - {name: episode, type: data, read_only: true, unique: true, description: "The episode's identity, the same however often its gateway says it"}
+    - {name: device, type: link, to: Device, read_only: true, in_list: true, in_filter: true}
+    - {name: flow, type: link, to: EdgeFlow, read_only: true, in_filter: true}
+    - {name: flow_node, type: data, read_only: true, hidden: true}
+    - {name: status, type: select, options: [Open, Closed, Interrupted], default: Open, read_only: true, in_list: true, in_filter: true, description: "Interrupted: its flow was drained for a new revision before anything saw the condition clear"}
+    - {name: opened_at, type: datetime, read_only: true, in_list: true, label: Held Since}
+    - {name: closed_at, type: datetime, read_only: true, label: Cleared At}
+    - {name: last_value, type: decimal, read_only: true}
+    - {name: peak, type: decimal, read_only: true, description: "The furthest past its limit it went"}
+    - {name: unit, type: data, read_only: true}
+    - {name: evidence_count, type: int, read_only: true, label: Readings Seen}
+    - {name: last_seen_at, type: datetime, read_only: true, label: Last Reading}
+    - {name: stale, type: check, read_only: true, label: Gone Quiet, description: "No good reading for a while: silence is not recovery, so it stays open"}
+  list: {columns: [condition_title, device, status, opened_at], sort: opened_at desc}
 
 - name: EdgeExport
   label: Edge Export

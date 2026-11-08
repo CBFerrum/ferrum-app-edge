@@ -30,7 +30,8 @@ says nothing about `PRESS-2`.
 **Decide**: compare, in range, must last, gone quiet, only changes, not too often, wait, count, average
 over time, calculate, combine, all true, remember, translate, choose by value, replace, take a part,
 has these parts, how far it went, in a place, only the first, one for each, rename parts, add what is
-known, at these times, unlike the rest, make it another's.
+known, at these times, unlike the rest, make it another's, bring to units, by quality, average over the
+time seen, an episode (the last four are for business-critical flows, below).
 
 *Must last* has two inputs, and something must be wired to `reset`, or it holds for ever. *Combine* and
 *all true* wait on inputs named by their wires, and can ignore values older than `fresh`, because a
@@ -49,7 +50,7 @@ follows act for another device, so a sensor's reading can raise an alarm on the 
 time* takes `across: true` for a total over every device a flow hears, instead of one for each.
 
 **Do**: raise an alarm, tell someone, ask for a command, record an event, record a number, set an
-attribute, send elsewhere, answer the device, write to the log. An alarm must have something wired to
+attribute, send elsewhere, answer the device, write to the log, open a case. An alarm must have something wired to
 `clear`. *Tell someone* and *ask for
 a command* happen at most once per `every`, a minute unless you say, however often they are reached,
 so a chatty sensor cannot flood people or the ledger.
@@ -57,6 +58,48 @@ so a chatty sensor cannot flood people or the ledger.
 A device that asks a gateway something (`v1/devices/me/rpc/request/{id}`, or `POST .../rpc`) raises an
 event called `rpc.request`, holding its `id`, `method` and `params`. A flow can choose by `$.method`
 and *answer the device*, so a device that wants the time, a limit or a setting needs no platform.
+
+## Business-critical flows
+
+A flow marked *business-critical* (`"profile": "critical"`) is one whose decisions must survive a
+power cut without being lost or made twice. Four things change for it.
+
+- **Each reading knows when it was seen and how far it can be trusted.** A device that sends its own time
+  is believed about it; one that does not is taken to have seen a reading when it arrived. A reading its
+  device's limits call bad (a sensor fault, a value it cannot have, one stuck too long) reaches this flow,
+  marked bad, where any other flow never hears it. *By quality* sends it on by how far it can be trusted,
+  or as *stale* when it was seen too long ago.
+- **A reading had already changes nothing.** The same reading delivered again, after a reconnect or a
+  restart, is known by when it was seen and is left alone.
+- **Where it stands and what it did are written together**, after every reading that leads to
+  something: a power cut leaves both or neither. Before the cut nothing of that step was written and the
+  reading is decided again, once; after it, the flow knows the reading. Other flows still write what they
+  remember every 15 seconds.
+- **Episodes become cases.** *An episode* is a condition that holds: it opens once the value has stayed
+  past its line for *must hold for*, and closes once it has stayed back past a second line for *must stay
+  clear for*; between the two lines nothing changes, so a value hovering at a limit is one episode, not
+  fifty. Holding again soon after closing is the same episode, *reopened*. Only a good reading moves it:
+  a bad one is evidence, and silence is said once as *stale* and is never a recovery. Its identity comes
+  from the flow, the step, the device and when it began to hold, so the gateway names it the same however
+  often it says so. *Open a case* hands it to the platform, which keeps one *Edge Condition* for each
+  episode, each reading it was sent once, and says once that the condition opened, cleared, reopened or was
+  interrupted. A process the workspace runs (Studio, Solutions) can start on *Edge condition opened* with
+  the episode as its key: one case for each episode, whatever was said twice.
+
+*Bring to units* turns raw counts into engineering units exactly (`value × scale + offset`), keeps the raw
+value as its provenance, and sends what is not a number, or lands outside what it can be, to *quarantine*
+instead of letting it pass as a reading. *Average over the time seen* is a statistic for each stretch of
+the time readings were seen, not when they arrived: it waits *wait for stragglers* past a window's end
+before saying anything, takes a late reading for *take corrections for* after that and says the corrected
+result on *revised*, and says one later still on *late*. Wire *revised* to a record, not to a command: a
+correction revises the evidence and does not repeat what the first result led to. A device quiet for *a
+quiet device closes after* closes what it has open, marked partial.
+
+What a flow keeps track of is bounded: a step remembers at most 5,000 devices and a flow 50,000 things in
+all, and each one left out is said, so untrusted device codes cannot fill a gateway's memory.
+
+Below its disk reserve a gateway keeps only alarms of its measurements and starts no new work, and says so
+in its health; what flows decided, cases and requests among them, is always written.
 
 ## One flow inside another
 
@@ -102,10 +145,16 @@ A flow is fed everything a device reports that passed its quality limits, and th
 holds, silences and delays. What a flow decides is written to the journal before it counts, and
 reaches the platform when the link allows.
 
-What flows remember is written down every 15 seconds. After a crash a hold or window may have lost up
-to that much, and an effect from those seconds may happen again: an alarm is idempotent, and a
-message may repeat. A new revision starts with nothing remembered, because its steps may mean
-something else now.
+What flows remember is written down every 15 seconds, and a business-critical flow's with each step
+that does something. After a crash any other flow's hold or window may have lost up to 15 seconds, and
+an effect from those seconds may happen again: an alarm is idempotent, and a message may repeat.
+
+Whoever sets a new revision running chooses what it does with what the running one remembered. *Start
+empty*: it remembers nothing, because its steps may mean something else now. *Drain first*: what is open
+in the running one says what it has (a window its partial result, an episode that it was interrupted,
+which is not that it cleared), then the new one starts empty. *Keep unchanged*: a step whose settings did
+not change keeps what it remembered, and any other starts empty; the flow says which, before it runs and in
+the gateway's notices.
 
 ## On the platform
 
