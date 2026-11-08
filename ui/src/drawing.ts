@@ -21,6 +21,8 @@ export interface FlowEdge {
 export interface Flow {
   nodes: FlowNode[];
   edges: FlowEdge[];
+  /** `critical`: a reading it has had changes nothing, and its gateway writes where it stands with what it did after each one. */
+  profile?: "critical";
 }
 
 export interface Param {
@@ -380,6 +382,66 @@ export const KINDS: Kind[] = [
     defaults: { from: "08:00", to: "18:00" },
   },
   {
+    kind: "normalize",
+    get label() { return t("Bring to units"); },
+    group: "Decide",
+    get says() { return t("Raw counts to engineering units, exactly: value × scale + offset. What is not a number, or cannot be, goes to quarantine"); },
+    params: [
+      { name: "scale", get label() { return t("Scale"); }, type: "text", placeholder: "0.1" },
+      { name: "offset", get label() { return t("Offset"); }, type: "text", placeholder: "-40" },
+      { name: "unit", get label() { return t("Unit"); }, type: "text", placeholder: "°C" },
+      { name: "min", get label() { return t("Lowest it can be"); }, type: "text" },
+      { name: "max", get label() { return t("Highest it can be"); }, type: "text" },
+    ],
+    ports: ["out", "quarantine"],
+    inputs: ["in"],
+    defaults: { scale: "1" },
+  },
+  {
+    kind: "quality",
+    get label() { return t("By quality"); },
+    group: "Decide",
+    get says() { return t("Sends a reading on by how far it can be trusted: good, uncertain, bad, or stale when it was seen too long ago"); },
+    params: [{ name: "stale", get label() { return t("Stale after"); }, type: "duration", get placeholder() { return t("Never"); } }],
+    ports: ["good", "uncertain", "bad", "stale"],
+    inputs: ["in"],
+  },
+  {
+    kind: "event_window",
+    get label() { return t("Average over the time seen"); },
+    group: "Decide",
+    get says() { return t("A statistic for each stretch of the time readings were seen, not when they arrived. A late one corrects it on revised; later still is late"); },
+    params: [
+      { name: "size", get label() { return t("Each window"); }, type: "duration", required: true },
+      { name: "stat", get label() { return t("Statistic"); }, type: "select", options: ["avg", "min", "max", "sum", "count", "delta"], required: true },
+      { name: "wait", get label() { return t("Wait for stragglers"); }, type: "duration", get hint() { return t("How long after a window's end it waits before saying anything") } },
+      { name: "lateness", get label() { return t("Take corrections for"); }, type: "duration" },
+      { name: "idle", get label() { return t("A quiet device closes after"); }, type: "duration", get placeholder() { return t("Never"); } },
+      across,
+    ],
+    ports: ["out", "revised", "late"],
+    inputs: ["in"],
+    defaults: { size: "1m", stat: "avg" },
+  },
+  {
+    kind: "episode",
+    get label() { return t("An episode"); },
+    group: "Decide",
+    get says() { return t("A condition that holds, with one identity until it clears. Only a good reading moves it; silence is not recovery"); },
+    params: [
+      { name: "above", get label() { return t("Holds above"); }, type: "number" },
+      { name: "below", get label() { return t("Holds below"); }, type: "number" },
+      { name: "close", get label() { return t("Clears past"); }, type: "number", required: true, get hint() { return t("The gap between where it holds and where it clears is a deadband") } },
+      { name: "on_delay", get label() { return t("Must hold for"); }, type: "duration" },
+      { name: "off_delay", get label() { return t("Must stay clear for"); }, type: "duration" },
+      { name: "reopen", get label() { return t("Same episode if it holds again within"); }, type: "duration" },
+      { name: "stale", get label() { return t("Say it went quiet after"); }, type: "duration" },
+    ],
+    ports: ["opened", "reopened", "evidence", "stale", "closed", "interrupted"],
+    inputs: ["in"],
+    defaults: { above: 80, close: 75, on_delay: "30s", off_delay: "1m" },
+  },
+  {
     kind: "anomaly",
     get label() { return t("Unlike the rest"); },
     group: "Decide",
@@ -472,6 +534,16 @@ export const KINDS: Kind[] = [
     params: [{ name: "text", get label() { return t("Text"); }, type: "text", get placeholder() { return t("The value"); }, hint: "{value} and {device} work here" }],
     ports: [],
     inputs: ["in"],
+  },
+  {
+    kind: "case",
+    get label() { return t("Open a case"); },
+    group: "Do",
+    get says() { return t("Hands an episode to the platform: one condition and one case for each episode, with its evidence and how it ended"); },
+    params: [{ name: "title", get label() { return t("Title"); }, type: "text", required: true, hint: "{device} works here" }],
+    ports: [],
+    inputs: ["in"],
+    defaults: { title: "" },
   },
   {
     kind: "command",
@@ -576,7 +648,7 @@ export const connect = (flow: Flow, e: FlowEdge): Flow => (whyNot(flow, e) ? flo
 export const disconnect = (flow: Flow, e: FlowEdge): Flow => ({ ...flow, edges: flow.edges.filter((x) => x !== e) });
 
 export function remove(flow: Flow, id: string): Flow {
-  return { nodes: flow.nodes.filter((n) => n.id !== id), edges: flow.edges.filter((e) => e.from !== id && e.to !== id) };
+  return { ...flow, nodes: flow.nodes.filter((n) => n.id !== id), edges: flow.edges.filter((e) => e.from !== id && e.to !== id) };
 }
 
 export function change(flow: Flow, id: string, patch: Record<string, unknown>): Flow {
@@ -590,7 +662,7 @@ export function change(flow: Flow, id: string, patch: Record<string, unknown>): 
   const node = nodes.find((n) => n.id === id);
   const ports = node ? portsOf(node) : [];
   const edges = node?.kind === "switch" ? flow.edges.filter((e) => e.from !== id || ports.includes(e.port ?? "out")) : flow.edges;
-  return { nodes, edges };
+  return { ...flow, nodes, edges };
 }
 
 /** A new step, somewhere it does not sit on another. */
@@ -625,7 +697,7 @@ export function arrange(flow: Flow): Flow {
 export function parseFlow(text: string | null | undefined): Flow {
   try {
     const v = JSON.parse(text ?? "") as Partial<Flow>;
-    if (Array.isArray(v.nodes)) return { nodes: v.nodes, edges: Array.isArray(v.edges) ? v.edges : [] };
+    if (Array.isArray(v.nodes)) return { nodes: v.nodes, edges: Array.isArray(v.edges) ? v.edges : [], ...(v.profile === "critical" ? { profile: "critical" as const } : {}) };
   } catch {
     // A draft may be anything. What cannot be drawn starts again.
   }

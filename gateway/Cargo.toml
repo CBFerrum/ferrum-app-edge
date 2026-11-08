@@ -87,5 +87,9 @@ name = "recovery_it"
 required-features = ["failpoints"]
 
 [[test]]
+name = "critical_it"
+required-features = ["failpoints"]
+
+[[test]]
 name = "charger_it"
 required-features = ["failpoints"]
