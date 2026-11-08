@@ -9,7 +9,9 @@ working with the link down, and what it remembers survives a restart.
 Node-RED and ThingsBoard's rule chains do this and more, and a plant floor is why this does less.
 
 - **There is no code.** Every step is one of the kinds below. A flow can be read and reviewed, and
-  nothing in one can do what its steps do not say.
+  nothing in one can do what its steps do not say: a step of another kind, or a field its kind does not
+  take, is refused when the flow is read. Formulas are exact arithmetic with `round`, `abs`, `min`, `max`
+  and `coalesce`, Ferrum's own formula engine, the server's too; there is no clock or random number in one.
 - **It cannot loop.** A flow with a cycle is refused, and one message's work is bounded, so a bad flow
   costs a little time and cannot hang a gateway.
 - **It cannot move anything.** The strongest thing a flow can do is ask for a command, which goes
@@ -44,7 +46,9 @@ polygon, and says when a device enters and leaves as well as where it is; the fi
 an arrival. *Unlike the rest* learns each device's normal from its own last readings, and an odd
 reading does not teach it that faults are normal. It needs ten readings before it says anything, and
 it is a statistic, not a diagnosis. *Add what is known* adds a device's newest numbers and attributes
-to a message; a gateway knows what it has heard since it started. *Make it another's* lets what
+to a message; a gateway knows what it has heard since it started. With `fresh` (`5m`) it adds only what the
+device saw within that long, by the time the device gave; older, or of no known time, it is left out, so what a
+site last heard before it lost its link is not taken for what is so now. *Make it another's* lets what
 follows act for another device, so a sensor's reading can raise an alarm on the line it belongs to.
 *Choose by value* can go by a part of the value (`$.method`) and pass on the whole of it. *Average over
 time* takes `across: true` for a total over every device a flow hears, instead of one for each.
@@ -99,7 +103,8 @@ What a flow keeps track of is bounded: a step remembers at most 5,000 devices an
 all, and each one left out is said, so untrusted device codes cannot fill a gateway's memory.
 
 Below its disk reserve a gateway keeps only alarms of its measurements and starts no new work, and says so
-in its health; what flows decided, cases and requests among them, is always written.
+in its health; what flows decided, cases and requests among them, is always written. Given room again, it takes
+up the work that waited.
 
 ## One flow inside another
 

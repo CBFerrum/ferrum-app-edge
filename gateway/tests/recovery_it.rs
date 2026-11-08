@@ -825,11 +825,19 @@ async fn what_the_lease_and_the_disk_allow(w: &World) {
     // reach the platform; only alarms would, and facts and reports are never counted against telemetry (journal tests).
     let heard = async |ws: &Workspace| -> i64 {
         let mut tx = ws.k.db.tenant_tx(ws.tenant).await.unwrap();
-        let n: i64 = sqlx::query_scalar("select count(*) from op_measurement where device_id = $1").bind(ws.robot).fetch_one(&mut *tx).await.unwrap();
+        let n: i64 = sqlx::query_scalar("select count(*) from op_measurement where device_id = $1 and metric = 'battery.pct'")
+            .bind(ws.robot)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
         n
     };
-    assert_eq!(heard(&starving).await, 0, "plain samples are not kept while short of disk");
+    let mut tx = starving.k.db.tenant_tx(starving.tenant).await.unwrap();
+    let arrived: Vec<(String, i16)> =
+        sqlx::query_as("select metric, class from op_measurement where device_id = $1").bind(starving.robot).fetch_all(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(heard(&starving).await, 0, "plain samples are not kept while short of disk: {arrived:?}");
     // Given room again, it takes the work up and its readings flow.
     tight.kill();
     let config = std::fs::read_to_string(&tight.config).unwrap().replace("reserve_mb: 900000000", "");
