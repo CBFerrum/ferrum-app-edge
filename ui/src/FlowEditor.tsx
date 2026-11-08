@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type KeyboardEvent, type PointerEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { formatMoment, refusal, relativeTime, t as tr, isolate } from "@ferrum/client";
-import { Alert, Button, confirmDialog, Dialog, ErrorState, Field, PageLoading, toast, useDebounced, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
+import { Alert, Button, confirmDialog, Dialog, ErrorState, Field, PageLoading, toast, useDebounced, useShellTitle, useUnsavedGuard, placed } from "@ferrum/kit";
 import { can, LinkInput, useEntityMeta, useMe } from "@ferrum/records";
 import { flowAction, type FlowDoc, flowDoc, flowTraces, flowVersions, type Moment, saveFlow, type Simulated, simulateFlow, type Traced, tryFlow } from "./data";
 import {
@@ -44,8 +44,8 @@ import {
 
 const GROUPS: { group: Group; label: string }[] = [
   { group: "Listen", get label() { return tr("When"); } },
-  { group: "Decide", get label() { return tr("Decide"); } },
-  { group: "Do", get label() { return tr("Do"); } },
+  { group: "Decide", get label() { return tr(tr("Decide")); } },
+  { group: "Do", get label() { return tr(tr("Do")); } },
 ];
 
 interface Picked {
@@ -425,7 +425,7 @@ function Simulation({
     <section className="card card-pad stack" aria-label={tr("Simulate")}>
       <h2 className="edge-section">{tr("Simulate")}</h2>
       <p className="muted">
-        {tr("Say what happens and when, and watch what this flow does, by the code a gateway runs. Nothing reaches a device.")}{canRecord ? tr(" A version must be simulated before it can go for review.") : ""}
+        {(canRecord ? tr("Say what happens and when, and watch what this flow does, by the code a gateway runs. Nothing reaches a device. A version must be simulated before it can go for review.") : tr("Say what happens and when, and watch what this flow does, by the code a gateway runs. Nothing reaches a device."))}
       </p>
       {lines.map((l, i) => (
         <div key={i} className="edge-line">
@@ -471,7 +471,7 @@ function Simulation({
             <li key={m.at}>
               <button type="button" className={chosen?.at === m.at ? "edge-moment edge-on" : "edge-moment"} onClick={() => choose(chosen?.at === m.at ? null : m)}>
                 <strong>{tr("After {at} s", { at: m.at })}</strong>
-                {m.effects.length ? m.effects.map((e, i) => <span key={i}>{isolate(sayEffect(e))}</span>) : <span className="faint">{tr("Passed through {length}", { length: m.trace.length })} {m.trace.length === 1 ? tr("step") : tr("steps")}{tr(", and nothing came of it yet")}</span>}
+                {m.effects.length ? m.effects.map((e, i) => <span key={i}>{isolate(sayEffect(e))}</span>) : <span className="faint">{placed(tr("Passed through {length} {p1}, and nothing came of it yet"), { length: m.trace.length, p1: m.trace.length === 1 ? tr("step") : tr("steps") })}</span>}
                 {m.problems.map((p) => (
                   <span key={p} className="edge-why">
                     {isolate(p)}
@@ -603,7 +603,7 @@ export function FlowEditor() {
   const move = useCallback((nid: string, x: number, y: number) => setFlow((f) => ({ ...f, nodes: f.nodes.map((n) => (n.id === nid ? { ...n, x, y } : n)) })), []);
   const stop = async () => {
     if (await confirmDialog({ title: tr("Stop this flow?"), message: tr("Gateways stop it at their next exchange. Whatever it was watching goes unwatched until it runs again."), confirmLabel: tr("Stop it") })) {
-      act.mutate({ name: "stop", done: "Stopped. Gateways drop it at their next exchange." });
+      act.mutate({ name: "stop", done: tr("Stopped. Gateways drop it at their next exchange.") });
     }
   };
   if (q.isPending) return <PageLoading />;
@@ -623,14 +623,14 @@ export function FlowEditor() {
           </Button>
         )}
         {!writable ? null : d.status === "Draft" ? (
-          <Button variant="primary" disabled={problem !== null} loading={act.isPending} onClick={() => act.mutate({ name: "submit_for_review", done: "Sent. Someone else reviews it next." })}>
+          <Button variant="primary" disabled={problem !== null} loading={act.isPending} onClick={() => act.mutate({ name: "submit_for_review", done: tr("Sent. Someone else reviews it next.") })}>
             {tr("Send for review")}
           </Button>
         ) : null}
         {reviewer && d.status === "In Review" ? (
           <>
             <Button onClick={() => setSendingBack(true)}>{tr("Send back…")}</Button>
-            <Button variant="primary" loading={act.isPending} onClick={() => act.mutate({ name: "approve", done: "Approved." })}>
+            <Button variant="primary" loading={act.isPending} onClick={() => act.mutate({ name: "approve", done: tr("Approved.") })}>
               {tr("Approve")}
             </Button>
           </>
@@ -640,13 +640,13 @@ export function FlowEditor() {
             variant="primary"
             loading={act.isPending}
             disabled={Boolean(d.live) && d.published_body === d.body}
-            onClick={() => act.mutate({ name: "activate", done: "Running. Gateways take it at their next exchange." })}
+            onClick={() => act.mutate({ name: "activate", done: tr("Running. Gateways take it at their next exchange.") })}
           >
             {tr("Run it")}
           </Button>
         ) : null}
         {writable && d.status !== "Draft" ? (
-          <Button onClick={() => act.mutate({ name: "revise", done: "It is a draft again. What is running stays as it is." })}>{tr("Change it")}</Button>
+          <Button onClick={() => act.mutate({ name: "revise", done: tr("It is a draft again. What is running stays as it is.") })}>{tr("Change it")}</Button>
         ) : null}
         {writable && d.live ? <Button onClick={() => void stop()}>{tr("Stop it")}</Button> : null}
       </div>
@@ -714,7 +714,7 @@ export function FlowEditor() {
           onClose={() => setSendingBack(false)}
           onDone={(note) => {
             setSendingBack(false);
-            act.mutate({ name: "send_back", params: { note }, done: "Sent back." });
+            act.mutate({ name: "send_back", params: { note }, done: tr("Sent back.") });
           }}
         />
       ) : null}

@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { refusal, relativeTime, t, isolate } from "@ferrum/client";
-import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
+import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle, placed } from "@ferrum/kit";
 import { LinkInput } from "@ferrum/records";
 import { claim, fleet, type Gateway, type LinkHealth, overview, type Stranger } from "./data";
 import { SLOW_POLL_MS } from "./live";
@@ -190,7 +190,7 @@ export function Home() {
         <>
           {critical ? (
             <Alert tone="error" action={<Link to="/alarms">{t("See them")}</Link>}>
-              {t("{critical} critical", { critical })} {critical === 1 ? t("alarm is") : t("alarms are")} {t("open.")}
+              {placed(t("{critical} critical {p1} open."), { critical: critical, p1: critical === 1 ? t("alarm is") : t("alarms are") })}
             </Alert>
           ) : null}
           <Strangers list={q.data.strangers} />

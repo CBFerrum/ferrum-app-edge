@@ -51,7 +51,7 @@ function AskAll({ select, count, onClose }: { select: Selection; count: number; 
   return (
     <Dialog
       open
-      title={tr("Ask {value}", { value: count === 1 ? "1 device" : `${count} devices` })}
+      title={(count === 1 ? tr("Ask 1 device") : tr("Ask {count} devices", { count }))}
       onClose={onClose}
       footer={
         outcomes ? (
@@ -82,7 +82,7 @@ function AskAll({ select, count, onClose }: { select: Selection; count: number; 
           <Field label={what === "command" ? tr("Operation") : tr("Setting")} htmlFor={`${id}-n`} required>
             <input id={`${id}-n`} className="input" value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
-          <Field label={what === "command" ? tr("With (JSON)") : tr("Value (JSON)")} htmlFor={`${id}-v`} error={parsed === null ? "That is not JSON." : undefined}>
+          <Field label={what === "command" ? tr("With (JSON)") : tr("Value (JSON)")} htmlFor={`${id}-v`} error={parsed === null ? tr("That is not JSON.") : undefined}>
             <textarea id={`${id}-v`} className="input edge-code" rows={3} value={value} onChange={(e) => setValue(e.target.value)} />
           </Field>
         </div>
@@ -137,7 +137,7 @@ function Import({ onClose }: { onClose: () => void }) {
       {done ? (
         <div className="stack" role="status">
           <p>
-            {tr("{created} added", { created: done.created })}{done.failed.length ? tr(", {length} not", { length: done.failed.length }) : ""}.
+            {(done.failed.length ? tr("{created} added, {length} not", { created: done.created, length: done.failed.length }) : tr("{created} added", { created: done.created }))}.
           </p>
           {done.failed.length ? (
             <ul className="edge-refused">
