@@ -165,6 +165,9 @@ MUTANTS = [
     ("site-lease-ignored", "gateway/src/runtime.rs", "if self.clock.now() >= lease {", "if false {", SITE),
     ("site-restore-believed", "gateway/src/runtime.rs", "if self.journal.get(\"restored\").ok().flatten().is_some() {", "if false {", SITE),
     ("site-shed-commands-budget", "gateway/src/journal.rs", "for class in [Class::Sample, Class::State, Class::Alarm] {", "for class in [Class::Alarm, Class::State, Class::Sample] {", SITE_UNIT),
+    # Closing the Logic Platform's open rows (Ferrum docs/logic/evidence/closing-gaps.md).
+    ("enrich-ignores-age", "contract/src/flow.rs", "Some(f) => when.filter(|w| at - *w <= span(*f)).map(|_| v),", "Some(_) => Some(v),", CONTRACT),
+    ("short-of-disk-keeps-samples", "gateway/src/runtime.rs", "batch.retain(|m| m.class == Class::Alarm);", "batch.retain(|_| true);", SITE),
 ]
 
 

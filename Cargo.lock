@@ -1496,7 +1496,6 @@ dependencies = [
 [[package]]
 name = "ferrum-apps"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#138554d85fa45a984189bcbc86dcd568830867f9"
 dependencies = [
  "base64 0.22.1",
  "ferrum-meta",
@@ -1516,7 +1515,6 @@ dependencies = [
 [[package]]
 name = "ferrum-calc"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#138554d85fa45a984189bcbc86dcd568830867f9"
 dependencies = [
  "rust_decimal",
  "serde",
@@ -1527,7 +1525,6 @@ dependencies = [
 [[package]]
 name = "ferrum-domain"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#138554d85fa45a984189bcbc86dcd568830867f9"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1562,7 +1559,6 @@ dependencies = [
 [[package]]
 name = "ferrum-kernel"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#138554d85fa45a984189bcbc86dcd568830867f9"
 dependencies = [
  "argon2",
  "async-trait",
@@ -1572,6 +1568,7 @@ dependencies = [
  "ciborium",
  "dashmap",
  "data-encoding",
+ "ferrum-logic",
  "ferrum-meta",
  "ferrum-saml",
  "futures",
@@ -1599,9 +1596,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrum-logic"
+version = "0.1.0"
+dependencies = [
+ "cel",
+ "chrono",
+ "chrono-tz",
+ "hex",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "ferrum-mcp"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#138554d85fa45a984189bcbc86dcd568830867f9"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1618,10 +1628,10 @@ dependencies = [
 [[package]]
 name = "ferrum-meta"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#138554d85fa45a984189bcbc86dcd568830867f9"
 dependencies = [
  "cel",
  "chrono",
+ "ferrum-logic",
  "hex",
  "regex",
  "rust_decimal",
@@ -1635,7 +1645,6 @@ dependencies = [
 [[package]]
 name = "ferrum-ops"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#138554d85fa45a984189bcbc86dcd568830867f9"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1659,7 +1668,6 @@ dependencies = [
 [[package]]
 name = "ferrum-ops-contract"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#138554d85fa45a984189bcbc86dcd568830867f9"
 dependencies = [
  "chrono",
  "hex",
@@ -1672,7 +1680,6 @@ dependencies = [
 [[package]]
 name = "ferrum-saml"
 version = "0.1.0"
-source = "git+https://github.com/CBFerrum/Ferrum?branch=main#138554d85fa45a984189bcbc86dcd568830867f9"
 dependencies = [
  "serde",
 ]

@@ -821,6 +821,31 @@ async fn what_the_lease_and_the_disk_allow(w: &World) {
     tokio::time::sleep(StdDuration::from_millis(2500)).await;
     assert_eq!(state_of(&starving, parked).await, "Queued", "it was not even taken");
     assert_eq!(tight.missions_for(parked), 0);
+    // And what is disposable is not kept meanwhile (FLC-EDGE-011): the robot's battery readings, plain samples, never
+    // reach the platform; only alarms would, and facts and reports are never counted against telemetry (journal tests).
+    let heard = async |ws: &Workspace| -> i64 {
+        let mut tx = ws.k.db.tenant_tx(ws.tenant).await.unwrap();
+        let n: i64 = sqlx::query_scalar("select count(*) from op_measurement where device_id = $1 and metric = 'battery.pct'")
+            .bind(ws.robot)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        n
+    };
+    let mut tx = starving.k.db.tenant_tx(starving.tenant).await.unwrap();
+    let arrived: Vec<(String, i16)> =
+        sqlx::query_as("select metric, class from op_measurement where device_id = $1").bind(starving.robot).fetch_all(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(heard(&starving).await, 0, "plain samples are not kept while short of disk: {arrived:?}");
+    // Given room again, it takes the work up and its readings flow.
+    tight.kill();
+    let config = std::fs::read_to_string(&tight.config).unwrap().replace("reserve_mb: 900000000", "");
+    std::fs::write(&tight.config, config).unwrap();
+    tight.start(None);
+    reaches(&starving, parked, "Completed", 30).await;
+    until("its readings to reach the platform", 15, async || heard(&starving).await > 0).await;
+    tight.kill();
 }
 
 async fn a_replaced_gateway_stops(w: &World) {
