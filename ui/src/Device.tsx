@@ -6,7 +6,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useParams } from "react-router";
 import { refusal, relativeTime, t as tr, isolate } from "@ferrum/client";
-import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
+import { Alert, Badge, Button, Dialog, EmptyState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
+import { FailedState } from "./states";
+import { severityTone } from "./severity";
 import { tries } from "./connecting";
 import { type Attribute, connection, desire, device, deviceRecord, type Issued, issueCredentials, revokeCredentials, sendCommand } from "./data";
 import { SLOW_POLL_MS } from "./live";
@@ -155,7 +157,7 @@ function Connect({ id, onClose }: { id: string; onClose: () => void }) {
     <Dialog open title={tr("Connect this device")} onClose={onClose} footer={<Button onClick={onClose}>{tr("Done")}</Button>}>
       <div className="stack">
         {q.isPending ? <PageLoading /> : null}
-        {q.isError ? <ErrorState error={q.error} /> : null}
+        {q.isError ? <FailedState error={q.error} /> : null}
         {q.data && !q.data.calls_in ? <Alert tone="warning">{tr("Its definition reaches out to it. For a device that calls in, give it a definition with api: device, such as the template Devices that call in. A token still works for posting to this workspace directly.")}</Alert> : null}
         <div className="edge-choice" role="group" aria-label={tr("How it proves who it is")}>
           {(["token", "password", "certificate"] as const).map((k) => (
@@ -227,7 +229,7 @@ export function DevicePage() {
   const operations = record.data?.operations?.map((o) => o.operation) ?? [];
   useShellTitle(record.data?.device_name ?? tr("Device"));
   if (q.isPending) return <PageLoading />;
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  if (q.isError) return <FailedState error={q.error} onRetry={() => void q.refetch()} />;
   const d = q.data;
   const metrics = Array.isArray(d.latest) ? d.latest : (d.latest.metrics ?? []);
   return (
@@ -255,7 +257,7 @@ export function DevicePage() {
                   <strong>{isolate(a.summary)}</strong>
                   <div className="faint">{tr("Raised")} {isolate(relativeTime(a.raised_at))}</div>
                 </div>
-                <Badge tone={a.severity === "Critical" ? "red" : "amber"}>{isolate(a.severity)}</Badge>
+                <Badge tone={severityTone(a.severity)}>{isolate(a.severity)}</Badge>
                 {a.status === "Active" ? <Acknowledge id={a.id} /> : <Badge>{isolate(a.status)}</Badge>}
               </li>
             ))}

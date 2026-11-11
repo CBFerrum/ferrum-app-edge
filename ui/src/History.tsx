@@ -2,7 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Button, ErrorState } from "@ferrum/kit";
+import { Button } from "@ferrum/kit";
+import { FailedState } from "./states";
 import { Chart, COLORS } from "./Chart";
 import { csv, type Line, summary } from "./plotting";
 import { history, type HistoryPoint } from "./data";
@@ -70,7 +71,7 @@ export function History({ id, code, metrics, root }: { id: string; code: string;
         ))}
       </div>
       {q.isError ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} />
+        <FailedState error={q.error} onRetry={() => void q.refetch()} />
       ) : chosen.length === 0 ? (
         <p className="muted">{t("Choose something to draw.")}</p>
       ) : q.data ? (

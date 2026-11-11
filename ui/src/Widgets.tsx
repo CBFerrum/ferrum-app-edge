@@ -6,6 +6,7 @@ import { useId, useRef, useState } from "react";
 import { Link } from "react-router";
 import { refusal, relativeTime, t as tr, isolate } from "@ferrum/client";
 import { Badge, Button, confirmDialog, Markdown, toast } from "@ferrum/kit";
+import { severityTone } from "./severity";
 import { isOn, share, tone, type Widget } from "./layout";
 import { Chart, COLORS } from "./Chart";
 import { type AlarmRow, desire, type HistoryPoint, type Robot, sendCommand } from "./data";
@@ -287,7 +288,7 @@ function AlarmsView({ result }: { result?: Result }) {
             <strong>{isolate(a.summary)}</strong>
             <div className="faint">{tr("Raised")} {isolate(relativeTime(a.raised_at))}</div>
           </div>
-          <Badge tone={a.severity === "Critical" ? "red" : a.severity === "Warning" ? "amber" : "neutral"}>{isolate(a.severity)}</Badge>
+          <Badge tone={severityTone(a.severity)}>{isolate(a.severity)}</Badge>
         </li>
       ))}
     </ul>

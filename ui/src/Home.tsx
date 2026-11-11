@@ -5,7 +5,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { refusal, relativeTime, t, isolate } from "@ferrum/client";
-import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle, placed } from "@ferrum/kit";
+import { Alert, Badge, Button, Dialog, EmptyState, Field, PageLoading, toast, useShellTitle, placed } from "@ferrum/kit";
+import { FailedState } from "./states";
 import { LinkInput } from "@ferrum/records";
 import { claim, fleet, type Gateway, type LinkHealth, overview, type Stranger } from "./data";
 import { SLOW_POLL_MS } from "./live";
@@ -185,7 +186,7 @@ export function Home() {
       {q.isPending ? (
         <PageLoading />
       ) : q.isError ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} />
+        <FailedState error={q.error} onRetry={() => void q.refetch()} />
       ) : (
         <>
           {critical ? (

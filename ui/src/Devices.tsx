@@ -5,9 +5,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { refusal, relativeTime, t as tr, isolate } from "@ferrum/client";
-import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, statusTone, toast, useDebounced, useShellTitle } from "@ferrum/kit";
+import { Alert, Badge, Button, Dialog, EmptyState, Field, PageLoading, StatePanel, StatusBadge, toast, useDebounced, useShellTitle } from "@ferrum/kit";
+import { FailedState } from "./states";
 import { askAll, type DeviceRow, devices, type Imported, importDevices, type Outcome, type Selection, setAll } from "./data";
 import { Tabs } from "./Tabs";
+
+// The tone of a device's lifecycle (Operations' stored ids). An id not listed here is neutral.
+const LIFECYCLE = { Imported: "neutral", Claimed: "neutral", Provisioned: "neutral", Commissioned: "blue", Active: "green", Maintenance: "amber", Quarantined: "red", Retired: "neutral" } as const;
 
 function Outcomes({ outcomes }: { outcomes: Outcome[] }) {
   const refused = outcomes.filter((o) => o.refused);
@@ -199,7 +203,7 @@ function Row({ d, chosen, choose }: { d: DeviceRow; chosen: boolean; choose: (on
       ) : null}
       {d.active === true ? <Badge tone="green">{tr("Connected")}</Badge> : null}
       {d.alarms ? <Badge tone="red">{d.alarms === 1 ? tr("1 alarm") : tr("{alarms} alarms", { alarms: d.alarms })}</Badge> : null}
-      <Badge tone={statusTone(d.lifecycle)}>{isolate(d.lifecycle)}</Badge>
+      <StatusBadge value={d.lifecycle} tones={LIFECYCLE} />
     </li>
   );
 }
@@ -246,10 +250,22 @@ export function Devices() {
       {list.isPending ? (
         <PageLoading />
       ) : list.isError ? (
-        <ErrorState error={list.error} onRetry={() => void list.refetch()} />
+        <FailedState error={list.error} onRetry={() => void list.refetch()} />
+      ) : shown.length === 0 && (text || tagged) ? (
+        <StatePanel
+          kind="no-matches"
+          title={tr("Nothing matches that")}
+          onClear={() => {
+            const next = new URLSearchParams(params);
+            next.delete("q");
+            next.delete("tag");
+            setParams(next, { replace: true });
+          }}
+          clearLabel={tr("Clear the search")}
+        />
       ) : shown.length === 0 ? (
-        <EmptyState title={text || tagged ? tr("Nothing matches that") : tr("No devices yet")} icon="dashboard">
-          {text || tagged ? null : <Link to="/e/Device/new">{tr("Add your first device")}</Link>}
+        <EmptyState title={tr("No devices yet")} icon="dashboard">
+          <Link to="/e/Device/new">{tr("Add your first device")}</Link>
         </EmptyState>
       ) : (
         <>

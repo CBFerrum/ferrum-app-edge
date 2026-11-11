@@ -5,7 +5,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { refusal, relativeTime, t, isolate } from "@ferrum/client";
-import { Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
+import { Badge, Button, Dialog, EmptyState, Field, PageLoading, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
+import { FailedState } from "./states";
+import { severityTone } from "./severity";
 import { acknowledge, alarms } from "./data";
 import { Tabs } from "./Tabs";
 
@@ -51,7 +53,6 @@ export function Acknowledge({ id }: { id: string }) {
   );
 }
 
-const tone = (s: string) => (s === "Critical" || s === "Major" ? "red" : s === "Warning" || s === "Minor" ? "amber" : "blue");
 
 export function Alarms() {
   useShellTitle(t("Alarms"));
@@ -73,7 +74,7 @@ export function Alarms() {
       {q.isPending ? (
         <PageLoading />
       ) : q.isError ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} />
+        <FailedState error={q.error} onRetry={() => void q.refetch()} />
       ) : q.data.alarms.length === 0 ? (
         <EmptyState title={t("Nothing is wrong")} icon="check">
           <p className="muted">{t("As far as the gateways have said.")}</p>
@@ -94,7 +95,7 @@ export function Alarms() {
                 </div>
                 {a.note ? <div className="faint">{isolate(a.note)}</div> : null}
               </div>
-              <Badge tone={tone(a.severity)}>{isolate(a.severity)}</Badge>
+              <Badge tone={severityTone(a.severity)}>{isolate(a.severity)}</Badge>
               {a.shelved_until && Date.parse(a.shelved_until) > Date.now() ? <Badge tone="amber">{t("Shelved")}</Badge> : null}
               {a.status === "Active" ? <Acknowledge id={a.id} /> : <Badge>{isolate(a.status)}</Badge>}
             </li>

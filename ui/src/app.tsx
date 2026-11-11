@@ -6,7 +6,8 @@ import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Link, Outlet, RouterProvider, useRouteError } from "react-router";
 import { bootstrap, routeBase, shell, t, wordsReady } from "@ferrum/client";
-import { ConfirmHost, EmptyState, ErrorState, Toaster } from "@ferrum/kit";
+import { ConfirmHost, EmptyState, Toaster } from "@ferrum/kit";
+import { FailedState } from "./states";
 import { RequireAuth, setFrameMode } from "@ferrum/records/frame";
 import { useFreshReadings } from "./live";
 import "./styles.css";
@@ -16,7 +17,7 @@ const page = (name: "FormView" | "ListView" | "ReportView" | "AppSettingsPage" |
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false, staleTime: 5_000 } } });
 
 function RouteError() {
-  return <ErrorState error={useRouteError()} onRetry={() => window.location.reload()} />;
+  return <FailedState error={useRouteError()} onRetry={() => window.location.reload()} />;
 }
 
 function NotFound() {

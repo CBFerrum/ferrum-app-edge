@@ -21,7 +21,7 @@
   padding-bottom: 0.15rem;
   border-bottom: 2px solid transparent;
   color: var(--muted-foreground);
-  font-size: 20px;
+  font-size: var(--text-xl);
   font-weight: 650;
   text-decoration: none;
 }
@@ -57,7 +57,7 @@
 }
 
 .edge-section {
-  font-size: 15px;
+  font-size: var(--text-lg);
   font-weight: 650;
 }
 
@@ -83,7 +83,7 @@
 }
 
 .edge-head h2 {
-  font-size: 17px;
+  font-size: var(--text-xl);
   font-weight: 650;
 }
 
@@ -113,7 +113,7 @@
 .edge-address,
 .edge-token {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }
 
@@ -126,7 +126,7 @@
 
 .edge-why {
   color: var(--danger);
-  font-size: 13px;
+  font-size: var(--text-sm);
   overflow-wrap: anywhere;
 }
 
@@ -178,12 +178,12 @@ a.edge-row-main:hover strong {
 
 .edge-values dt {
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }
 
 .edge-values dd:first-of-type {
-  font-size: 20px;
+  font-size: var(--text-xl);
   font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
@@ -192,7 +192,7 @@ a.edge-row-main:hover strong {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .edge-split {
@@ -207,7 +207,7 @@ a.edge-row-main:hover strong {
   height: auto;
   width: 100%;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.5;
   white-space: pre;
   overflow-x: auto;
@@ -227,7 +227,7 @@ a.edge-row-main:hover strong {
 
 .edge-templates legend {
   margin-bottom: 0.25rem;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 650;
 }
 
@@ -278,7 +278,7 @@ a.edge-row-main:hover strong {
 
 .edge-robot text {
   fill: var(--text);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .edge-robot-on circle {
@@ -291,7 +291,7 @@ a.edge-row-main:hover strong {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem 0.5rem;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .edge-stages li {
@@ -376,14 +376,14 @@ a.edge-row-main:hover strong {
 
 .edge-node-title {
   fill: var(--text);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 650;
   pointer-events: none;
 }
 
 .edge-node-says {
   fill: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-xs);
   pointer-events: none;
 }
 
@@ -419,7 +419,7 @@ a.edge-row-main:hover strong {
 
 .edge-port-name {
   fill: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--text-xs);
   pointer-events: none;
 }
 
@@ -456,7 +456,7 @@ a.edge-row-main:hover strong {
   border-radius: var(--radius);
   background: var(--card);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--text-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -485,7 +485,7 @@ a.edge-row-main:hover strong {
 
 .edge-join legend {
   margin-bottom: 0.25rem;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 650;
 }
 
@@ -512,7 +512,7 @@ a.edge-row-main:hover strong {
   border-radius: var(--radius);
   background: var(--card);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--text-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -565,7 +565,7 @@ a.edge-row-main:hover strong {
 
   /* The map scales down with the screen, and its names should not. */
   .edge-robot text {
-    font-size: 22px;
+    font-size: var(--text-2xl);
   }
 }
 
@@ -597,7 +597,7 @@ a.edge-row-main:hover strong {
 
 .edge-chart-tick {
   fill: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .edge-chart-line {
@@ -631,7 +631,7 @@ a.edge-row-main:hover strong {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--card);
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   pointer-events: none;
 }
 
@@ -654,7 +654,7 @@ a.edge-row-main:hover strong {
   border-radius: 999px;
   background: transparent;
   color: var(--muted-foreground);
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -667,7 +667,7 @@ a.edge-row-main:hover strong {
 .edge-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8125rem;
+  font-size: var(--text-sm);
 }
 
 .edge-table th,
@@ -686,7 +686,7 @@ a.edge-row-main:hover strong {
 
 .edge-table thead th {
   color: var(--muted-foreground);
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
 }
 
 .edge-chart[data-fill] {
@@ -719,7 +719,7 @@ a.edge-row-main:hover strong {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: 0.8125rem;
+  font-size: var(--text-sm);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -736,7 +736,7 @@ a.edge-row-main:hover strong {
   border-radius: var(--radius-sm);
   background: var(--card);
   color: var(--muted-foreground);
-  font-size: 0.6875rem;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -770,7 +770,7 @@ a.edge-row-main:hover strong {
   justify-content: center;
   height: 100%;
   color: var(--muted-foreground);
-  font-size: 0.8125rem;
+  font-size: var(--text-sm);
   text-align: center;
 }
 
@@ -800,16 +800,16 @@ a.edge-row-main:hover strong {
 .edge-widget-value small {
   flex-basis: 100%;
   color: var(--muted-foreground);
-  font-size: 0.6875rem;
+  font-size: var(--text-xs);
   text-align: center;
 }
 
 [data-tone="warn"] {
-  --edge-tone: var(--color-amber-500, #f59e0b);
+  --edge-tone: var(--warning);
 }
 
 [data-tone="bad"] {
-  --edge-tone: var(--destructive, #dc2626);
+  --edge-tone: var(--destructive);
 }
 
 .edge-widget-value[data-tone="warn"] strong,
@@ -844,13 +844,13 @@ a.edge-row-main:hover strong {
 
 .edge-gauge-value {
   fill: var(--text);
-  font-size: 16px;
+  font-size: var(--text-lg);
   font-weight: 600;
 }
 
 .edge-gauge-unit {
   fill: var(--muted-foreground);
-  font-size: 9px;
+  font-size: var(--text-xs);
 }
 
 .edge-level {
@@ -896,7 +896,7 @@ a.edge-row-main:hover strong {
 }
 
 .edge-state[data-on="true"] .edge-state-lamp {
-  background: var(--color-emerald-500, #10b981);
+  background: var(--success);
 }
 
 .edge-symbol-box {
@@ -908,7 +908,7 @@ a.edge-row-main:hover strong {
 
 .edge-symbol-box small {
   color: var(--muted-foreground);
-  font-size: 0.6875rem;
+  font-size: var(--text-xs);
 }
 
 .edge-symbol {
@@ -925,13 +925,13 @@ a.edge-row-main:hover strong {
 .edge-symbol text {
   fill: currentColor;
   stroke: none;
-  font-size: 24px;
+  font-size: var(--text-2xl);
   font-weight: 600;
 }
 
 .edge-symbol[data-on="true"] {
-  stroke: var(--color-emerald-500, #10b981);
-  color: var(--color-emerald-500, #10b981);
+  stroke: var(--success);
+  color: var(--success);
 }
 
 .edge-symbol-level {
@@ -978,7 +978,7 @@ a.edge-row-main:hover strong {
   display: flex;
   align-items: center;
   gap: 0.375rem;
-  font-size: 0.8125rem;
+  font-size: var(--text-sm);
 }
 
 .edge-add {
@@ -990,7 +990,7 @@ a.edge-row-main:hover strong {
 }
 
 .edge-shared h1 {
-  font-size: 1.25rem;
+  font-size: var(--text-xl);
   font-weight: 600;
 }
 
@@ -1015,7 +1015,7 @@ a.edge-row-main:hover strong {
   gap: 0.5rem;
   padding-left: 0.75rem;
   border-left: 2px solid var(--border);
-  font-size: 0.8125rem;
+  font-size: var(--text-sm);
 }
 
 .edge-fields {
@@ -1092,7 +1092,7 @@ a.edge-row-main:hover strong {
 }
 
 .edge-portal h1 {
-  font-size: 1.375rem;
+  font-size: var(--text-xl);
   font-weight: 600;
 }
 
