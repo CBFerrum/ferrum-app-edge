@@ -4,13 +4,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useParams } from "react-router";
 import { refusal, relativeTime, t, isolate } from "@ferrum/client";
-import { Badge, Button, Dialog, ErrorState, Field, PageLoading, toast, useShellTitle, placed } from "@ferrum/kit";
+import { Badge, Button, Dialog, Field, PageLoading, toast, useShellTitle, placed } from "@ferrum/kit";
+import { FailedState } from "./states";
+import { severityTone } from "./severity";
 import { can, useEntityMeta, useMe } from "@ferrum/records";
 import { Acknowledge } from "./Alarms";
 import { alarmAssign, alarmClear, alarmDetail, alarmNote, alarmShelve } from "./data";
 import { Tabs } from "./Tabs";
 
-const severityTone = (s: string) => (s === "Critical" || s === "Major" ? "red" : s === "Warning" || s === "Minor" ? "amber" : "blue");
 const SHELVES: [string, number][] = [
   ["1 hour", 60],
   ["8 hours", 480],
@@ -74,7 +75,7 @@ export function AlarmPage() {
   const take = useMutation({ mutationFn: (user: string | null) => alarmAssign(id, user), onSuccess: done, onError: failed });
   const shelve = useMutation({ mutationFn: (minutes: number) => alarmShelve(id, minutes), onSuccess: done, onError: failed });
   if (q.isPending) return <PageLoading />;
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  if (q.isError) return <FailedState error={q.error} onRetry={() => void q.refetch()} />;
   const a = q.data;
   const open = a.status !== "Cleared";
   const shelved = a.shelved_until && Date.parse(a.shelved_until) > Date.now();

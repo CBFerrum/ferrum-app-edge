@@ -4,7 +4,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { refusal, t, isolate } from "@ferrum/client";
-import { Alert, Button, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
+import { Alert, Button, EmptyState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
+import { FailedState } from "./states";
 import { can, useEntityMeta } from "@ferrum/records";
 import { exportSolution, installBundle, installSolution, type Installed, solutions } from "./data";
 import { Tabs } from "./Tabs";
@@ -70,7 +71,7 @@ export function Solutions() {
       {q.isPending ? (
         <PageLoading />
       ) : q.isError ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} />
+        <FailedState error={q.error} onRetry={() => void q.refetch()} />
       ) : q.data.solutions.length === 0 ? (
         <EmptyState title={t("No solutions")} icon="dashboard" />
       ) : (

@@ -5,7 +5,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 import { api, errorMessage, t, isolate } from "@ferrum/client";
-import { Badge, Button, EmptyState, ErrorState, PageLoading, toast, useShellTitle } from "@ferrum/kit";
+import { Badge, Button, EmptyState, PageLoading, toast, useShellTitle } from "@ferrum/kit";
+import { FailedState } from "./states";
+import { severityTone } from "./severity";
 import { Grid } from "./Boards";
 import { portalBase } from "./data";
 import { History } from "./History";
@@ -32,13 +34,12 @@ interface Laid {
 }
 
 const when = (s?: string | null) => (s ? new Date(s).toLocaleString() : t("Not heard from"));
-const tone = (severity: string) => (severity === "Critical" || severity === "Major" ? "red" : "amber");
 
 export function PortalDevices() {
   useShellTitle(t("Your devices"));
   const q = useQuery({ queryKey: ["edge", "portal"], queryFn: () => api.get<Mine>(`${portalBase}/devices`), refetchInterval: SLOW_POLL_MS });
   if (q.isPending) return <PageLoading />;
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  if (q.isError) return <FailedState error={q.error} onRetry={() => void q.refetch()} />;
   const { customers, devices, dashboards } = q.data;
   if (customers.length === 0) return (
       <EmptyState title={t("Nothing here yet")} icon="factory">
@@ -109,7 +110,7 @@ export function PortalDevice() {
   });
   useShellTitle(q.data?.device.name ?? t("Device"));
   if (q.isPending) return <PageLoading />;
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  if (q.isError) return <FailedState error={q.error} onRetry={() => void q.refetch()} />;
   const { device, latest, alarms } = q.data;
   return (
     <div className="stack">
@@ -149,7 +150,7 @@ export function PortalDevice() {
                   <tr key={a.id}>
                     <th scope="row">{isolate(a.summary)}</th>
                     <td>
-                      <Badge tone={a.status === "Cleared" ? undefined : tone(a.severity)}>{a.status === "Cleared" ? t("Cleared") : a.severity}</Badge>
+                      <Badge tone={a.status === "Cleared" ? undefined : severityTone(a.severity)}>{a.status === "Cleared" ? t("Cleared") : a.severity}</Badge>
                     </td>
                     <td className="muted">{isolate(when(a.raised_at))}</td>
                     <td>
@@ -177,7 +178,7 @@ export function PortalBoard() {
   const q = useQuery({ queryKey: ["edge", "portal", "board", id], queryFn: () => api.get<Laid>(`${portalBase}/dashboards/${id}`), refetchInterval: SLOW_POLL_MS });
   useShellTitle(q.data?.name ?? t("Dashboard"));
   if (q.isPending) return <PageLoading />;
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  if (q.isError) return <FailedState error={q.error} onRetry={() => void q.refetch()} />;
   return (
     <div className="stack">
       <p>
