@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2
+
+The interface follows the upgraded design system, rebuilt with Ferrum-Frontend 0a47157. Text uses the kit's type roles (nothing under 12px) and controls its height tokens; loading shows skeletons shaped like what is coming; empty, no matches, denied, offline and failed are told apart; status colours come from stored state ids. The interface check now runs the UI lint against an empty baseline. An alarm's severity has one colour on every screen (Critical and Major red, Minor and Warning amber, Info blue), and a severity the interface does not know is amber, never calm.
+
 ## 0.6.1
 
 *Add what is known* takes `fresh`: what a device saw longer ago than that, or at no known time, is left out, so a site that lost its link does not take what it last heard for what is so now (Ferrum's Logic Platform, FLC-EDGE-008). Tests now show that no step moves equipment or reads a clock (a formula's only functions are exact arithmetic, the server's own), and that a site short of disk keeps no plain sample and takes waiting work up once it has room (FLC-EDGE-011, -012).
