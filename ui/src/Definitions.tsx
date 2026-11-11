@@ -5,7 +5,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { refusal, t as tr, isolate } from "@ferrum/client";
-import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
+import { Alert, Badge, Button, Dialog, EmptyState, Field, PageLoading, toast, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
+import { FailedState } from "./states";
 import { can, useEntityMeta } from "@ferrum/records";
 import { definitionDoc, definitionList, newDefinition, publishDefinition, saveDefinition, type Template, templates, tryDefinition, type Tried } from "./data";
 import { Tabs } from "./Tabs";
@@ -47,7 +48,7 @@ function Start({ onClose }: { onClose: () => void }) {
         {list.isPending ? (
           <PageLoading />
         ) : list.isError ? (
-          <ErrorState error={list.error} />
+          <FailedState error={list.error} />
         ) : (
           <div className="edge-templates">
             {groups.map(([group, items]) => (
@@ -98,7 +99,7 @@ export function Definitions() {
       {q.isPending ? (
         <PageLoading />
       ) : q.isError ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} />
+        <FailedState error={q.error} onRetry={() => void q.refetch()} />
       ) : q.data.rows.length === 0 ? (
         <EmptyState title={tr("No definitions yet")} icon="doc">
           <p className="muted">{tr("A definition says how a kind of device is reached, read and commanded, in a few lines.")}</p>
@@ -184,7 +185,7 @@ export function DefinitionPage() {
     onError: (e) => toast(refusal(e), "error"),
   });
   if (q.isPending) return <PageLoading />;
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  if (q.isError) return <FailedState error={q.error} onRetry={() => void q.refetch()} />;
   return (
     <div className="edge-page">
       <Tabs />

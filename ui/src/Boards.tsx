@@ -4,7 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { bootstrap, refusal, t, isolate } from "@ferrum/client";
-import { Alert, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
+import { Alert, Button, Dialog, EmptyState, Field, PageLoading, toast, useShellTitle, useUnsavedGuard } from "@ferrum/kit";
+import { FailedState } from "./states";
 import { can, useEntityMeta } from "@ferrum/records";
 import { type Board, COLUMNS, added, kindOf, KINDS, moved, type Param, parse, resized, symbols, type Variable, type Widget } from "./layout";
 import { SLOW_POLL_MS } from "./live";
@@ -71,7 +72,7 @@ export function Boards() {
       {q.isPending ? (
         <PageLoading />
       ) : q.isError ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} />
+        <FailedState error={q.error} onRetry={() => void q.refetch()} />
       ) : q.data.rows.length === 0 ? (
         <EmptyState title={t("No dashboards yet")} icon="chart">
           <p className="muted">{t("Values, gauges, charts, alarms and equipment on one page, for a screen on the wall or a link for someone with no account.")}</p>
@@ -414,7 +415,7 @@ export function BoardPage() {
     onError: (e) => toast(refusal(e), "error"),
   });
   if (q.isPending) return <PageLoading />;
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  if (q.isError) return <FailedState error={q.error} onRetry={() => void q.refetch()} />;
   const widgets = (change: (w: Widget[]) => Widget[]) => setDraft({ ...board, widgets: change(board.widgets) });
   return (
     <div className="edge-page">
