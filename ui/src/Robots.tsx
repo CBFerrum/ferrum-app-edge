@@ -6,7 +6,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { relativeTime, t, isolate } from "@ferrum/client";
-import { Badge, EmptyState, ErrorState, PageLoading, statusTone, useShellTitle } from "@ferrum/kit";
+import { Badge, EmptyState, PageLoading, StatusBadge, useShellTitle } from "@ferrum/kit";
+import { FailedState } from "./states";
 import { type Robot, robots } from "./data";
 import { type Bounds, fit, grown, type Placed, placed } from "./map";
 import { Tabs } from "./Tabs";
@@ -36,6 +37,9 @@ function FleetMap({ list, chosen, choose }: { list: Placed[]; chosen: string | n
   );
 }
 
+// A robot's last equipment state (Operations' op_equipment_event) or, with none, its device lifecycle: stored ids.
+const ROBOT = { Running: "blue", Idle: "neutral", Stopped: "amber", Maintenance: "amber", Unknown: "neutral", Imported: "neutral", Claimed: "neutral", Provisioned: "neutral", Commissioned: "blue", Active: "green", Quarantined: "red", Retired: "neutral" } as const;
+
 function Row({ r, on }: { r: Robot; on: boolean }) {
   const battery = r.metrics["battery.percent"]?.value;
   const when = Object.values(r.metrics)[0]?.at;
@@ -51,7 +55,7 @@ function Row({ r, on }: { r: Robot; on: boolean }) {
       </Link>
       {battery !== undefined ? <Badge tone={battery < 20 ? "red" : "neutral"}>{Math.round(battery)}%</Badge> : null}
       {r.running ? <Badge tone="blue">{t("Working")}</Badge> : null}
-      <Badge tone={statusTone(r.state ?? r.lifecycle)}>{r.state ?? r.lifecycle}</Badge>
+      <StatusBadge value={r.state ?? r.lifecycle} tones={ROBOT} />
     </li>
   );
 }
@@ -68,7 +72,7 @@ export function Robots() {
       {q.isPending ? (
         <PageLoading />
       ) : q.isError ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} />
+        <FailedState error={q.error} onRetry={() => void q.refetch()} />
       ) : list.length === 0 ? (
         <EmptyState title={t("No robots yet")} icon="dashboard">
           <Link to="/e/Device/new">{t("Add a device of kind Robot")}</Link>

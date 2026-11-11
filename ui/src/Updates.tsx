@@ -5,10 +5,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 import { refusal, relativeTime, t, isolate } from "@ferrum/client";
-import { Alert, Badge, Button, EmptyState, ErrorState, PageLoading, statusTone, toast, useShellTitle } from "@ferrum/kit";
+import { Alert, Button, EmptyState, PageLoading, StatusBadge, toast, useShellTitle } from "@ferrum/kit";
+import { FailedState } from "./states";
 import { can, useEntityMeta } from "@ferrum/records";
 import { type RolloutDoc, rolloutAction, rolloutList, rolloutProgress } from "./data";
 import { Tabs } from "./Tabs";
+
+// EdgeRollout.status, and what happened to one device (edge_rollout_device.status): stored ids.
+const ROLLOUT = { Draft: "neutral", Running: "blue", Paused: "amber", Done: "green" } as const;
+const SENT = { Sent: "blue", Done: "green", Failed: "red" } as const;
 
 function Progress({ id }: { id: string }) {
   const q = useQuery({ queryKey: ["edge", "rollout", id], queryFn: () => rolloutProgress(id), refetchInterval: 15_000 });
@@ -30,7 +35,7 @@ function Progress({ id }: { id: string }) {
             <tr key={d.code}>
               <td>{isolate(d.code)}</td>
               <td>
-                <Badge tone={statusTone(d.status)}>{isolate(d.status)}</Badge> {isolate(d.error ?? "")}
+                <StatusBadge value={d.status} tones={SENT} /> {isolate(d.error ?? "")}
               </td>
               <td>{isolate(relativeTime(d.at))}</td>
             </tr>
@@ -56,7 +61,7 @@ function Row({ r, writable }: { r: RolloutDoc; writable: boolean }) {
           <strong>{isolate(r.rollout_name)}</strong>
           <div className="faint">{r._titles?.firmware ?? r.firmware}</div>
         </Link>
-        <Badge tone={statusTone(r.status)}>{isolate(r.status)}</Badge>
+        <StatusBadge value={r.status} tones={ROLLOUT} />
         <Button size="sm" aria-expanded={open} onClick={() => setOpen(!open)}>
           {open ? t("Hide") : t("How it stands")}
         </Button>
@@ -101,7 +106,7 @@ export function Updates() {
       {q.isPending ? (
         <PageLoading />
       ) : q.isError ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} />
+        <FailedState error={q.error} onRetry={() => void q.refetch()} />
       ) : rows.length === 0 ? (
         <EmptyState title={t("No rollouts yet")} icon="dashboard" />
       ) : (

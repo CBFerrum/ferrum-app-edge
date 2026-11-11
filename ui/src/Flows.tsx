@@ -4,7 +4,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { refusal, t, isolate } from "@ferrum/client";
-import { Badge, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
+import { Badge, Button, Dialog, EmptyState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
+import { FailedState } from "./states";
 import { can, useEntityMeta } from "@ferrum/records";
 import { type FlowDoc, flowList, newFlow } from "./data";
 import { arrange, type Flow, parseFlow, STARTS } from "./drawing";
@@ -111,7 +112,7 @@ export function Flows() {
       {q.isPending ? (
         <PageLoading />
       ) : q.isError ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} />
+        <FailedState error={q.error} onRetry={() => void q.refetch()} />
       ) : q.data.rows.length === 0 ? (
         <EmptyState title={t("No flows yet")} icon="timeline">
           <p className="muted">{t("A flow is logic you draw, which runs at the gateway with or without the link. It is simulated and reviewed before it runs, and the strongest thing it can do is ask for a command.")}</p>

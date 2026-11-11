@@ -7,7 +7,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type KeyboardEvent, type PointerEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { formatMoment, refusal, relativeTime, t as tr, isolate } from "@ferrum/client";
-import { Alert, Button, confirmDialog, Dialog, ErrorState, Field, PageLoading, toast, useDebounced, useShellTitle, useUnsavedGuard, placed } from "@ferrum/kit";
+import { Alert, Button, confirmDialog, Dialog, Field, PageLoading, toast, useDebounced, useShellTitle, useUnsavedGuard, placed } from "@ferrum/kit";
+import { FailedState } from "./states";
 import { can, LinkInput, useEntityMeta, useMe } from "@ferrum/records";
 import { flowAction, type FlowDoc, flowDoc, flowTraces, flowVersions, type Moment, saveFlow, type Simulated, simulateFlow, type Traced, tryFlow } from "./data";
 import {
@@ -607,7 +608,7 @@ export function FlowEditor() {
     }
   };
   if (q.isPending) return <PageLoading />;
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  if (q.isError) return <FailedState error={q.error} onRetry={() => void q.refetch()} />;
   const d = doc!;
   const problem = check.data && !check.data.ok ? check.data.error : null;
   return (

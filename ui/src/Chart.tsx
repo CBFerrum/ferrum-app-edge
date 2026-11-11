@@ -5,7 +5,8 @@ import { type PointerEvent, useEffect, useRef, useState } from "react";
 import { formatMoment, t as tr, isolate } from "@ferrum/client";
 import { extent, type Line, linePath, nearest, timeLabel, timeTicks, valueTicks } from "./plotting";
 
-export const COLORS = ["var(--color-blue-600, #2563eb)", "var(--color-amber-600, #d97706)", "var(--color-emerald-600, #059669)", "var(--color-rose-600, #e11d48)", "var(--color-violet-600, #7c3aed)", "var(--color-cyan-600, #0891b2)", "var(--color-lime-600, #65a30d)", "var(--color-fuchsia-600, #c026d3)"];
+// The kit's series tokens, so that lines keep their order and pass 3:1 on the card in light and dark.
+export const COLORS = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => `var(--chart-${n})`);
 
 const number = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 3 });
 
@@ -23,7 +24,7 @@ interface Props {
   fill?: boolean;
 }
 
-const MARGIN = { top: 12, right: 16, bottom: 26, left: 56 };
+const MARGIN = { top: 12, right: 16, bottom: 26, left: 64 };
 
 export function Chart({ lines, from, to, gap, height: fixed = 260, marks = [], label, fill }: Props) {
   const box = useRef<SVGSVGElement>(null);
