@@ -385,6 +385,7 @@ CHANGELOG.md  what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.6.3** | Rebuilt on the tuned design system: better menu icons, a lighter first page, a visible scroll cue, cleaner print. |
 | **0.6.2** | The redesigned interface: the upgraded design system, shaped loading, told-apart states. |
 | **0.6.1** | What a flow looks up may declare its age (`fresh`); tests show no step moves equipment or reads a clock, and that a site short of disk keeps only alarms of its readings and takes its work up again given room. |
 | **0.6.0** | Business-critical flows: each reading with when it was seen and how far it is trusted, decisions written with what was done in one transaction, and episodes that become one case each. |
