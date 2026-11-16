@@ -1,20 +1,16 @@
 // IoT Edge's own interface at /edge/ (Ferrum docs/plan/edge.md): gateways and what they reach, devices,
 // alarms, robots, definitions and flows, with the rest in the records frame's lists and forms.
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { StrictMode, useEffect } from "react";
-import { createRoot } from "react-dom/client";
-import { createBrowserRouter, Link, Outlet, RouterProvider, useRouteError } from "react-router";
-import { bootstrap, routeBase, shell, t, wordsReady } from "@ferrum/client";
-import { ConfirmHost, EmptyState, Toaster } from "@ferrum/kit";
+import { useEffect } from "react";
+import { Link, Outlet, useRouteError } from "react-router";
+import { bootstrap, shell, t } from "@ferrum/client";
+import { EmptyState } from "@ferrum/kit";
 import { FailedState } from "./states";
-import { RequireAuth, setFrameMode } from "@ferrum/records/frame";
+import { mountApp, RequireAuth, setFrameMode } from "@ferrum/records/frame";
 import { useFreshReadings } from "./live";
 import "./styles.css";
 
-const page = (name: "FormView" | "ListView" | "ReportView" | "AppSettingsPage" | "ScreenPage") => () => import("./records").then((m) => ({ Component: m[name] }));
-
-const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false, staleTime: 5_000 } } });
+const page = (name: "FormView" | "ListView" | "ReportView") => () => import("./records").then((m) => ({ Component: m[name] }));
 
 function RouteError() {
   return <FailedState error={useRouteError()} onRetry={() => window.location.reload()} />;
@@ -63,8 +59,9 @@ const portalRoutes = [
   },
 ];
 
-const router = createBrowserRouter(
-  onPortal ? portalRoutes : [
+mountApp({
+  route: onPortal ? PORTAL : "edge",
+  routes: onPortal ? portalRoutes : [
     {
       path: "/",
       element: (
@@ -93,24 +90,8 @@ const router = createBrowserRouter(
         { path: "e/:entity", lazy: page("ListView") },
         { path: "e/:entity/:id", lazy: page("FormView") },
         { path: "r/:name", lazy: page("ReportView") },
-        { path: "apps/:app/settings", lazy: page("AppSettingsPage") },
-        { path: "x/:app/:page", lazy: page("ScreenPage") },
         { path: "*", element: <NotFound /> },
       ],
     },
   ],
-  { basename: routeBase(onPortal ? PORTAL : "edge") },
-);
-
-// Drawn once the page's words are in (its language's catalogs, fetched as the page starts).
-void wordsReady().then(() =>
-  createRoot(document.getElementById("root")!).render(
-    <StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
-        <Toaster />
-        <ConfirmHost />
-      </QueryClientProvider>
-    </StrictMode>,
-  ),
-);
+});
