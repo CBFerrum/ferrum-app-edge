@@ -1097,9 +1097,9 @@ impl Runtime {
     /// One exchange. Everything sent stays in the journal until the answer says it arrived.
     /// Says whether there is more to send than one exchange carries.
     pub async fn exchange(&self) -> Result<bool, LinkError> {
-        let reports = self.journal.reports(500).unwrap_or_default();
-        let facts = self.journal.facts(500).unwrap_or_default();
-        let (measurements, upto) = self.journal.samples(MEASUREMENTS_AT_ONCE).unwrap_or_default();
+        let reports = self.journal.reports(500).inspect_err(|e| tracing::warn!("reports not read: {e}")).unwrap_or_default();
+        let facts = self.journal.facts(500).inspect_err(|e| tracing::warn!("facts not read: {e}")).unwrap_or_default();
+        let (measurements, upto) = self.journal.samples(MEASUREMENTS_AT_ONCE).inspect_err(|e| tracing::warn!("measurements not read: {e}")).unwrap_or_default();
         let full = measurements.len() as i64 >= MEASUREMENTS_AT_ONCE;
         let held = self.journal.unconfirmed(500).unwrap_or_default();
         let counts = self.journal.counts().unwrap_or_default();
