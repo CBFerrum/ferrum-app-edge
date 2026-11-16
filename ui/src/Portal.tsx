@@ -4,7 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
-import { api, errorMessage, t, isolate } from "@ferrum/client";
+import { api, errorMessage, formatDateTime, t, isolate } from "@ferrum/client";
 import { Badge, Button, EmptyState, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { FailedState } from "./states";
 import { severityTone } from "./severity";
@@ -33,7 +33,8 @@ interface Laid {
   data: Record<string, Result>;
 }
 
-const when = (s?: string | null) => (s ? new Date(s).toLocaleString() : t("Not heard from"));
+/** When a device was last heard from, or something happened to it, on the workspace's clock. */
+export const when = (s?: string | null) => (s ? formatDateTime(s) : t("Not heard from"));
 
 export function PortalDevices() {
   useShellTitle(t("Your devices"));

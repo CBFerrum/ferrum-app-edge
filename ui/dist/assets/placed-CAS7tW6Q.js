@@ -1,0 +1,1 @@
+import{j as n,r as e}from"./styles-CQVnJhJ9.js";function a(s,o){const r=[];let i=0;for(const t of s.matchAll(/\{(\w+)\}/g))t[1]in o&&(r.push(s.slice(i,t.index)),r.push(n.jsx(e.Fragment,{children:o[t[1]]},`${t[1]}-${t.index}`)),i=(t.index??0)+t[0].length);return r.push(s.slice(i)),n.jsx(n.Fragment,{children:r})}export{a as p};
