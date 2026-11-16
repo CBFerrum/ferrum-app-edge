@@ -9,6 +9,7 @@ use ferrum_ops_contract::sync::{Fact, Operator, SiteDevice};
 use ferrum_ops_contract::telemetry::{Class, Measurement};
 use ferrum_ops_contract::{Command, State, Step};
 use rusqlite::{Connection, OptionalExtension, params};
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -49,7 +50,8 @@ create index if not exists command_state on command (state);
 create table if not exists report (seq integer primary key, id text not null unique, command text not null, body text not null);
 create index if not exists report_command on report (command);
 create table if not exists fact (seq integer primary key, id text not null unique, body text not null);
-create table if not exists sample (seq integer primary key, class integer not null, bytes integer not null, body text not null);
+-- Never the same seq twice: an exchange deletes up to the last it read, and what was written since must be above that.
+create table if not exists sample (seq integer primary key autoincrement, class integer not null, bytes integer not null, body text not null);
 create index if not exists sample_shed on sample (class, seq);
 create table if not exists device (id text primary key, code text not null, body text not null);
 create table if not exists operator (user text primary key, body text not null);
@@ -111,6 +113,19 @@ fn decode(row: Row) -> Result<Entry> {
     let state = State::parse(&state).ok_or_else(|| Error::Damaged(format!("a command in state {state}")))?;
     let binding = binding.and_then(|b| serde_json::from_str(&b).ok());
     Ok(Entry { command: serde_json::from_str(&body)?, state, external, intent_at, answered_at, cancel_requested: cancel != 0, held_reason, binding })
+}
+
+/// What is waiting to go up, each row on its own: one that does not read back is left out, and said so,
+/// so that it holds up nothing else.
+// ponytail: a report or fact that does not read stays (neither is ever thrown away here) and is said again at
+// each exchange; 500 of them at the front would fill a batch. Move them aside if that is ever seen.
+fn readable<T: DeserializeOwned>(what: &str, bodies: impl IntoIterator<Item = String>) -> Vec<T> {
+    let mut bad = Vec::new();
+    let read = bodies.into_iter().filter_map(|b| serde_json::from_str::<T>(&b).map_err(|e| bad.push(e)).ok()).collect();
+    if let Some(e) = bad.first() {
+        tracing::warn!("{} {what} in the journal do not read back, and are not sent: {e}", bad.len());
+    }
+    read
 }
 
 impl Journal {
@@ -384,7 +399,7 @@ impl Journal {
         let db = self.db();
         let mut q = db.prepare("select body from report order by seq limit ?1")?;
         let rows = q.query_map([limit], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows.iter().map(|b| serde_json::from_str(b)).collect::<serde_json::Result<_>>()?)
+        Ok(readable("reports", rows))
     }
 
     pub fn reports_gone(&self, ids: &[Uuid]) -> Result<()> {
@@ -444,7 +459,7 @@ impl Journal {
         let db = self.db();
         let mut q = db.prepare("select body from fact order by seq limit ?1")?;
         let rows = q.query_map([limit], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows.iter().map(|b| serde_json::from_str(b)).collect::<serde_json::Result<_>>()?)
+        Ok(readable("facts", rows))
     }
 
     pub fn facts_gone(&self, ids: &[Uuid]) -> Result<()> {
@@ -468,13 +483,14 @@ impl Journal {
         Ok(())
     }
 
-    /// The oldest measurements, with the last sequence taken, to delete once the platform has them.
+    /// The oldest measurements, with the last sequence taken, to delete once the platform has them. One
+    /// that does not read back is not sent, and goes with them.
     pub fn samples(&self, limit: i64) -> Result<(Vec<Measurement>, i64)> {
         let db = self.db();
         let mut q = db.prepare("select seq, body from sample order by seq limit ?1")?;
         let rows = q.query_map([limit], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
         let last = rows.last().map(|r| r.0).unwrap_or(0);
-        Ok((rows.iter().map(|(_, b)| serde_json::from_str(b)).collect::<serde_json::Result<_>>()?, last))
+        Ok((readable("measurements", rows.into_iter().map(|(_, b)| b)), last))
     }
 
     pub fn samples_gone(&self, upto: i64) -> Result<()> {
@@ -822,6 +838,38 @@ mod tests {
         assert_eq!(left.iter().map(|m| m.seq).collect::<Vec<_>>(), vec![1, 3]);
         assert_eq!(j.shed(0).unwrap(), 2, "with nothing else left, alarms go too");
         assert_eq!(j.counts().unwrap().shed, 4, "and every one is counted");
+    }
+
+    #[test]
+    fn a_reading_kept_while_a_batch_is_out_does_not_go_with_it() {
+        let (j, _dir) = journal();
+        j.add_samples(&[sample(1, Class::Alarm)]).unwrap();
+        let alarm = j.sample_bytes().unwrap();
+        j.add_samples(&[sample(2, Class::Sample), sample(3, Class::Sample)]).unwrap();
+        let (_, upto) = j.samples(10).unwrap();
+        // While that batch is out, the budget sheds the newest rows, plain samples, and then an alarm is kept.
+        assert_eq!(j.shed(alarm).unwrap(), 2);
+        j.add_samples(&[sample(4, Class::Alarm)]).unwrap();
+        j.samples_gone(upto).unwrap();
+        let (left, _) = j.samples(10).unwrap();
+        assert_eq!(left.iter().map(|m| m.seq).collect::<Vec<_>>(), vec![4], "the platform never had it");
+    }
+
+    #[test]
+    fn a_row_that_does_not_read_back_holds_up_nothing_else() {
+        let (j, _dir) = journal();
+        // A value that is not a number is written as null, which does not read back as a number.
+        j.add_samples(&[Measurement { value: f64::NAN, ..sample(1, Class::Alarm) }, sample(2, Class::Sample)]).unwrap();
+        let (read, upto) = j.samples(10).unwrap();
+        assert_eq!(read.iter().map(|m| m.seq).collect::<Vec<_>>(), vec![2], "the reading beside it still goes");
+        j.samples_gone(upto).unwrap();
+        assert_eq!(j.sample_bytes().unwrap(), 0, "and the one that cannot goes with it");
+        j.db().execute_batch("insert into report (id, command, body) values ('r', 'c', '{}'); insert into fact (id, body) values ('f', '{}');").unwrap();
+        let c = command();
+        j.receive(&c, 1).unwrap();
+        j.establish(&report(&c, State::Accepted), None).unwrap();
+        j.add_fact(&Fact { fact_id: Uuid::now_v7(), kind: "x".into(), at_source: Utc::now(), actor: None, body: Value::Null }).unwrap();
+        assert_eq!((j.reports(10).unwrap().len(), j.facts(10).unwrap().len()), (1, 1), "nor does a report or a fact");
     }
 
     #[test]

@@ -8,7 +8,7 @@
 <br>
 
 [![CI](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.6.3-0369a1?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.4-0369a1?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server%20and%20gateway-b7410e?style=flat-square&logo=rust)
@@ -44,7 +44,7 @@ Ferrum coordinates equipment and does not control it. Motion, machine sequencing
 
 | | |
 |---|---|
-| 📦 Version | `0.6.3` (the app). The gateway `ferrum-site` is built from this repository's workspace, version `0.4.0` in `Cargo.toml` |
+| 📦 Version | `0.6.4` (the app). The gateway `ferrum-site` is built from this repository's workspace, version `0.4.0` in `Cargo.toml` |
 | 🧱 Kind | Own interface at `/edge/`, plus a gateway you install on location |
 | 🗃️ What it adds | 19 entities (16 records and 3 child tables) in the `edge` package, plus fields on Ops devices |
 | 👥 Roles | 3: Edge Viewer, Edge Engineer, Edge Reviewer |
@@ -410,6 +410,7 @@ Notes: 🟡 for Ferrum means partly or by an external driver (machine learning r
 
 ### ✅ Recently shipped
 
+- [x] **0.6.4** Store-and-forward: a reading kept while an exchange is out is never deleted with it, and a row that does not read back holds up nothing else.
 - [x] **0.6.3** Rebuilt on the tuned design system: better menu icons, a lighter first page, a visible scroll cue, cleaner print.
 - [x] **0.6.2** The redesigned interface: shaped loading, told-apart states, one severity colour on every screen.
 - [x] **0.6.1** *Add what is known* takes `fresh`, so a site that lost its link does not take old readings for current ones; tests show no step moves equipment or reads a clock.

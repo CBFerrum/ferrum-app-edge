@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.4
+
+Store-and-forward at the gateway. A reading kept while an exchange was out could be deleted with what that exchange took, unsent: its sequence was a plain row id, which SQLite hands out again once the newest rows are shed over the telemetry budget (plain samples go first, so an older backlog of alarms or states was enough), and an exchange deletes everything up to the last it took. A sequence is now never handed out twice. A row that does not read back no longer stops everything behind it: a reading that was not a number (an MQTT payload of `nan` is one) is written as null, and while it was among the oldest the gateway sent no reading at all, and said nothing. Readings, reports and facts are now read each on its own; one that does not read is left out and logged, and a reading like that goes with its batch. A read of the journal that fails is logged, where it was taken for there being nothing to send.
+
 ## 0.6.3
 
 Rebuilt with Ferrum-Frontend 9e7190c, the design system as tuned after the landed build was reviewed. The left menu's icons are chosen so that none repeats on more than three rows and each fits its row; their drawings load beside the first page instead of inside it, so the page starts lighter; a row that scrolls sideways fades at the edge where there is more, in every browser and with reduced motion; a printed record leaves out empty fields and keeps its totals with the table; menus and popovers sit inside the page's landmarks for assistive technology; a selection bar folds what does not fit into More on a narrow screen. Nothing else changes.
