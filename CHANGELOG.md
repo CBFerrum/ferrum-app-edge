@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.6
+
+Needs the same platform as 0.6.5. Interface unchanged. Database change: the package's SQL is one file, `001_edge.sql`
+(the alarm notes and notices, flow traces, states and versions, rollout devices, charging sessions and readings, and
+condition evidence, and the `received_at` columns of events and attributes, are made where they belong; no more
+`002_alarms.sql` to `005_conditions.sql`). No installation was ever made from them: a development database that applied
+the old files needs resetting. The lock file follows today's platform, ERP and Comms; the suites of the whole workspace
+pass on it.
+
 ## 0.6.5
 
 Needs the same platform as 0.6.4. No database change. Interface only, `ui/dist` rebuilt with Ferrum-Frontend `06bd1a2`.
