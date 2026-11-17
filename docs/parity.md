@@ -1,13 +1,12 @@
 # IoT Edge against the reference products
 
-What each product does, read from the copies in `referance/` for what they do and not how, and where
-IoT Edge stands, capability by capability. **Nothing here has run on physical equipment**, and no
+What each product does, and where IoT Edge stands, capability by capability. **Nothing here has run on physical equipment**, and no
 entry is a vendor qualification or a safety certification. [compatibility.md](compatibility.md) has
 the detail of what each thing was tried against.
 
 | Status | Means |
 |---|---|
-| **Verified** | Built, and it met software we did not write: a broker, a library, a stack, in CI or by hand |
+| **Verified** | Built, and it met software we did not write: a broker, a library, a stack. The note says which test did it, or says "by hand", meaning no test in this repository repeats it. A test that needs such software runs only when it is provided: without it the test prints "skipped" and passes. CI provides what `.github/workflows/ci.yml` lists, and a plain `cargo test` provides none of it |
 | **Built** | Built and tested here, against a stand-in we wrote from the specification |
 | **Partly** | Built in part, and the row says what is missing |
 | **By design** | Left out on purpose, and the row says why |
@@ -19,44 +18,44 @@ the detail of what each thing was tried against.
 | Capability | Who has it | Status | Notes |
 |---|---|---|---|
 | Device described as data | ThingsBoard profiles, EdgeX, OpenRemote | **Verified** | Definitions, tried on a sample, reviewed, published to gateways |
-| Device API over MQTT 3.1, 3.1.1, 5 | ThingsBoard | **Verified** | ThingsBoard's own topics, against Paho, rumqttc and ThingsBoard's own Python client, unchanged, in CI |
-| Device API over HTTP | ThingsBoard | **Verified** | ThingsBoard's paths, against curl |
-| Device API over CoAP, with Observe and blocks | ThingsBoard | **Verified** | Against aiocoap, and `listen+coaps` over DTLS by pre-shared key. **No certificates over DTLS** |
-| Gateway API for devices behind a device | ThingsBoard | **Verified** | `v1/gateway/*`, against rumqttc and ThingsBoard's own gateway client, unchanged, in CI |
+| Device API over MQTT 3.1, 3.1.1, 5 | ThingsBoard | **Verified** | ThingsBoard's own topics, as the gateway accepts MQTT 3.1, 3.1.1 and 5. `devices_it.rs` uses rumqttc (3.1.1 and 5) and always runs. ThingsBoard's own Python client, unchanged, is used by `tb_it.rs`, which runs only when `FERRUM_TEST_PYTHON` names a Python with it. Paho was used by hand and in `scripts/soak.py`; no test runs it |
+| Device API over HTTP | ThingsBoard | **Verified** | ThingsBoard's paths, in `devices_it.rs` with an HTTP client written in Rust, which always runs. curl, by hand |
+| Device API over CoAP, with Observe and blocks | ThingsBoard | **Verified** | In `devices_it.rs`, with this repository's own CoAP code as the client, which always runs. aiocoap, by hand. `listen+coaps` over DTLS by pre-shared key, with the same library on both ends in `dtls_it.rs`. **No certificates over DTLS** |
+| Gateway API for devices behind a device | ThingsBoard | **Verified** | `v1/gateway/*`, against rumqttc in `devices_it.rs` (always runs) and ThingsBoard's own gateway client, unchanged, in `tb_it.rs` (runs only when `FERRUM_TEST_PYTHON` names a Python with it) |
 | Access tokens, basic MQTT credentials, X.509 | ThingsBoard, Hono | **Verified** | Only hashes reach a gateway |
 | Device provisioning by a shared key | ThingsBoard | **Verified** | It adds a device that reports, and takes no command until commissioned |
 | Claiming by a device's secret | ThingsBoard | **Built** | |
 | Bulk import from CSV, with tokens | ThingsBoard PE, Hono | **Built** | |
-| LwM2M server | ThingsBoard, Hono | **Verified** | Against Eclipse Leshan's client, plain and over DTLS by pre-shared key, whose identity has to be the name it registers under. Reads by plain text and writes as TLV, read back from it. **No bootstrap, no certificates over DTLS** |
-| SNMP v1, v2c and v3, traps and informs | ThingsBoard, EdgeX | **Verified** | Against PySNMP: v3 with SHA-1 and AES, and SHA-256, and traps in all three versions, with a wrong password's dropped. Informs are v1 and v2c |
-| OCPP 1.6-J and 2.0.1 | ThingsBoard Gateway, OpenRemote | **Verified** | 1.6 against the Python `ocpp` library, including a charging profile held to OCPP's own schema; 2.0.1 against frames written here. Security profiles 0 to 3. Smart charging is a command like any other: nothing here works out a schedule |
-| Modbus TCP and RTU | Everyone | **Verified** | TCP against pymodbus, in CI: typed reads, and writes read back. RTU against a pseudo-terminal only |
-| OPC UA client: watch, read, write, call, encryption, users, browse | Ignition, Kura, Azure IoT Operations | **Verified** | Against async-opcua's server |
-| OPC UA events, conditions and history | Ignition | **Verified** | Against asyncua: events with their ids, and a node's history from where this last got to. Against open62541's alarm server, by hand: a condition acknowledged by the ids its event carried, and refused with a wrong one |
-| OPC UA server | Ignition, Kura | **Verified** | As an export, read only, against asyncua's client; with encryption, a login and certificates a person trusts, against async-opcua's. **No history**, and a variable appears with its first reading |
-| Siemens S7 | PLC4X, Ignition, ThingsBoard Gateway | **Verified** | Against python-snap7's server. Its emulation of bit writes differs, so a bit write has only met the standard's description |
-| EtherNet/IP, Logix tags | PLC4X, Ignition | **Verified** | Against cpppo, direct and routed. **No I/O connections, by design** |
-| TwinCAT ADS | PLC4X, Ignition | **Verified** | Against pyads's test server, by symbol |
-| BACnet/IP | ThingsBoard Gateway, OpenRemote | **Verified** | Against BACpypes3, read and write, and `discover` asks who is there with a Who-Is. **No COV**: it polls |
+| LwM2M server | ThingsBoard, Hono | **Verified** | Against Eclipse Leshan's demo client, plain and over DTLS by pre-shared key, whose identity has to be the name it registers under, in `lwm2m_it.rs`, which runs those two tests only when `FERRUM_TEST_LESHAN` names its jar. Reads by plain text and writes as TLV, read back from it. **No bootstrap, no certificates over DTLS** |
+| SNMP v1, v2c and v3, traps and informs | ThingsBoard, EdgeX | **Verified** | By hand against PySNMP: v3 with SHA-1 and AES, and SHA-256, and traps in all three versions, with a wrong password's dropped. Informs are v1 and v2c. No test here talks to PySNMP; the unit tests only build and read messages |
+| OCPP 1.6-J and 2.0.1 | ThingsBoard Gateway, OpenRemote | **Verified** | 1.6 against the Python `ocpp` library in `ocpp_it.rs`, which runs that test only when `FERRUM_TEST_PYTHON` names a Python with it, including a charging profile the library holds to OCPP's own schema; 2.0.1 against frames written here, which always run. Security profiles 0 to 3. Smart charging is a command like any other: nothing here works out a schedule |
+| Modbus TCP and RTU | Everyone | **Verified** | TCP against pymodbus in `protocols_it.rs`, which runs that test only when `FERRUM_TEST_PYTHON` names a Python with it: typed reads, and writes read back. RTU against a pseudo-terminal only |
+| OPC UA client: watch, read, write, call, encryption, users, browse | Ignition, Kura, Azure IoT Operations | **Verified** | Against async-opcua's server, a Rust dependency, in `protocols_it.rs`, which always runs |
+| OPC UA events, conditions and history | Ignition | **Verified** | Against asyncua in `opcua_it.rs`, which runs only when `FERRUM_TEST_PYTHON` names a Python with it: events with their ids, and a node's history from where this last got to. Against open62541's alarm server, by hand: a condition acknowledged by the ids its event carried, and refused with a wrong one |
+| OPC UA server | Ignition, Kura | **Verified** | As an export, read only, against asyncua's client in `opcua_it.rs` (runs only when `FERRUM_TEST_PYTHON` names a Python with it); with encryption, a login and certificates a person trusts, against async-opcua's client in `exports_it.rs` (always runs). **No history**, and a variable appears with its first reading |
+| Siemens S7 | PLC4X, Ignition, ThingsBoard Gateway | **Verified** | By hand against python-snap7's server; no test here runs it, and the unit tests only encode and decode values. Its emulation of bit writes differs, so a bit write has only met the standard's description |
+| EtherNet/IP, Logix tags | PLC4X, Ignition | **Verified** | By hand against cpppo, direct and routed; no test here runs it. **No I/O connections, by design** |
+| TwinCAT ADS | PLC4X, Ignition | **Verified** | By hand against pyads's test server, by symbol; no test here runs it |
+| BACnet/IP | ThingsBoard Gateway, OpenRemote | **Verified** | By hand against BACpypes3, read and write; no test here runs it. `discover` asks who is there with a Who-Is. **No COV**: it polls |
 | KNX over IP | ThingsBoard Gateway, OpenRemote | **Built** | Tunnelling, against a stand-in |
-| IEC 60870-5-104 | Ignition modules | **Verified** | Against lib60870: interrogation, spontaneous data, and a single command it reported receiving. Double and setpoint commands were sent and its example has nothing to say about them |
+| IEC 60870-5-104 | Ignition modules | **Verified** | By hand against lib60870, which no test here runs: interrogation, spontaneous data, and a single command it reported receiving. Double and setpoint commands were sent and its example has nothing to say about them |
 | DLMS/COSEM | Metering head ends, Ignition modules | **Built** | Over the wrapper, by OBIS code, with blocks and low-level security, read only. The requests compare equal to Gurux's client. **No HDLC, no high-level security or ciphering** |
-| DNP3 | Ignition modules | **Verified** | As a master over TCP against opendnp3: integrity, events, unsolicited, select-before-operate. **No Secure Authentication, no TLS, no serial** |
-| M-Bus | OpenRemote, metering | **Verified** | Frames read as pyMeterBus reads them. No meter |
+| DNP3 | Ignition modules | **Verified** | As a master over TCP. By hand against opendnp3: integrity, events, unsolicited, select-before-operate. `dnp3_it.rs`, which always runs, uses an outstation written here. **No Secure Authentication, no TLS, no serial** |
+| M-Bus | OpenRemote, metering | **Verified** | By hand: frames read as pyMeterBus reads them; no test here runs it. No meter |
 | CANopen and raw CAN | ThingsBoard Gateway, Kura | **External** | `drivers/can_bridge.py`, on python-can's virtual bus |
 | Bluetooth Low Energy | ThingsBoard Gateway | **External** | `drivers/ble_bridge.py`. Has met no device |
 | LoRaWAN, Zigbee | ThingsBoard, OpenRemote | **External** | ChirpStack and Zigbee2MQTT over MQTT, with templates |
 | Sigfox, The Things Stack, LORIOT, ThingPark, AWS IoT, Azure Event Hubs | ThingsBoard PE integrations | **Built** | Templates over webhooks, MQTT and Kafka, and `bytes:` decodes a payload inside JSON with no code. None has met the service it names |
 | CoAP client, with Observe and blocks | Hono | **Verified** | Against aiocoap |
-| Sparkplug B primary host | Ignition, HiveMQ | **Built** | STATE, sequence checks, rebirth, births and deaths, over rumqttd. Eclipse Tahu's own definitions read and write the same payloads, in CI. No other host or node has met it |
+| Sparkplug B primary host | Ignition, HiveMQ | **Built** | STATE, sequence checks, rebirth, births and deaths, over rumqttd. Eclipse Tahu's own definitions read and write the same payloads in `sparkplug_it.rs`, which runs only when `FERRUM_TEST_PYTHON` names a Python with them. No other host or node has met it |
 | Sparkplug B edge node | Ignition Edge, Kura | **Built** | As an export, over rumqttd, with the same check of its payloads. **No datasets or templates** |
 | MTConnect | Ignition modules | **Built** | Current and the sample stream, against a stand-in |
-| SQL as a source | ThingsBoard Gateway (ODBC) | **Verified** | PostgreSQL and SQLite, read only. Others, by an external driver |
-| FTP and a watched folder | ThingsBoard Gateway | **Verified** | FTP against pyftpdlib |
-| NATS as a source | Magistrala | **Verified** | Against nats-server |
-| Kafka and AMQP as sources | ThingsBoard PE | **Verified** | Against Apache Kafka and RabbitMQ, in CI. A Kafka reader keeps its place in a file and has no consumer group |
+| SQL as a source | ThingsBoard Gateway (ODBC) | **Verified** | Read only. SQLite is tried in a test here; PostgreSQL by hand. Others, by an external driver |
+| FTP and a watched folder | ThingsBoard Gateway | **Verified** | FTP against pyftpdlib, by hand; no test here runs it |
+| NATS as a source | Magistrala | **Verified** | Against nats-server, by hand; no test here reads from NATS (the export is tested, see below) |
+| Kafka and AMQP as sources | ThingsBoard PE | **Verified** | Against Apache Kafka and RabbitMQ in `exports_it.rs`, which runs those tests only when `FERRUM_TEST_KAFKA` and `FERRUM_TEST_AMQP` name a service. A Kafka reader keeps its place in a file and has no consumer group |
 | HTTP polling, WebSocket, TCP, UDP, serial, webhooks | Everyone | **Built** | Against real sockets |
-| Any other protocol | EdgeX, Kura | **Verified** | External drivers, as JSON lines in any language |
+| Any other protocol | EdgeX, Kura | **Verified** | External drivers, as JSON lines in any language, tried with a shell script |
 | XMPP | ThingsBoard Gateway | **External** | By an external driver. Nothing here has met one |
 | Discovery of devices | EdgeX | **By design** | Strangers on a connection are noticed and a person claims them, and BACnet and OPC UA can be asked what is there. Nothing sweeps a network: on a plant, that alone can stop an old controller |
 
@@ -64,7 +63,8 @@ the detail of what each thing was tried against.
 
 | Capability | Who has it | Status | Notes |
 |---|---|---|---|
-| VDA 5050 2.0, 2.1, 3.0.0 | Master controls | **Built** | Against a stand-in |
+| VDA 5050 2.0 and 2.1 | Master controls | **Built** | The adapter speaks these two and refuses any other version. Against a stand-in broker in `adapters_it.rs` |
+| VDA 5050 3.0.0 | Master controls | **Built** | A template only (`vda5050-3`), written from the specification's JSON schemas and not from a vehicle. The adapter refuses 3.0.0 |
 | Open-RMF, openTCS, rosbridge, MiR, Universal Robots dashboard | Each | **Built** | Templates written from their documents. None has met a running system |
 | ROS 2 over DDS directly | rclcpp, zenoh | **By design** | Through rosbridge: a DDS stack belongs in a vendor-qualified process |
 | Traffic, path planning, collision avoidance, motion | Nav2, RMF, MoveIt, fleet managers | **By design** | Never. They own execution |
@@ -73,11 +73,11 @@ the detail of what each thing was tried against.
 
 | Capability | Who has it | Status | Notes |
 |---|---|---|---|
-| Flow builder on a canvas | Node-RED, ThingsBoard, OpenRemote, StreamPipes, EMQX | **Verified** | 44 kinds of step, on real binaries |
+| Flow builder on a canvas | Node-RED, ThingsBoard, OpenRemote, StreamPipes, EMQX | **Verified** | 49 kinds of step on the canvas, and flows run by the real gateway binary in `recovery_it.rs` |
 | Filter, enrich, transform, delta, geofence, dedupe, split, schedule | ThingsBoard rule nodes | **Built** | |
 | Answer a device | ThingsBoard | **Verified** | A flow answered Paho on real binaries |
 | Rule engine on the platform | ThingsBoard, OpenRemote | **Verified** | Flows that run on the platform, a closed minute at a time |
-| Rules at the edge, offline | ThingsBoard Edge, Greengrass | **Verified** | Rules and flows at the gateway, on real binaries |
+| Rules at the edge, offline | ThingsBoard Edge, Greengrass | **Verified** | Rules and flows at the gateway, with the real gateway binary |
 | Simulate before it runs | ThingsBoard's script test, in part | **Verified** | By the code a gateway runs, and required before review |
 | Review by someone else, one site first | Rarely anywhere | **Verified** | |
 | Live debugging of a flow | Node-RED, ThingsBoard | **Verified** | Real messages at each step, on real binaries |
@@ -105,7 +105,7 @@ the detail of what each thing was tried against.
 
 | Capability | Who has it | Status | Notes |
 |---|---|---|---|
-| Dashboards: grid, widgets, variables | ThingsBoard, Ignition, Node-RED | **Verified** | In a browser, at 1440 and 375 pixels |
+| Dashboards: grid, widgets, variables | ThingsBoard, Ignition, Node-RED | **Verified** | By hand, in a browser, at 1440 and 375 pixels; there is no automated browser test |
 | SCADA symbols | ThingsBoard SCADA | **Built** | A small set. No drawing tool for new ones |
 | Maps | ThingsBoard, OpenRemote | **Built** | Where devices say they are |
 | Controls that send commands | ThingsBoard, Ignition | **Verified** | Through the ledger |
@@ -125,7 +125,7 @@ the detail of what each thing was tried against.
 
 | Capability | Who has it | Status | Notes |
 |---|---|---|---|
-| Firmware for devices, in rollouts | ThingsBoard, Hono | **Verified** | ThingsBoard's own client fetched and checked 50 KB in chunks, in CI, which found a fault: chunks went unheard by its subscription. Paho did on real binaries, and a rollout finished |
+| Firmware for devices, in rollouts | ThingsBoard, Hono | **Verified** | ThingsBoard's own client fetches and checks 50 KB in chunks in `tb_it.rs`, which runs only when `FERRUM_TEST_PYTHON` names a Python with it. A rollout finishing was seen by hand with Paho |
 | Software update of the gateway itself | Kura, Greengrass | **Built** | Signed releases, staged, and built for Intel and ARM on a tag. A person signs: CI holds no key |
 | Bulk commands and settings | ThingsBoard PE | **Verified** | Each through the ledger |
 | Scheduler | ThingsBoard PE | **Built** | As automation, under an envelope |
@@ -142,12 +142,12 @@ the detail of what each thing was tried against.
 | Capability | Who has it | Status | Notes |
 |---|---|---|---|
 | Webhooks, MQTT | Everyone | **Verified** | Signed batches |
-| NATS | Magistrala | **Verified** | nats-server, in CI |
-| Kafka | ThingsBoard | **Verified** | Apache Kafka, in CI |
-| RabbitMQ and other AMQP 0-9-1 | ThingsBoard | **Verified** | RabbitMQ, in CI, with publisher confirms |
-| InfluxDB, ClickHouse | StreamPipes, Azure | **Verified** | The real servers, in CI |
-| A table of your own in PostgreSQL | Ignition transaction groups, ThingsBoard's custom table | **Verified** | The real server, in CI, once per batch with a unique index |
-| S3, SQS, SNS | ThingsBoard, Greengrass | **Built** | Against moto, with signatures that match Amazon's published examples. Not sent to AWS |
+| NATS | Magistrala | **Verified** | nats-server, in `exports_it.rs`, which runs only when `FERRUM_TEST_NATS` names one (CI starts it) |
+| Kafka | ThingsBoard | **Verified** | Apache Kafka, in `exports_it.rs`, which runs only when `FERRUM_TEST_KAFKA` names one (CI starts it) |
+| RabbitMQ and other AMQP 0-9-1 | ThingsBoard | **Verified** | RabbitMQ in `exports_it.rs`, with publisher confirms, which runs only when `FERRUM_TEST_AMQP` names one (CI starts it) |
+| InfluxDB, ClickHouse | StreamPipes, Azure | **Verified** | The real servers in `exports_it.rs`, which runs only when `FERRUM_TEST_INFLUX` and `FERRUM_TEST_CLICKHOUSE` name them (CI starts them) |
+| A table of your own in PostgreSQL | Ignition transaction groups, ThingsBoard's custom table | **Verified** | The real server, once per batch with a unique index, in a test that needs this repository's test database |
+| S3, SQS, SNS | ThingsBoard, Greengrass | **Built** | Against moto in `exports_it.rs`, which runs only when `FERRUM_TEST_AWS` names one, with signatures that match Amazon's published examples. Not sent to AWS |
 | Google Pub/Sub, Azure IoT Hub, Event Hubs | ThingsBoard | **Built** | Against the documented shape of the calls only. Not sent to Google or Azure |
 
 ## Twins and standards
@@ -155,9 +155,9 @@ the detail of what each thing was tried against.
 | Capability | Who has it | Status | Notes |
 |---|---|---|---|
 | Reported and desired state | Ditto, ThingsBoard | **Verified** | |
-| W3C Thing Description | Ditto | **Verified** | Written from the records. Output of a running plant validates against the published TD 1.1 schema, with no errors |
-| Asset Administration Shell | BaSyx | **Verified** | The output validates against the official JSON schema, and AAS Part 2's repository is served, reading only: shells and submodels. Nothing can be written, and no AAS client has met it |
-| EPCIS | GS1 | **Verified** | What scanners saw, as an EPCIS 2.0 document of object events, valid against GS1's own schema. **No repository, no capture interface**: it is for one that does that |
+| W3C Thing Description | Ditto | **Verified** | Written from the records. By hand: output of a running plant validates against the published TD 1.1 schema, with no errors. No test here repeats it |
+| Asset Administration Shell | BaSyx | **Verified** | By hand: the output validates against the official JSON schema, and AAS Part 2's repository is served, reading only: shells and submodels. No test here repeats the validation. Nothing can be written, and no AAS client has met it |
+| EPCIS | GS1 | **Verified** | By hand: what scanners saw, as an EPCIS 2.0 document of object events, valid against GS1's own schema, which no test here repeats. **No repository, no capture interface**: it is for one that does that |
 
 ## Brokers
 

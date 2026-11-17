@@ -111,5 +111,4 @@ schedule and is not tried again until its next day.
 The operator of a server can give a workspace limits, in `tenant.quotas`: `measurements_per_day` and
 `devices`. Past the first, gateways keep their readings, within their own budget, until the next day or
 until it is raised, and commands, leases and reports go on: an allowance is never what stops a site. The
-home page says when this is happening. Gateways before 0.3 do not know to keep them and lose those
-readings, so upgrade them first.
+home page says when this is happening.

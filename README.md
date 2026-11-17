@@ -15,7 +15,7 @@
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-data-336791?style=flat-square&logo=postgresql&logoColor=white)
 ![React](https://img.shields.io/badge/React-TypeScript-0ea5e9?style=flat-square&logo=react&logoColor=white)
 ![MCP](https://img.shields.io/badge/AI%20agents-MCP-8b5cf6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-412%20Rust%20%2B%207%20UI%20files-16a34a?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-420%20Rust%20%2B%208%20UI%20files-16a34a?style=flat-square)
 
 ### Describe a device in a few lines, draw the logic, and let a gateway keep working when the link goes down.
 
@@ -33,7 +33,7 @@ Ferrum coordinates equipment and does not control it. Motion, machine sequencing
 ## 💡 Why IoT Edge
 
 - 📝 **Devices are data, not drivers.** One definition per kind of device: how to reach it, read it and command it. A definition is reviewed, versioned, tried on a sample with nothing attached, and sent to gateways.
-- 📡 **ThingsBoard's own device API, unchanged.** MQTT, HTTP and CoAP on ThingsBoard's own topics and paths, so its client libraries and firmware work without change (tested in CI against ThingsBoard's own Python client).
+- 📡 **ThingsBoard's own device API, unchanged.** MQTT, HTTP and CoAP on ThingsBoard's own topics and paths, so its client libraries and firmware work without change (tried against ThingsBoard's own Python client, in a test that runs only when that client is provided).
 - 🔀 **Logic you can review.** Flows are drawn on a canvas with no code and no loops, simulated by the same code a gateway runs, approved by a second person, and watched live while they run.
 - 🛑 **It asks, it never acts.** A flow, schedule or rollout asks the command ledger. An approved envelope or a person decides, so nothing here moves equipment by itself.
 - 📴 **A gateway that stays up.** Reading, deciding, alarms and the commands it already holds carry on through outages, crashes and restores, from a journal on disk.
@@ -44,7 +44,7 @@ Ferrum coordinates equipment and does not control it. Motion, machine sequencing
 
 | | |
 |---|---|
-| 📦 Version | `0.6.4` (the app). The gateway `ferrum-site` is built from this repository's workspace, version `0.4.0` in `Cargo.toml` |
+| 📦 Version | `0.6.6` (the app). The gateway `ferrum-site` is built from this repository's workspace, version `0.4.0` in `Cargo.toml` |
 | 🧱 Kind | Own interface at `/edge/`, plus a gateway you install on location |
 | 🗃️ What it adds | 19 entities (16 records and 3 child tables) in the `edge` package, plus fields on Ops devices |
 | 👥 Roles | 3: Edge Viewer, Edge Engineer, Edge Reviewer |
@@ -54,7 +54,7 @@ Ferrum coordinates equipment and does not control it. Motion, machine sequencing
 | 🔗 Depends on | Ferrum `>=0.3, <0.4`; Operations (`ops`) `>=0.1` |
 | 🤝 Works with | Operations (command ledger, identity, telemetry), the workspace portal, Ferrum's assistant and MCP |
 | 🌍 Languages | English, Arabic and Hindi (translated by a model, to be reviewed by native speakers) |
-| 🧪 Tests | 412 Rust tests across app, gateway and contract; 7 interface test files |
+| 🧪 Tests | 420 Rust tests across app, gateway and contract; 8 interface test files |
 | 📄 Licence | AGPL-3.0-or-later |
 
 ## 📸 Screenshots
@@ -103,7 +103,7 @@ Ferrum coordinates equipment and does not control it. Motion, machine sequencing
 
 ### 🏭 With a sample plant connected
 
-These come from an earlier build (2 Nov 2026) on a workspace with a simulated plant: gateways, devices, a running flow and a dashboard. The interface has been restyled since, but every screen is still there.
+These show a workspace with a simulated plant: gateways, devices, a running flow and a dashboard. They were taken on an earlier build, so the styling differs from today's.
 
 <table>
 <tr>
@@ -163,7 +163,7 @@ These come from an earlier build (2 Nov 2026) on a workspace with a simulated pl
 
 ### 🔀 Flows
 
-- **A canvas of 44 kinds of step.** When (a number, a state change, an event, an attribute, a timer), decide (compare, in range, must last, gone quiet, only changes, not too often, wait, count, average, calculate, combine, remember, translate, choose by value, how far it went, in a place, unlike the rest, and more), and do (raise an alarm, tell someone, ask for a command, record an event or a number, set an attribute, send elsewhere, answer the device, write to the log, open a case).
+- **A canvas of 49 kinds of step.** When (a number, a state change, an event, an attribute, a timer), decide (compare, in range, must last, gone quiet, only changes, not too often, wait, count, average, calculate, combine, remember, translate, choose by value, how far it went, in a place, unlike the rest, and more), and do (raise an alarm, tell someone, ask for a command, record an event or a number, set an attribute, send elsewhere, answer the device, write to the log, open a case).
 - **No code, no loops.** A step of an unknown kind, a field it does not take, or a cycle is refused when the flow is read. Formulas are exact decimal arithmetic with `round`, `abs`, `min`, `max` and `coalesce`, with no clock or random number.
 - **Draft, simulated, in review, approved, running.** An author simulates the flow by the code a gateway runs; a different person approves it; it runs at one site first or at all of them. A new version needs simulating again. Stopping is never a question of review.
 - **Watch it run.** Real messages at each step, with device, value and the way they left. Off until an Edge Engineer turns it on, stops by itself after ten minutes (an hour at most), and is kept for an hour.
@@ -179,6 +179,7 @@ These come from an earlier build (2 Nov 2026) on a workspace with a simulated pl
 - **Waiting requests expire.** With the link down a request waits; if it outlasts its `expires`, or its flow has been stopped, it is not issued and the device's history says why.
 - **Checked again at the moment it goes.** Deadline, lease, authority, cancel, device and what it may do are all re-checked just before dispatch.
 - **Unknown outcomes are for a person.** A crash, an address that changed under running work, or two different endings leave a command *unknown*; nothing resends it, and a person says what happened.
+- **A command is a real write.** Once the ledger allows one, the gateway sends it to the equipment as a write (a register, an OPC UA node, a DNP3 operate, a message to a robot's master control), and nothing stands between it and the machine but the equipment's own logic. Under an approved automation envelope it can go with nobody watching. None of this has been tried on a real machine, so do not run it unattended against anything that can hurt a person or damage equipment.
 - **A flow is not a safety function.** Interlocks, emergency stops and collision avoidance stay with the equipment.
 
 ### 🚨 Alarms and notifications
@@ -223,7 +224,7 @@ These come from an earlier build (2 Nov 2026) on a workspace with a simulated pl
 - **Edge Export.** Where else a site's measurements go. Each keeps its own queue in the journal (up to 200,000 readings, oldest dropped and counted), delivers at least once in batches of 500, and takes a reading off the queue only when the far end said yes. An address with a password in it is refused.
 - **Destinations.** Webhooks (signed batches), MQTT, NATS, Kafka, RabbitMQ and other AMQP 0-9-1, InfluxDB 2 and 3, ClickHouse, a table of your own in PostgreSQL, S3 (and anything that speaks S3), SQS, SNS, Google Pub/Sub, Azure IoT Hub and Event Hubs, and Sparkplug B (the gateway as an edge node).
 - **The gateway as an OPC UA server.** Read only, each device a folder and each metric a variable, with encryption, a login and certificates a person trusts.
-- **Twins and standards.** Reported and desired state, W3C Thing Description, Asset Administration Shell (the output validates against the official schema; the repository is served read only) and GS1 EPCIS 2.0 object events.
+- **Twins and standards.** Reported and desired state, W3C Thing Description, Asset Administration Shell (the output was checked by hand against the official schema; the repository is served read only) and GS1 EPCIS 2.0 object events.
 - **Peers and relays.** A box in a cabinet works through the site's server over a signed link; a relay passes a closed network's requests on to the server and can forge nothing.
 
 ### 🏭 The gateway, `ferrum-site`
@@ -349,7 +350,8 @@ erDiagram
 | OPC UA, Modbus, S7, EtherNet/IP, ADS, BACnet, SNMP, KNX, IEC 104, DNP3, DLMS, M-Bus, MTConnect, Sparkplug B | Definitions | The equipment's address and, where it has them, credentials |
 | NATS, Kafka, RabbitMQ, InfluxDB, ClickHouse, PostgreSQL, S3, SQS, SNS, Pub/Sub, Azure IoT Hub and Event Hubs | Exports | Each service's address and key; Google, Azure and AWS ones have not been sent to the real services |
 | ChirpStack, The Things Stack, Sigfox, LORIOT, ThingPark, Zigbee2MQTT, AWS IoT Core | Templates over webhooks, MQTT and Kafka | The service's own account; none has met the service it names |
-| VDA 5050, Open-RMF, openTCS, rosbridge, MiR, Universal Robots | Templates for robot fleets | A running system, which none has met |
+| VDA 5050 2.0 and 2.1 | An adapter in the gateway's `site.yaml`, which refuses other versions | A vehicle and master control, which it has only met as a stand-in |
+| VDA 5050 3.0.0, Open-RMF, openTCS, rosbridge, MiR, Universal Robots | Templates for robot fleets | A running system, which none has met |
 | Mosquitto | A broker beside the gateway | `deploy/mosquitto.conf` as a start |
 | Email and SMTP | Notification steps and scheduled reports | The workspace's mailer; PDF reports need the server's renderer, which has not been run |
 | Web push | Alarm notices to a person's browser | The workspace's PWA |
@@ -517,7 +519,9 @@ createdb -O ferrum ferrum_site_test
 cargo test -p ferrum-site --features failpoints --test recovery_it
 ```
 
-CI creates both databases and, for the tests that meet other people's software, starts real services and installs clients: NATS, RabbitMQ, Kafka, InfluxDB, ClickHouse and moto (a stand-in for AWS), ThingsBoard's Python MQTT client, `ocpp`, `asyncua`, `pymodbus`, `mqtt-spb-wrapper` and Eclipse Leshan's demo client. It runs `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, the two failpoint test suites (`recovery_it`, `charger_it`), RustSec advisories (`cargo audit`), a check that every accepted advisory has an owner and a review date, and a license check of everything compiled in. A second, frozen run uses the exact lockfile and frontend a release is built from.
+The power-cut test of business-critical flows needs the same feature and database (`--test critical_it`). CI does not run it.
+
+CI creates both databases and, for the tests that meet other people's software, starts real services and installs clients: NATS, RabbitMQ, Kafka, InfluxDB, ClickHouse and moto (a stand-in for AWS), ThingsBoard's Python MQTT client, `ocpp`, `asyncua`, `pymodbus`, `mqtt-spb-wrapper` and Eclipse Leshan's demo client. It runs `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, the two failpoint test suites (`recovery_it`, `charger_it`), RustSec advisories (`cargo audit`), a check that every accepted advisory has an owner and a review date, and a license check of everything compiled in. Those tests run only when an environment variable (`FERRUM_TEST_PYTHON`, `FERRUM_TEST_LESHAN`, `FERRUM_TEST_NATS` and the like) names the service or client; without it a test prints "skipped" and passes, so a plain `cargo test` skips them. A second, frozen run uses the exact lockfile and frontend a release is built from.
 
 The interface lives in `ui/` and builds with Ferrum-Frontend's packages:
 
@@ -537,7 +541,7 @@ Tag the repository with the version in `Cargo.toml`. CI builds `ferrum-site` for
 
 ```text
 app.yaml      the manifest: id, version, requirements, what it adds to Ferrum
-packages/     metadata: entities, roles, reports, events, SQL migrations
+packages/     metadata: entities, roles, reports, events, the SQL
 src/          the app's logic in Rust: alarms, charging, firmware, fleet, flows on the platform, portal, reports, schedules, twins
 ui/           its own interface (React + Vite), built into ui/dist
 tests/        integration tests against a real PostgreSQL

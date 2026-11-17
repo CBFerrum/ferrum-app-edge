@@ -45,6 +45,8 @@ being true of one says nothing about the next.
 | A robotic warehouse mission, end to end | Yes | Against a simulated fleet only | No | No | No |
 | A machine start, end to end | Yes | Against a simulated press only | No | No | No |
 
+A Yes in the independent-software column means a run against that software. Where a test here does it, the test runs only when the software is provided (`FERRUM_TEST_PYTHON` for the Python libraries, `FERRUM_TEST_LESHAN` for Leshan, `FERRUM_TEST_NATS`, `_AMQP`, `_KAFKA` and the like for services): without it the test prints "skipped" and passes, and a plain `cargo test` provides none of it. CI provides all of them. Where no test here does it, the row below says "by hand".
+
 Nothing has reached the last two columns. A template in `templates` is a start for someone with the
 equipment, and no row here is a claim about any device.
 
@@ -80,35 +82,35 @@ required* per device model, and the templates in `templates` are starts, not sup
 |---|---|---|
 | TCP, UDP, serial, HTTP, WebSocket | Real sockets and a pseudo-terminal, with stand-ins (`gateway/tests/adapters_it.rs`) | Real serial hardware, RS-485 timing, any vendor's device |
 | MQTT 5 | rumqttd 0.20 and a stand-in. TLS is not exercised | Mosquitto, EMQX, HiveMQ, reconnect storms |
-| Device API | ThingsBoard's own Python client 1.13, unchanged, as a device and as a gateway, with firmware, in CI. Eclipse Paho 2.1 and 1.6 (MQTT 3.1.1), rumqttc v4 and v5, curl, aiocoap 0.4.17 | Any device's firmware, ThingsBoard's other SDKs |
-| Modbus TCP and RTU | pymodbus 3.16 over TCP, in CI, and a stand-in on a pseudo-terminal with two units | Any PLC, a real RS-485 bus, CRC errors on the line |
+| Device API | ThingsBoard's own Python client 1.13, unchanged, as a device and as a gateway, with firmware (`gateway/tests/tb_it.rs`, which needs `FERRUM_TEST_PYTHON`). rumqttc v4 and v5 and an HTTP client written in Rust (`devices_it.rs`, always run). Eclipse Paho 2.1 and 1.6, curl and aiocoap 0.4.17 by hand | Any device's firmware, ThingsBoard's other SDKs |
+| Modbus TCP and RTU | pymodbus 3.16 over TCP (`gateway/tests/protocols_it.rs`, which needs `FERRUM_TEST_PYTHON`), and a stand-in on a pseudo-terminal with two units | Any PLC, a real RS-485 bus, CRC errors on the line |
 | OPC UA | async-opcua 0.19's own server: None, and Basic256Sha256 with SignAndEncrypt, users, server trust by certificate, and browsing (`gateway/tests/protocols_it.rs`) | Any commercial server. Events have not been raised by anything |
-| OPC UA, the other way | asyncua 2.1, in CI: as a client of a gateway's server, browsing, reading, subscribing and refused a write; as a server, its events and its history. A server's login, encryption and certificates against async-opcua's client. Two faults it found here are fixed: a select clause it could not read, and a device clock running ahead holding a value back. open62541's alarm server by hand: a condition enabled, raised, and acknowledged by the ids in its event | Any SCADA or historian |
-| Siemens S7 | python-snap7 3.3's server: reads of every type, writes, strings, a missing block, and on real binaries through a gateway. Its server treats a bit write as a byte, so bits have not met a faithful peer | Any PLC |
-| EtherNet/IP | cpppo 5.2: read, write, arrays, direct and through a slot | Any Logix controller |
-| TwinCAT ADS | pyads 3.6's test server: symbols, read, write | Any TwinCAT runtime, routes |
-| BACnet/IP | BACpypes3: analog and binary values, names, a commandable write, a refused read | Any controller, foreign device registration |
-| SNMP v1, v2c, v3 | PySNMP 7.1: get, set, a missing OID, a trap and an inform, and v3 with SHA-1 and AES, SHA-256, and a wrong password. The key derivation matches RFC 3414's example | Any device's MIB, v3 traps |
+| OPC UA, the other way | asyncua 2.1 (`gateway/tests/opcua_it.rs`, which needs `FERRUM_TEST_PYTHON`): as a client of a gateway's server, browsing, reading, subscribing and refused a write; as a server, its events and its history. A server's login, encryption and certificates against async-opcua's client. open62541's alarm server by hand: a condition enabled, raised, and acknowledged by the ids in its event | Any SCADA or historian |
+| Siemens S7 | By hand, no test here runs it: python-snap7 3.3's server: reads of every type, writes, strings, a missing block, and through a gateway binary. Its server treats a bit write as a byte, so bits have not met a faithful peer | Any PLC |
+| EtherNet/IP | By hand, no test here runs it: cpppo 5.2: read, write, arrays, direct and through a slot | Any Logix controller |
+| TwinCAT ADS | By hand, no test here runs it: pyads 3.6's test server: symbols, read, write | Any TwinCAT runtime, routes |
+| BACnet/IP | By hand, no test here runs it: BACpypes3: analog and binary values, names, a commandable write, a refused read | Any controller, foreign device registration |
+| SNMP v1, v2c, v3 | By hand, no test here runs it: PySNMP 7.1: get, set, a missing OID, a trap and an inform, and v3 with SHA-1 and AES, SHA-256, and a wrong password. The key derivation matches RFC 3414's example | Any device's MIB, v3 traps |
 | KNX | A stand-in written from the specification (`gateway/tests/knx_it.rs`). Nothing independent could run as an interface | Any interface, any bus |
-| IEC 60870-5-104 | lib60870's server: interrogation and spontaneous data on real sockets. Commands were sent, and it did not hang up | Any RTU, redundancy groups |
-| M-Bus | Frames built here and read the same by pyMeterBus 0.8 | Any meter, any level converter |
-| DNP3 | opendnp3's outstation, by hand: an integrity poll, events and unsolicited responses confirmed, one point on request, and binary and analog commands selected and operated. A stand-in does the same in CI | Any RTU. No Secure Authentication, no TLS, no serial, no file transfer |
+| IEC 60870-5-104 | By hand, no test here runs it: lib60870's server: interrogation and spontaneous data on real sockets. Commands were sent, and it did not hang up | Any RTU, redundancy groups |
+| M-Bus | By hand, no test here runs it: frames built here and read the same by pyMeterBus 0.8 | Any meter, any level converter |
+| DNP3 | opendnp3's outstation, by hand: an integrity poll, events and unsolicited responses confirmed, one point on request, and binary and analog commands selected and operated. A stand-in written here does the same (`gateway/tests/dnp3_it.rs`, always run) | Any RTU. No Secure Authentication, no TLS, no serial, no file transfer |
 | DLMS/COSEM | The requests compare equal to those of Gurux's client, apart from which optional services are offered, and read a stand-in written from the Green Book | Any meter. Nothing above low-level security, and no HDLC on a serial or optical port |
-| OCPP 1.6 and 2.0.1 | The Python `ocpp` 2.1 library for 1.6, in CI and through a real gateway. 2.0.1 by frames written here (`gateway/tests/ocpp_it.rs`) | Any charger |
-| LwM2M | Eclipse Leshan's demo client 2.0.0-M16, in CI | Any device |
-| CoAP and LwM2M over DTLS | Eclipse Leshan's client, with its own DTLS stack, by pre-shared key, in CI, and refused when it asked to be a device its key was not for. The library here on both ends for CoAP. Key is the SHA-256 of the access token | Any constrained device. Certificates and raw public keys over DTLS |
-| CoAP client | aiocoap 0.4.17, with 3 KB in blocks | Observe from a real device |
-| NATS, FTP, folders | nats-server, pyftpdlib, the file system | |
+| OCPP 1.6 and 2.0.1 | The Python `ocpp` 2.1 library for 1.6, through a real gateway (`gateway/tests/ocpp_it.rs`, which needs `FERRUM_TEST_PYTHON`). 2.0.1 by frames written here (`gateway/tests/ocpp_it.rs`) | Any charger |
+| LwM2M | Eclipse Leshan's demo client 2.0.0-M16 (`gateway/tests/lwm2m_it.rs`, which needs `FERRUM_TEST_LESHAN`) | Any device |
+| CoAP and LwM2M over DTLS | Eclipse Leshan's client, with its own DTLS stack, by pre-shared key (needs `FERRUM_TEST_LESHAN`), and refused when it asked to be a device its key was not for. The library here on both ends for CoAP. Key is the SHA-256 of the access token | Any constrained device. Certificates and raw public keys over DTLS |
+| CoAP client | aiocoap 0.4.17, with 3 KB in blocks, by hand; no test here runs it | Observe from a real device |
+| NATS, FTP, folders | nats-server and pyftpdlib, by hand; no test here reads from either. The file system | |
 | SQL | PostgreSQL 17 and SQLite | Other databases |
-| Sparkplug B | rumqttd, as a primary host and an edge node, and its payloads read both ways by Eclipse Tahu's definitions (`gateway/tests/sparkplug_it.rs`) | Ignition, any real edge node, any real host |
+| Sparkplug B | rumqttd, as a primary host and an edge node, and its payloads read both ways by Eclipse Tahu's definitions (`gateway/tests/sparkplug_it.rs`, which needs `FERRUM_TEST_PYTHON` for Tahu's part) | Ignition, any real edge node, any real host |
 | MTConnect | A stand-in agent (`gateway/tests/mtconnect_it.rs`) | A real agent or machine tool |
 | Listeners and webhooks | Real sockets | Load, and devices that reconnect abruptly |
 | External drivers | A shell script, and python-can's virtual bus | Any vendor's library, a real CAN bus, any Bluetooth device |
 
 | Export | Tried against |
 |---|---|
-| NATS, Kafka, RabbitMQ, InfluxDB 2, ClickHouse | The real services, in CI (`gateway/tests/exports_it.rs`) |
-| S3, SQS, SNS | moto, in CI. Signatures match Amazon's published example |
+| NATS, Kafka, RabbitMQ, InfluxDB 2, ClickHouse | The real services (`gateway/tests/exports_it.rs`, each test of which runs only when its service is named by `FERRUM_TEST_NATS`, `_KAFKA`, `_AMQP`, `_INFLUX` or `_CLICKHOUSE`) |
+| S3, SQS, SNS | moto (needs `FERRUM_TEST_AWS`). Signatures match Amazon's published example |
 | Google Pub/Sub, Azure IoT Hub, Event Hubs | The documented shape of the calls. An assertion for Google is checked by `openssl`. **Nothing has been sent to their real services** |
 
 | Template | Written from | State |

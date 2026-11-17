@@ -4,7 +4,10 @@
 authorized before the link went down. One binary, one SQLite journal, no broker of its own.
 
 **Nothing here has run on physical equipment** ([compatibility](compatibility.md)). Rehearse on the
-simulator first.
+simulator first. A command the platform's ledger allows is sent to the equipment as a real write (a
+register, an OPC UA node, a DNP3 operate, a robot order), and under an approved automation envelope it
+can go with nobody watching. Do not run it unattended against anything that can hurt a person or
+damage equipment.
 
 ## Install
 
@@ -233,7 +236,8 @@ refused when it is saved, because an export travels to every gateway and every b
 where these can go, as it does for anything a definition opens.
 
 NATS, Kafka, RabbitMQ, InfluxDB and ClickHouse run as real services in this repository's CI, and S3,
-SQS and SNS against moto, a stand-in for AWS. The signatures match Amazon's published examples. Google
+SQS and SNS against moto, a stand-in for AWS. Those tests run only when the service is named by an
+environment variable (`FERRUM_TEST_NATS` and the like); without it they print "skipped" and pass. The signatures match Amazon's published examples. Google
 and Azure are checked against the documented shape of the calls only: nothing here has been sent to
 their real services.
 
