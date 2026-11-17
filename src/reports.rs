@@ -46,6 +46,7 @@ impl ReportSource for EdgeReports {
     async fn run(&self, k: &Kernel, ctx: &Ctx, name: &str, params: &HashMap<String, String>) -> Result<Value> {
         let (from, to) = period(params)?;
         let site = params.get("site").and_then(|s| s.parse::<Uuid>().ok());
+        let open = ferrum_ops::site::open_sites(k, ctx).await?;
         let mut tx = k.db.tenant_tx(ctx.tenant).await?;
         let out = match name {
             "edge_availability" => {
@@ -56,13 +57,15 @@ impl ReportSource for EdgeReports {
                      from e_device d left join e_site s on s.tenant_id = d.tenant_id and s.id = d.site \
                      left join lateral (select count(distinct r.minute) as minutes, max(r.last_time) as last_seen from op_rollup_minute r \
                        where r.tenant_id = d.tenant_id and r.device_id = d.id and r.minute >= $2 and r.minute < $3) h on true \
-                     where d.tenant_id = $1 and d.lifecycle <> 'Retired' and d.kind <> 'Gateway' and ($4::uuid is null or d.site = $4) order by d.device_code limit $5",
+                     where d.tenant_id = $1 and d.lifecycle <> 'Retired' and d.kind <> 'Gateway' and ($4::uuid is null or d.site = $4) \
+                       and ($6::uuid[] is null or d.site is null or d.site = any($6)) order by d.device_code limit $5",
                 )
                 .bind(ctx.tenant)
                 .bind(from)
                 .bind(to)
                 .bind(site)
                 .bind(MAX_ROWS)
+                .bind(open.as_deref())
                 .fetch_all(&mut *tx)
                 .await?;
                 json!({
@@ -78,13 +81,16 @@ impl ReportSource for EdgeReports {
                     "select jsonb_build_object('raised_at', a.raised_at, 'severity', a.severity, 'summary', a.summary, 'status', a.status, 'cleared_at', a.cleared_at, \
                        'acknowledged_by', a.acknowledged_by, 'assignee', a.assignee_email, \
                        'minutes_open', round(extract(epoch from coalesce(a.cleared_at, now()) - a.raised_at) / 60)) \
-                     from e_edge_alarm a where a.tenant_id = $1 and a.raised_at >= $2 and a.raised_at < $3 and ($4::uuid is null or a.site = $4) order by a.raised_at desc limit $5",
+                     from e_edge_alarm a left join e_device d on d.tenant_id = a.tenant_id and d.id = a.device \
+                     where a.tenant_id = $1 and a.raised_at >= $2 and a.raised_at < $3 and ($4::uuid is null or a.site = $4) \
+                       and ($6::uuid[] is null or d.site is null or d.site = any($6)) order by a.raised_at desc limit $5",
                 )
                 .bind(ctx.tenant)
                 .bind(from)
                 .bind(to)
                 .bind(site)
                 .bind(MAX_ROWS)
+                .bind(open.as_deref())
                 .fetch_all(&mut *tx)
                 .await?;
                 let open = rows.iter().filter(|r| r["status"] != "Cleared").count();

@@ -8,7 +8,7 @@
 <br>
 
 [![CI](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.6.7-0369a1?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.8-0369a1?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server%20and%20gateway-b7410e?style=flat-square&logo=rust)
@@ -207,9 +207,9 @@ These show a workspace with a simulated plant: gateways, devices, a running flow
 - **Devices page.** Search and tags; `GET /devices` also takes `site`, `definition`, `asset` and `related`. Each device shows when it was last heard and whether it is connected.
 - **Edge Asset.** A thing that matters and is not a device, a building or a cold room. Assets sit inside each other, a device belongs to one, and an asset takes in everything under it.
 - **Edge Relation.** Any way two devices belong together beyond what assets say (this pump feeds that tank). It shows on both devices and finds them for a bulk ask. It moves nothing.
-- **Bulk commands and desired state.** Up to 500 devices at a time, each through the ledger as the person's own request. An empty selection is refused.
+- **Bulk commands and desired state.** Up to 500 devices at a time, each through the ledger as the person's own request, which takes Operations' Ops Dispatcher or Ops Manager and a site that admits them. A members-only site's devices are not listed or chosen for anyone it does not list. An empty selection is refused.
 - **Edge Schedule.** Ask a site's, definition's or tag's devices for something every N minutes or at a time on given days, as automation under an envelope.
-- **Firmware.** *Edge Firmware* says what a file is and its SHA-256. *Edge Rollout* takes it to devices a few at a time (`percent` of the fleet, `batch` at once), stopping by itself at `stop_after` failures. Only for devices of a definition that allows it, commissioned for `firmware.update`, of kind Sensor, Meter, Scanner or Station. **Never** a robot, a controller, a machine or a fleet. Devices fetch chunks over MQTT, HTTP or CoAP as ThingsBoard's clients expect.
+- **Firmware.** *Edge Firmware* says what a file is and its SHA-256. *Edge Rollout* takes it to devices a few at a time (`percent` of the fleet, `batch` at once), stopping by itself at `stop_after` failures, and only on the sites open to whoever started it. Only for devices of a definition that allows it, commissioned for `firmware.update`, of kind Sensor, Meter, Scanner or Station. **Never** a robot, a controller, a machine or a fleet. Devices fetch chunks over MQTT, HTTP or CoAP as ThingsBoard's clients expect.
 - **Solutions.** Definitions, rules, flows and dashboards that go together. *Cold rooms* and *Energy meters* come with the app; *Download what is here* makes one to take elsewhere, with no exports, secrets or tokens. They install as drafts.
 - **Allowances.** An operator can give a workspace limits (`measurements_per_day`, `devices`). Past the first, gateways hold readings within their own budget; commands and leases go on.
 
@@ -248,6 +248,8 @@ These show a workspace with a simulated plant: gateways, devices, a running flow
 | **Edge Engineer** | Writes and publishes definitions, rules, flows and exports, runs the fleet, and acknowledges alarms | 21 |
 | **Edge Reviewer** | Reviews flows drawn by others, and decides when they run | 9 |
 
+- **Asking equipment.** A command or a setting for devices, one or many, also takes Operations' Ops Dispatcher or Ops Manager and a site that admits the person, administrators included: the ledger decides, device by device. Settling a charging session takes Edge Engineer or Ops Manager, and an administrator needs one of them too; reading and configuring need no role of an administrator.
+- **Members-only sites.** A site Operations marks members-only is closed in IoT Edge to everyone it does not list, administrators aside: its devices, gateways, alarms, charging sessions, robots, scans, rollouts, flow traces and report rows are not shown or counted, and a device or an alarm of it asked for by id is not there. A device of no site is everyone's. A shared dashboard link shows whoever holds it what its saved layout reads.
 - **Personal-data requests.** Customers' people and report recipients are found by their address in their rows; erasure removes those rows and leaves the customer and the schedule.
 - **Audit.** Each flow step through approval is in the audit trail; commands carry who asked.
 - **Support report.** The workspace's support report counts gateways in service that have spoken, those not heard from for five minutes, and those whose last word named problems, as counts only, so a partner or the control plane sees how they are and nothing else.
@@ -412,6 +414,7 @@ Notes: 🟡 for Ferrum means partly or by an external driver (machine learning r
 
 ### ✅ Recently shipped
 
+- [x] **0.6.8** Asking equipment is the ledger's to allow, device by device; a members-only site shows nothing of itself, by list or by id, and its devices are not chosen or reached by a rollout, for anyone it does not list; an administrator settles a charging session only with the role.
 - [x] **0.6.7** `docs/parity.md` says what a plain test run proves and which rows need real software; `EDGE_REAL_SOFTWARE=1` makes a missing service fail a test instead of skipping it.
 - [x] **0.6.6** The package's SQL is one file; the lock file follows today's platform.
 - [x] **0.6.5** The portal's times on the workspace's clock; rebuilt on Ferrum-Frontend 06bd1a2 with `mountApp`.

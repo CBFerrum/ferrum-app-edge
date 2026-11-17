@@ -348,14 +348,18 @@ pub async fn keep_traces(tx: &mut Tx, tenant: Uuid, gateway: Option<Uuid>, trace
 /// What passed through a flow, newest last. A device's data, so a site's members rule would hide it
 /// from someone who could not see that device: a flow's trace is for people who can see its site.
 pub async fn traces(k: &Kernel, ctx: &Ctx, flow: Uuid, since: Option<DateTime<Utc>>) -> Result<Value> {
+    let open = ferrum_ops::site::open_sites(k, ctx).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let rows: Vec<Value> = sqlx::query_scalar(
         "select jsonb_build_object('id', id, 'node', node, 'device', device, 'value', value, 'ports', ports, 'at', at) from ( \
-           select * from edge_flow_trace where tenant_id = $1 and flow_id = $2 and ($3::timestamptz is null or at > $3) order by at desc, id desc limit 500) t order by at, id",
+           select t.* from edge_flow_trace t left join e_device d on d.tenant_id = t.tenant_id and d.device_code = t.device \
+           where t.tenant_id = $1 and t.flow_id = $2 and ($3::timestamptz is null or t.at > $3) and ($4::uuid[] is null or d.site is null or d.site = any($4)) \
+           order by t.at desc, t.id desc limit 500) t order by at, id",
     )
     .bind(ctx.tenant)
     .bind(flow)
     .bind(since)
+    .bind(open.as_deref())
     .fetch_all(&mut *tx)
     .await?;
     tx.commit().await?;

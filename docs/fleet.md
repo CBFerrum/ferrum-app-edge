@@ -8,6 +8,8 @@ stops this for that device, and says so.
 
 The Devices page takes a search and a tag. `GET /devices` also takes `site`, `definition` and `asset`,
 and everything given has to hold. A tag is one of a comma-separated list on the device, in any case.
+A members-only site's devices are not listed, counted or chosen for anyone it does not list, and nothing
+else IoT Edge shows of them reaches that person either.
 An **Edge Asset** is a thing that matters here and is not a device, a building or a cold room. Assets
 sit inside each other, a device belongs to one, and an asset takes in everything under it.
 
@@ -25,8 +27,11 @@ new device gets one, shown once as a file: only a hash is stored.
 ## Asking them
 
 Choosing devices on that page, or `POST /fleet/command` and `POST /fleet/desired`, asks each for the
-same thing, up to 500 at a time. Each is the person's own request under their authority. Nothing
-chosen is not everything: an empty selection is refused.
+same thing, up to 500 at a time. Each is the person's own request under their authority, and
+Operations' ledger decides each one: it takes Ops Dispatcher or Ops Manager, of an administrator too,
+and a site that admits the person. A device that cannot be asked says why, the rest go on, and nothing
+is kept of what was refused. Asking one device for a setting (`PUT /devices/{id}/desired`) is the
+same. Nothing chosen is not everything: an empty selection is refused.
 
 ## By the clock
 
@@ -47,7 +52,9 @@ Rollout** takes it to devices a few at a time, and only:
   nothing here is part of.
 
 `percent` is the share of those devices it will ever reach, which is how a change is tried. `batch` is
-how many can be updating at once. It stops by itself at `stop_after` failures, and says so.
+how many can be updating at once. It stops by itself at `stop_after` failures, and says so. It reaches
+only the sites open to whoever started it, as they stand at each step, so a members-only site that does
+not list them is not reached; if they are no longer in the workspace, it pauses itself and says why.
 
 A gateway fetches a file once for its whole site, offers it only if the hash matches, and keeps it by
 hash. A device hears `fw_title`, `fw_version`, `fw_size`, `fw_checksum` and `fw_checksum_algorithm` as

@@ -253,11 +253,13 @@ async fn attributes(k: &Kernel, ctx: &Ctx, device: Uuid) -> Result<Value> {
 }
 
 async fn alarms(k: &Kernel, ctx: &Ctx, device: Option<Uuid>, site: Option<Uuid>, all: bool, limit: i64) -> Result<Value> {
+    let open = ferrum_ops::site::open_sites(k, ctx).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let rows: Vec<Value> = sqlx::query_scalar(
         "select jsonb_build_object('id', a.id, 'summary', a.summary, 'severity', a.severity, 'status', a.status, 'raised_at', a.raised_at, 'device', a.device, 'code', d.device_code) \
          from e_edge_alarm a left join e_device d on d.tenant_id = a.tenant_id and d.id = a.device \
          where a.tenant_id = $1 and ($2::uuid is null or a.device = $2) and ($3::uuid is null or a.site = $3) and ($4 or a.status <> 'Cleared') \
+           and ($6::uuid[] is null or d.site is null or d.site = any($6)) \
          order by a.raised_at desc limit $5",
     )
     .bind(ctx.tenant)
@@ -265,6 +267,7 @@ async fn alarms(k: &Kernel, ctx: &Ctx, device: Option<Uuid>, site: Option<Uuid>,
     .bind(site)
     .bind(all)
     .bind(limit.clamp(1, MAX_ROWS))
+    .bind(open.as_deref())
     .fetch_all(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -287,18 +290,21 @@ async fn events(k: &Kernel, ctx: &Ctx, device: Uuid, limit: i64) -> Result<Value
 
 /// Devices with each one's newest values and open alarms, for a table.
 async fn devices(k: &Kernel, ctx: &Ctx, site: Option<Uuid>, kind: Option<&str>, limit: i64) -> Result<Value> {
+    let open = ferrum_ops::site::open_sites(k, ctx).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let rows: Vec<Value> = sqlx::query_scalar(
         "select jsonb_build_object('id', d.id, 'code', d.device_code, 'name', d.device_name, 'kind', d.kind, 'lifecycle', d.lifecycle, \
                 'alarms', (select count(*) from e_edge_alarm a where a.tenant_id = d.tenant_id and a.device = d.id and a.status <> 'Cleared'), \
                 'latest', coalesce((select jsonb_object_agg(l.metric, jsonb_build_object('value', l.last_value, 'at', l.last_time)) from \
                     (select distinct on (metric) metric, last_value, last_time from op_rollup_minute r where r.tenant_id = d.tenant_id and r.device_id = d.id and r.last_time is not null order by metric, minute desc) l), '{}'::jsonb)) \
-         from e_device d where d.tenant_id = $1 and ($2::uuid is null or d.site = $2) and ($3::text is null or d.kind = $3) and d.kind <> 'Gateway' order by d.device_name limit $4",
+         from e_device d where d.tenant_id = $1 and ($2::uuid is null or d.site = $2) and ($3::text is null or d.kind = $3) and d.kind <> 'Gateway' \
+           and ($5::uuid[] is null or d.site is null or d.site = any($5)) order by d.device_name limit $4",
     )
     .bind(ctx.tenant)
     .bind(site)
     .bind(kind)
     .bind(limit.clamp(1, MAX_ROWS))
+    .bind(open.as_deref())
     .fetch_all(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -326,6 +332,7 @@ async fn lines(k: &Kernel, ctx: &Ctx, sources: &[Source], last_secs: i64, points
 
 /// Robots, where each says it is and what it is doing.
 pub async fn robots(k: &Kernel, ctx: &Ctx) -> Result<Value> {
+    let open = ferrum_ops::site::open_sites(k, ctx).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let rows: Value = sqlx::query_scalar(
         "select coalesce(jsonb_agg(jsonb_build_object('id', d.id, 'code', d.device_code, 'name', d.device_name, 'lifecycle', d.lifecycle, 'site', s.site_name, \
@@ -335,9 +342,10 @@ pub async fn robots(k: &Kernel, ctx: &Ctx) -> Result<Value> {
            'state', (select e.state from op_equipment_event e where e.tenant_id = d.tenant_id and e.device_id = d.id order by e.at desc limit 1), \
            'running', (select count(*) from op_command c where c.tenant_id = d.tenant_id and c.target_id = d.id and c.state in ('Accepted', 'Executing'))) order by d.device_code), '[]'::jsonb) \
          from e_device d left join e_site s on s.tenant_id = d.tenant_id and s.id = d.site \
-         where d.tenant_id = $1 and d.kind = 'Robot' and d.lifecycle <> 'Retired'",
+         where d.tenant_id = $1 and d.kind = 'Robot' and d.lifecycle <> 'Retired' and ($2::uuid[] is null or d.site is null or d.site = any($2))",
     )
     .bind(ctx.tenant)
+    .bind(open.as_deref())
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -345,17 +353,43 @@ pub async fn robots(k: &Kernel, ctx: &Ctx) -> Result<Value> {
 }
 
 /// One query. One that fails says so in its own place, so that a widget pointing at something since
-/// removed does not take the dashboard down with it.
+/// removed does not take the dashboard down with it. A device it names that is of a site closed to
+/// whoever asks is not there for them; one since removed still shows nothing.
 pub async fn answer(k: &Kernel, ctx: &Ctx, query: &Query) -> Value {
-    let got = match query {
-        Query::Latest { device } => telemetry::latest(k, ctx, *device).await.map(|l| json!(l)),
-        Query::Lines { sources, last_secs, points } => lines(k, ctx, sources, *last_secs, *points).await,
-        Query::Attributes { device } => attributes(k, ctx, *device).await,
-        Query::Alarms { device, site, all, limit } => alarms(k, ctx, *device, *site, *all, *limit).await,
-        Query::Events { device, limit } => events(k, ctx, *device, *limit).await,
-        Query::Devices { site, kind, limit } => devices(k, ctx, *site, kind.as_deref(), *limit).await,
-        Query::Robots => robots(k, ctx).await,
+    let named: Vec<Uuid> = match query {
+        Query::Latest { device } | Query::Attributes { device } | Query::Events { device, .. } => vec![*device],
+        Query::Lines { sources, .. } => sources.iter().map(|s| s.device).collect(),
+        Query::Alarms { device, .. } => device.iter().copied().collect(),
+        Query::Devices { .. } | Query::Robots => vec![],
     };
+    let got = async {
+        if !named.is_empty() {
+            let open = ferrum_ops::site::open_sites(k, ctx).await?;
+            let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+            let closed: bool = sqlx::query_scalar(
+                "select exists (select 1 from e_device d where d.tenant_id = $1 and d.id = any($2) and not ($3::uuid[] is null or d.site is null or d.site = any($3)))",
+            )
+            .bind(ctx.tenant)
+            .bind(&named)
+            .bind(open.as_deref())
+            .fetch_one(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            if closed {
+                return Err(Error::NotFound("site".into()));
+            }
+        }
+        match query {
+            Query::Latest { device } => telemetry::latest(k, ctx, *device).await.map(|l| json!(l)),
+            Query::Lines { sources, last_secs, points } => lines(k, ctx, sources, *last_secs, *points).await,
+            Query::Attributes { device } => attributes(k, ctx, *device).await,
+            Query::Alarms { device, site, all, limit } => alarms(k, ctx, *device, *site, *all, *limit).await,
+            Query::Events { device, limit } => events(k, ctx, *device, *limit).await,
+            Query::Devices { site, kind, limit } => devices(k, ctx, *site, kind.as_deref(), *limit).await,
+            Query::Robots => robots(k, ctx).await,
+        }
+    }
+    .await;
     match got {
         Ok(data) => json!({"data": data}),
         Err(e) => json!({"error": e.to_string()}),

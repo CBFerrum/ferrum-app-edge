@@ -161,14 +161,17 @@ async fn judge(tx: &mut Tx, tenant: Uuid, id: Uuid) -> Result<()> {
 }
 
 pub async fn list(k: &Kernel, ctx: &Ctx, device: Option<Uuid>) -> Result<Value> {
+    let open = ferrum_ops::site::open_sites(k, ctx).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let rows: Vec<Value> = sqlx::query_scalar(
         "select to_jsonb(s) - 'tenant_id' || jsonb_build_object('device_code', d.device_code) from edge_charging_session s \
          join e_device d on d.tenant_id = s.tenant_id and d.id = s.device_id where s.tenant_id = $1 and ($2::uuid is null or s.device_id = $2) \
+           and ($3::uuid[] is null or d.site is null or d.site = any($3)) \
          order by s.started_at desc nulls last limit 200",
     )
     .bind(ctx.tenant)
     .bind(device)
+    .bind(open.as_deref())
     .fetch_all(&mut *tx)
     .await?;
     tx.commit().await?;

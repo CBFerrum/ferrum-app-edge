@@ -168,13 +168,17 @@ pub async fn repository(k: &Kernel, ctx: &Ctx, path: &[&str]) -> Result<Value> {
 /// says them. Reading only: Ferrum holds no repository of its own, and capture is someone else's to
 /// do with this or with an export.
 pub async fn epcis(k: &Kernel, ctx: &Ctx, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Value> {
+    let open = ferrum_ops::site::open_sites(k, ctx).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let rows: Vec<(String, Value, DateTime<Utc>)> = sqlx::query_as(
-        "select name, value, at from edge_event where tenant_id = $1 and at >= $2 and at < $3 and (value ? 'epc' or value ? 'epcs') order by at limit 10000",
+        "select e.name, e.value, e.at from edge_event e left join e_device d on d.tenant_id = e.tenant_id and d.id = e.device_id \
+         where e.tenant_id = $1 and e.at >= $2 and e.at < $3 and (e.value ? 'epc' or e.value ? 'epcs') and ($4::uuid[] is null or d.site is null or d.site = any($4)) \
+         order by e.at limit 10000",
     )
     .bind(ctx.tenant)
     .bind(from)
     .bind(to)
+    .bind(open.as_deref())
     .fetch_all(&mut *tx)
     .await?;
     tx.commit().await?;

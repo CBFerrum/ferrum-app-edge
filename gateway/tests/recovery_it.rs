@@ -127,6 +127,9 @@ async fn workspace(w: &World, slug: &str) -> Workspace {
         .expect("tenant");
     let session = k.login(slug, &email, "Correct-Horse-9").await.unwrap();
     let admin = k.load_ctx(tenant, session.user, Some(session.token_version), "it".into()).await.unwrap();
+    // Whoever asks equipment for something in person holds the dispatch role, an administrator too.
+    k.set_user_roles(&admin, admin.user, &["Ops Dispatcher".to_string()]).await.unwrap();
+    let admin = k.load_ctx(tenant, session.user, Some(session.token_version), "it".into()).await.unwrap();
     let site = id_of(&k.insert(&admin, "Site", obj(json!({"site_name": slug, "site_code": slug}))).await.unwrap());
     let gateway = id_of(&k.insert(&admin, "Device", obj(json!({"device_name": "GW", "device_code": "GW", "kind": "Gateway", "site": site}))).await.unwrap());
     devices::set_lifecycle(&k, &admin, gateway, Lifecycle::Claimed, "ours").await.unwrap();

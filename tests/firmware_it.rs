@@ -187,3 +187,48 @@ async fn scenario() {
     let taste = rows(&t, tried).await.len();
     assert_eq!(taste, 1, "{taste} of 5 still to go: a fifth, rounded up");
 }
+
+/// A rollout reaches only the sites open to whoever started it, as they stand at each step: a members-only
+/// site that does not list them is no more reached by their rollout than by a command of their own.
+#[test]
+fn a_rollout_reaches_only_what_its_starter_may() {
+    run(members_only());
+}
+
+async fn members_only() {
+    let t = workspace("fenced").await;
+    let outsider = t.person("eng@fenced.test", &["Edge Engineer"]).await;
+    let member = t.person("member@fenced.test", &["Edge Engineer"]).await;
+    let hall = id_of(&t.insert("Site", json!({"site_name": "Hall", "site_code": "hall"})).await);
+    let members = json!([{"user_email": "member@fenced.test"}]);
+    let clean = id_of(&t.insert("Site", json!({"site_name": "Clean room", "site_code": "clean", "restricted": true, "members": members})).await);
+    let (in_hall, _) = gateway(&t, "GW-H", hall, 1).await;
+    let (in_clean, _) = gateway(&t, "GW-C", clean, 2).await;
+    let body = "name: open\nconnect: listen+mqtt://0.0.0.0:1\napi: device\nfirmware: true\n";
+    let open = id_of(&t.insert("DeviceDefinition", json!({"definition_name": "open", "body": body})).await);
+    device(&t, "S-H", "Sensor", (hall, in_hall), open, "").await;
+    device(&t, "S-C", "Sensor", (clean, in_clean), open, "").await;
+    let doc =
+        json!({"firmware_name": "sensor-fw", "firmware_version": "2.0", "definition": open, "url": "https://files.test/fw.bin", "sha256": HASH, "size": 1024});
+    let fw = id_of(&t.k.insert(&outsider, "EdgeFirmware", obj(doc)).await.unwrap());
+
+    // Every site, as far as the person who starts it may reach.
+    let everywhere = id_of(&t.k.insert(&outsider, "EdgeRollout", obj(json!({"rollout_name": "Everywhere", "firmware": fw}))).await.unwrap());
+    t.k.run_action(&outsider, "EdgeRollout", everywhere, "start", json!({})).await.unwrap();
+    firmware::advance(&t.k, &t.system()).await.unwrap();
+    assert_eq!(rows(&t, everywhere).await, [("S-H".to_string(), "Sent".to_string())], "a site that does not list whoever started it is not reached");
+
+    // Someone it lists reaches it.
+    let inside = id_of(&t.k.insert(&member, "EdgeRollout", obj(json!({"rollout_name": "Clean room", "firmware": fw, "site": clean}))).await.unwrap());
+    t.k.run_action(&member, "EdgeRollout", inside, "start", json!({})).await.unwrap();
+    firmware::advance(&t.k, &t.system()).await.unwrap();
+    assert_eq!(rows(&t, inside).await, [("S-C".to_string(), "Sent".to_string())]);
+
+    // Whoever started one has left: nothing more goes out in their name, and it says why.
+    t.k.set_user_active(&t.admin, outsider.user, false).await.unwrap();
+    firmware::advance(&t.k, &t.system()).await.unwrap();
+    assert_eq!(status(&t, everywhere).await, "Paused");
+    let doc = t.k.get(&t.admin, "EdgeRollout", everywhere, false).await.unwrap();
+    assert!(doc["note"].as_str().is_some_and(|n| n.contains("no longer")), "{doc:?}");
+    assert_eq!(status(&t, inside).await, "Running", "what someone else started goes on");
+}

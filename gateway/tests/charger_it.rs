@@ -316,6 +316,9 @@ async fn scenario() {
         .expect("tenant");
     let session = first.login("charge", "admin@charge.test", "Correct-Horse-9").await.unwrap();
     let admin = first.load_ctx(tenant, session.user, Some(session.token_version), "it".into()).await.unwrap();
+    // Whoever asks a charger for something in person holds the dispatch role, an administrator too.
+    first.set_user_roles(&admin, admin.user, &["Ops Dispatcher".to_string()]).await.unwrap();
+    let admin = first.load_ctx(tenant, session.user, Some(session.token_version), "it".into()).await.unwrap();
     let site = id_of(&first.insert(&admin, "Site", obj(json!({"site_name": SITE, "site_code": SITE}))).await.unwrap());
 
     let port = free_port();

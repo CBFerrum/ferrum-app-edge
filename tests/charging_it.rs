@@ -113,4 +113,12 @@ async fn scenario() {
     frame("TransactionEvent", event("Ended", "2026-11-02T14:20:00Z", 700), None).await;
     let new = session("tx-abc").await;
     assert_eq!((&new["state"], &new["energy_wh"]), (&json!("stopped"), &json!(600)), "{new}");
+
+    // An administrator settles only with the role, as Operations has it: reading and configuring need none.
+    let clean = id_of_session(&whole);
+    let without = t.api(&t.admin, "POST", &format!("/charging/{clean}/settle"), json!({"reference": "INV-3"})).await;
+    assert!(matches!(without, Err(Error::Forbidden(_))), "an administrator without the role does not settle: {without:?}");
+    t.k.set_user_roles(&t.admin, t.admin.user, &["Ops Manager".to_string()]).await.unwrap();
+    let manager = t.k.load_ctx(t.tenant, t.admin.user, None, "it".into()).await.unwrap();
+    t.api(&manager, "POST", &format!("/charging/{clean}/settle"), json!({"reference": "INV-3"})).await.expect("and settles, given it");
 }
