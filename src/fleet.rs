@@ -286,9 +286,9 @@ pub async fn claim(k: &Kernel, ctx: &Ctx, code: &str, secret: &str) -> Result<Va
     Ok(json!({"device": device}))
 }
 
-/// How much of each day a device was heard, as a share of the minutes in it.
+/// How much of each day a device was heard, as a share of the minutes in it. The route has checked
+/// that the device's site is open to whoever asks.
 pub async fn availability(k: &Kernel, ctx: &Ctx, device: Uuid, days: i64) -> Result<Value> {
-    ferrum_ops::site::device_site(k, ctx, device).await?;
     let days = days.clamp(1, MAX_AVAILABILITY_DAYS);
     let from = (Utc::now() - Duration::days(days - 1)).date_naive().and_hms_opt(0, 0, 0).map(|d| d.and_utc()).unwrap_or_else(Utc::now);
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;

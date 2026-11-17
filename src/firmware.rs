@@ -221,16 +221,18 @@ async fn stop(k: &Kernel, ctx: &Ctx, tx: &mut ferrum_kernel::Tx, id: Uuid, statu
     k.set_values_tx(&sys(ctx), tx, "EdgeRollout", id, values).await
 }
 
-/// How a rollout stands, device by device.
+/// How a rollout stands, device by device, of the sites open to whoever asks.
 pub async fn progress(k: &Kernel, ctx: &Ctx, rollout: Uuid) -> Result<Value> {
+    let open = ferrum_ops::site::open_sites(k, ctx).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let rows: Value = sqlx::query_scalar(
         "select coalesce(jsonb_agg(r order by r.at desc), '[]') from ( \
            select d.device_code as code, x.status, x.error, x.at from edge_rollout_device x join e_device d on d.tenant_id = x.tenant_id and d.id = x.device_id \
-           where x.tenant_id = $1 and x.rollout_id = $2 order by x.at desc limit 500) r",
+           where x.tenant_id = $1 and x.rollout_id = $2 and ($3::uuid[] is null or d.site is null or d.site = any($3)) order by x.at desc limit 500) r",
     )
     .bind(ctx.tenant)
     .bind(rollout)
+    .bind(open.as_deref())
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;

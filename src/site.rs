@@ -114,8 +114,12 @@ fn uuid(seg: &str) -> Result<Uuid> {
     seg.parse().map_err(|_| Error::NotFound("record".into()))
 }
 
-/// Who sees what is the Operations rule: a members-only site is closed to everyone not listed.
+/// Who sees what is the Operations rule: a members-only site is closed to everyone not listed. Here and
+/// wherever IoT Edge reads devices, `open` is what [`ferrum_ops::site::open_sites`] gave whoever asks
+/// (null for every site), and a device `d` is theirs to see when `(open is null or d.site is null or
+/// d.site = any(open))`: a device of no site is everyone's.
 async fn open_gateways(k: &Kernel, ctx: &Ctx) -> Result<Value> {
+    let open = ferrum_ops::site::open_sites(k, ctx).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let gateways: Value = sqlx::query_scalar(
         "select coalesce(jsonb_agg(jsonb_build_object('id', d.id, 'code', d.device_code, 'name', d.device_name, 'lifecycle', d.lifecycle, 'site', s.site_name, \
@@ -125,30 +129,37 @@ async fn open_gateways(k: &Kernel, ctx: &Ctx) -> Result<Value> {
          from e_device d left join e_site s on s.tenant_id = d.tenant_id and s.id = d.site \
          left join edge_gateway g on g.tenant_id = d.tenant_id and g.device_id = d.id \
          left join op_gateway o on o.tenant_id = d.tenant_id and o.device_id = d.id \
-         where d.tenant_id = $1 and d.kind = 'Gateway' and d.lifecycle <> 'Retired'",
+         where d.tenant_id = $1 and d.kind = 'Gateway' and d.lifecycle <> 'Retired' and ($2::uuid[] is null or d.site is null or d.site = any($2))",
     )
     .bind(ctx.tenant)
+    .bind(open.as_deref())
     .fetch_one(&mut *tx)
     .await?;
-    let alarms: Vec<(Option<String>, i64)> =
-        sqlx::query_as("select severity, count(*) from e_edge_alarm where tenant_id = $1 and status <> 'Cleared' group by severity")
-            .bind(ctx.tenant)
-            .fetch_all(&mut *tx)
-            .await?;
+    let alarms: Vec<(Option<String>, i64)> = sqlx::query_as(
+        "select a.severity, count(*) from e_edge_alarm a left join e_device d on d.tenant_id = a.tenant_id and d.id = a.device \
+         where a.tenant_id = $1 and a.status <> 'Cleared' and ($2::uuid[] is null or d.site is null or d.site = any($2)) group by a.severity",
+    )
+    .bind(ctx.tenant)
+    .bind(open.as_deref())
+    .fetch_all(&mut *tx)
+    .await?;
     let counts: (i64, i64, i64) = sqlx::query_as(
-        "select (select count(*) from e_device where tenant_id = $1 and lifecycle = 'Active'), \
-                (select count(*) from e_device where tenant_id = $1 and edge_definition is not null), \
+        "select (select count(*) from e_device d where d.tenant_id = $1 and d.lifecycle = 'Active' and ($2::uuid[] is null or d.site is null or d.site = any($2))), \
+                (select count(*) from e_device d where d.tenant_id = $1 and d.edge_definition is not null and ($2::uuid[] is null or d.site is null or d.site = any($2))), \
                 (select count(*) from e_device_definition where tenant_id = $1 and status = 'Published')",
     )
     .bind(ctx.tenant)
+    .bind(open.as_deref())
     .fetch_one(&mut *tx)
     .await?;
     let strangers: Value = sqlx::query_scalar(
         "select coalesce(jsonb_agg(jsonb_build_object('gateway', s.gateway_id, 'gateway_name', d.device_name, 'code', s.code, 'last_seen_at', s.last_seen_at) order by s.last_seen_at desc), '[]') from edge_stranger s \
          join e_device d on d.tenant_id = s.tenant_id and d.id = s.gateway_id \
-         where s.tenant_id = $1 and not exists (select 1 from e_device x where x.tenant_id = s.tenant_id and x.device_code = s.code)",
+         where s.tenant_id = $1 and not exists (select 1 from e_device x where x.tenant_id = s.tenant_id and x.device_code = s.code) \
+           and ($2::uuid[] is null or d.site is null or d.site = any($2))",
     )
     .bind(ctx.tenant)
+    .bind(open.as_deref())
     .fetch_one(&mut *tx)
     .await?;
     // The operator's limit, if there is one, and how today stands: reaching it holds readings back.
@@ -199,7 +210,7 @@ fn try_definition(req: &Value) -> Value {
 }
 
 async fn device(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
-    ferrum_ops::site::device_site(k, ctx, id).await?;
+    let open = ferrum_ops::site::open_sites(k, ctx).await?;
     let latest = telemetry::latest(k, ctx, id).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let attributes: Value = sqlx::query_scalar(
@@ -227,10 +238,11 @@ async fn device(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
         "select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'relation', r.relation, 'to', r.other, 'code', o.device_code, 'name', o.device_name, 'out', r.out) order by r.relation, o.device_code), '[]') \
          from (select id, relation, to_device as other, true as out from e_edge_relation where tenant_id = $1 and from_device = $2 \
                union all select id, relation, from_device, false from e_edge_relation where tenant_id = $1 and to_device = $2) r \
-         join e_device o on o.tenant_id = $1 and o.id = r.other",
+         join e_device o on o.tenant_id = $1 and o.id = r.other where ($3::uuid[] is null or o.site is null or o.site = any($3))",
     )
     .bind(ctx.tenant)
     .bind(id)
+    .bind(open.as_deref())
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -239,9 +251,9 @@ async fn device(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
 
 /// Asks for an attribute. This is a command like any other: the device's definition says what
 /// `set.{key}` means, it goes through the ledger, and the attribute stays out of step until the
-/// device itself reports the new value.
+/// device itself reports the new value. Whoever asks reaches only a device of a site open to them:
+/// the route checks one asked for by id, and a bulk ask chooses only those.
 pub async fn desire(k: &Kernel, ctx: &Ctx, id: Uuid, key: &str, value: &Value) -> Result<Value> {
-    ferrum_ops::site::device_site(k, ctx, id).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     sqlx::query(
         "insert into edge_attribute (tenant_id, device_id, key, desired, desired_at, desired_by) values ($1, $2, $3, $4, now(), $5) \
@@ -308,7 +320,6 @@ async fn new_token(k: &Kernel, ctx: &Ctx, id: Uuid) -> Result<Value> {
 /// a gateway. Each kind replaces the one before it, and a gateway hears of it at its next exchange,
 /// which ends any connection made with the old one.
 async fn credentials(k: &Kernel, ctx: &Ctx, id: Uuid, b: &Value) -> Result<Value> {
-    ferrum_ops::site::device_site(k, ctx, id).await?;
     let text = |key: &str| b[key].as_str().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
     let mut v = Doc::new();
     let answer = match b["kind"].as_str() {
@@ -355,7 +366,6 @@ async fn credentials(k: &Kernel, ctx: &Ctx, id: Uuid, b: &Value) -> Result<Value
 
 /// Takes away one way of proving who it is, or all of them.
 async fn revoke(k: &Kernel, ctx: &Ctx, id: Uuid, kind: Option<&str>) -> Result<Value> {
-    ferrum_ops::site::device_site(k, ctx, id).await?;
     let mut v = Doc::new();
     for (name, fields) in
         [("token", &["edge_token_hash"][..]), ("password", &["edge_client_id", "edge_username", "edge_password_hash"]), ("certificate", &["edge_certificate"])]
@@ -448,6 +458,7 @@ async fn claim(k: &Kernel, ctx: &Ctx, b: &Value) -> Result<Value> {
 }
 
 async fn alarm_list(k: &Kernel, ctx: &Ctx, all: bool) -> Result<Value> {
+    let open = ferrum_ops::site::open_sites(k, ctx).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let rows: Value = sqlx::query_scalar(
         "select coalesce(jsonb_agg(r order by r.raised_at desc), '[]') from ( \
@@ -456,10 +467,12 @@ async fn alarm_list(k: &Kernel, ctx: &Ctx, all: bool) -> Result<Value> {
            from e_edge_alarm a left join e_device d on d.tenant_id = a.tenant_id and d.id = a.device \
            left join e_edge_flow f on f.tenant_id = a.tenant_id and f.id = a.flow \
            left join e_edge_rule r on r.tenant_id = a.tenant_id and r.id = a.rule \
-           where a.tenant_id = $1 and ($2 or a.status <> 'Cleared') order by a.raised_at desc limit 300) r",
+           where a.tenant_id = $1 and ($2 or a.status <> 'Cleared') and ($3::uuid[] is null or d.site is null or d.site = any($3)) \
+           order by a.raised_at desc limit 300) r",
     )
     .bind(ctx.tenant)
     .bind(all)
+    .bind(open.as_deref())
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -537,6 +550,28 @@ pub(crate) async fn history(k: &Kernel, ctx: &Ctx, id: Uuid, req: &SiteRequest) 
 async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteResponse> {
     let path = req.path.trim_matches('/').to_string();
     let parts: Vec<&str> = path.split('/').collect();
+    // A device of a site closed to whoever asks, or an alarm about one, is not there for them, whatever
+    // they ask of it: Operations' rule, asked once here for every route that names one by id.
+    if let [what @ ("devices" | "alarms"), id, ..] = parts.as_slice()
+        && let Ok(id) = id.parse::<Uuid>()
+    {
+        let device = match *what {
+            "alarms" => {
+                let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+                let device: Option<Option<Uuid>> = sqlx::query_scalar("select device from e_edge_alarm where tenant_id = $1 and id = $2")
+                    .bind(ctx.tenant)
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+                tx.commit().await?;
+                device.flatten()
+            }
+            _ => Some(id),
+        };
+        if let Some(device) = device {
+            ferrum_ops::site::device_site(k, ctx, device).await?;
+        }
+    }
     let value = match (req.method.as_str(), parts.as_slice()) {
         // Answered by who is asking: portal people hold no roles, and none is needed here.
         (_, ["portal", rest @ ..]) => crate::portal::answer(k, ctx, req, rest).await?,

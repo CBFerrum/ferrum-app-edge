@@ -8,7 +8,8 @@ stops this for that device, and says so.
 
 The Devices page takes a search and a tag. `GET /devices` also takes `site`, `definition` and `asset`,
 and everything given has to hold. A tag is one of a comma-separated list on the device, in any case.
-A members-only site's devices are not listed, counted or chosen for anyone it does not list.
+A members-only site's devices are not listed, counted or chosen for anyone it does not list, and nothing
+else IoT Edge shows of them reaches that person either.
 An **Edge Asset** is a thing that matters here and is not a device, a building or a cold room. Assets
 sit inside each other, a device belongs to one, and an asset takes in everything under it.
 

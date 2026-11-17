@@ -14,6 +14,13 @@ interface change.
 - A members-only site's devices are not listed (`GET /devices`), counted (`GET /fleet`) or chosen for a bulk ask for
   anyone it does not list, so a bulk ask neither reaches nor names them. Administrators see every site, as in
   Operations.
+- Nothing else IoT Edge shows of a members-only site reaches anyone it does not list either: the overview (its
+  gateways, alarm and device counts, and the unknown devices its gateways heard), alarms, charging sessions, robots,
+  what a dashboard reads, EPCIS events, a rollout's devices, a flow's traces, a device's relations, and the Device
+  Availability and Alarm History reports. A device or an alarm of it asked for by id, whatever is asked (its twin,
+  history, connection, credentials, a setting, or acknowledging, clearing, assigning, shelving or noting an alarm),
+  is not there, checked once where requests come in. A device of no site is everyone's. A shared dashboard link
+  still shows whoever holds it what its saved layout reads.
 - Settling a charging session takes Edge Engineer or Ops Manager, and an administrator needs one of them too, as
   Operations asks of an administrator who dispatches, approves or settles. Reading and configuring need no role of an
   administrator, as before.

@@ -3,7 +3,7 @@
 mod support;
 
 use chrono::Utc;
-use ferrum_kernel::Error;
+use ferrum_kernel::{Ctx, Error};
 use ferrum_ops::contract::telemetry::{Class, Quality};
 use ferrum_ops::contract::{Lifecycle, Measurement};
 use ferrum_ops::{devices, telemetry};
@@ -376,4 +376,146 @@ async fn members_only() {
     let dispatcher = t.k.load_ctx(t.tenant, t.admin.user, None, "it".into()).await.unwrap();
     let asked = t.api(&dispatcher, "POST", "/fleet/command", json!({"select": {"ids": [fan_c]}, "operation": "fan.stop"})).await.unwrap();
     assert_eq!(outcomes(&asked), ["FAN-C Queued"], "and does, given it: {asked}");
+}
+
+/// Nothing IoT Edge reads of a members-only site reaches whoever it does not list: no row, no count and
+/// no name, in a list, on a dashboard or in a report, and a device or an alarm of it asked for by id is
+/// not there. Whoever it lists, and an administrator, see it as before; a device of no site is everyone's.
+#[test]
+fn a_members_only_site_shows_nothing_of_itself() {
+    run(nothing_of_it());
+}
+
+/// What a person reads of the fleet, by where they read it, as text.
+async fn everything(t: &T, who: &Ctx, rollout: Uuid, flow: Uuid, hall_fan: Uuid, board: &Value) -> Vec<(String, String)> {
+    let mut seen = Vec::new();
+    let paths = ["/overview", "/alarms", "/charging", "/robots", "/epcis/events"].map(str::to_string);
+    for path in paths.into_iter().chain([format!("/rollouts/{rollout}"), format!("/flows/{flow}/traces"), format!("/devices/{hall_fan}")]) {
+        let answer = t.get(who, &path, json!({"all": "1"})).await.unwrap();
+        seen.push((path, answer));
+    }
+    seen.push(("/boards/data".into(), t.api(who, "POST", "/boards/data", json!({"body": board.to_string()})).await.unwrap()));
+    let reports = ferrum_app_edge::reports();
+    for name in ["edge_availability", "edge_alarm_history"] {
+        seen.push((name.into(), reports[0].run(&t.k, who, name, &std::collections::HashMap::new()).await.unwrap()));
+    }
+    seen.into_iter().map(|(at, answer)| (at, answer.to_string().to_lowercase())).collect()
+}
+
+async fn nothing_of_it() {
+    let t = workspace("hidden").await;
+    let outsider = t.person("eng@hidden.test", &["Edge Engineer"]).await;
+    let member = t.person("member@hidden.test", &["Edge Engineer"]).await;
+    let hall = id_of(&t.insert("Site", json!({"site_name": "Hall", "site_code": "hall"})).await);
+    let members = json!([{"user_email": "member@hidden.test"}]);
+    let clean = id_of(&t.insert("Site", json!({"site_name": "Clean room", "site_code": "clean", "restricted": true, "members": members})).await);
+    let rule = json!({"rule_name": "Too hot", "metric": "temp.c", "comparison": "Above", "limit_value": 80, "severity": "Warning"});
+    let rule = id_of(&t.insert("EdgeRule", rule).await);
+    // No reading is kept here: telemetry remembers, for the whole test binary, the day it last made partitions
+    // for, so a second scenario in this binary keeping readings on a database reset since would find none.
+    let now = Utc::now();
+    let mut fans = Vec::new();
+    for (seed, place, site) in [(1, "CLEAN", clean), (2, "HALL", hall)] {
+        let (gw, _) = gateway(&t, &format!("{place}-GW"), site, seed).await;
+        let doc = json!({"device_name": format!("{place} fan"), "device_code": format!("{place}-FAN"), "kind": "Machine", "site": site, "gateway": gw,
+            "operations": [{"operation": "fan.stop"}]});
+        let fan = id_of(&t.insert("Device", doc).await);
+        for to in [Lifecycle::Claimed, Lifecycle::Provisioned, Lifecycle::Commissioned, Lifecycle::Active] {
+            devices::set_lifecycle(&t.k, &t.admin, fan, to, "in service").await.unwrap();
+        }
+        t.insert("Device", json!({"device_name": format!("{place} robot"), "device_code": format!("{place}-AMR"), "kind": "Robot", "site": site})).await;
+        // An unknown device its gateway heard, a scan and an alarm.
+        let mut tx = t.tx().await;
+        let stranger = format!("{place}-STRANGER");
+        sqlx::query("insert into edge_stranger (tenant_id, gateway_id, code) values ($1, $2, $3)")
+            .bind(t.tenant)
+            .bind(gw)
+            .bind(stranger)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        t.fact(site, "edge.event", now, json!({"device": fan, "name": "scan", "value": {"epc": format!("urn:epc:{place}:1")}})).await;
+        t.fact(site, "edge.alarm", now, json!({"rule": rule, "device": fan, "raised": true, "value": 91.0})).await;
+        fans.push(fan);
+    }
+    let (clean_fan, hall_fan) = (fans[0], fans[1]);
+    t.insert("Device", json!({"device_name": "Loose", "device_code": "LOOSE-1", "kind": "Sensor"})).await;
+    t.insert("EdgeRelation", json!({"from_device": hall_fan, "relation": "Feeds", "to_device": clean_fan})).await;
+    t.insert("Device", json!({"device_name": "Charger", "device_code": "CLEAN-CP", "kind": "Machine", "site": clean})).await;
+    let start = json!({"connectorId": 1, "idTag": "A", "meterStart": 10, "timestamp": now});
+    t.fact(clean, "edge.transaction", now, json!({"code": "CLEAN-CP", "call": "1", "action": "StartTransaction", "transaction": 7, "said": start})).await;
+    // A rollout's devices and a flow's traces, as they are kept.
+    let (rollout, flow) = (Uuid::now_v7(), Uuid::now_v7());
+    let mut tx = t.tx().await;
+    for (fan, code) in [(clean_fan, "CLEAN-FAN"), (hall_fan, "HALL-FAN")] {
+        sqlx::query("insert into edge_rollout_device (tenant_id, rollout_id, device_id) values ($1, $2, $3)")
+            .bind(t.tenant)
+            .bind(rollout)
+            .bind(fan)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("insert into edge_flow_trace (tenant_id, id, flow_id, node, device, at) values ($1, $2, $3, 'in', $4, now())")
+            .bind(t.tenant)
+            .bind(Uuid::now_v7())
+            .bind(flow)
+            .bind(code)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+    let clean_alarm: Uuid = sqlx::query_scalar("select id from e_edge_alarm where tenant_id = $1 and device = $2")
+        .bind(t.tenant)
+        .bind(clean_fan)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let board = json!({"widgets": [
+        {"id": "table", "type": "table"}, {"id": "alarms", "type": "alarms"}, {"id": "map", "type": "map"},
+        {"id": "value", "type": "value", "device": clean_fan}, {"id": "events", "type": "events", "device": clean_fan},
+        {"id": "line", "type": "line", "sources": [{"device": clean_fan, "metric": "temp.c"}]}]});
+
+    // ───── whoever the clean room does not list: no row, no count, no name ─────
+    let seen = everything(&t, &outsider, rollout, flow, hall_fan, &board).await;
+    for (at, text) in &seen {
+        assert!(!text.contains("clean"), "{at} shows the clean room to whoever it does not list: {text}");
+    }
+    let overview = t.get(&outsider, "/overview", json!({})).await.unwrap();
+    assert_eq!((overview["devices"].as_i64(), &overview["alarms"]), (Some(2), &json!({"Warning": 1})), "nor counts it: {overview}");
+    assert_eq!(t.get(&outsider, "/epcis/events", json!({})).await.unwrap()["epcisBody"]["eventList"].as_array().map(Vec::len), Some(1));
+    let shown = t.api(&outsider, "POST", "/boards/data", json!({"body": board.to_string()})).await.unwrap();
+    assert!(["value", "events", "line"].iter().all(|w| shown[w]["error"].is_string()), "a widget on its device answers that it is not there: {shown}");
+    assert!(seen.iter().any(|(at, text)| at == "edge_availability" && text.contains("loose-1")), "a device of no site is everyone's");
+    let device = |path: &str| format!("/devices/{clean_fan}{path}");
+    let by_id = ["", "/twin", "/td", "/aas", "/availability", "/history", "/connection"].map(device);
+    for path in by_id.iter().cloned().chain([format!("/alarms/{clean_alarm}")]) {
+        let got = t.get(&outsider, &path, json!({"metrics": "temp.c"})).await;
+        assert!(matches!(got, Err(Error::NotFound(_))), "{path} answers for a site closed to whoever asks: {got:?}");
+    }
+    let acts = [
+        ("PUT", device("/desired"), json!({"key": "speed", "value": 1})),
+        ("POST", format!("/alarms/{clean_alarm}/acknowledge"), json!({})),
+        ("POST", format!("/alarms/{clean_alarm}/clear"), json!({"note": "gone"})),
+        ("POST", format!("/alarms/{clean_alarm}/assign"), json!({"user": outsider.user})),
+        ("POST", format!("/alarms/{clean_alarm}/shelve"), json!({"minutes": 5})),
+        ("POST", format!("/alarms/{clean_alarm}/note"), json!({"text": "seen"})),
+    ];
+    for (method, path, body) in acts {
+        let got = t.api(&outsider, method, &path, body).await;
+        assert!(matches!(got, Err(Error::NotFound(_))), "{method} {path} acts on a site closed to whoever asks: {got:?}");
+    }
+
+    // ───── whoever it lists, and an administrator, see it as before ─────
+    for (at, text) in everything(&t, &member, rollout, flow, hall_fan, &board).await {
+        assert!(text.contains("clean"), "{at} shows the clean room to whoever it lists: {text}");
+    }
+    for path in &by_id {
+        t.get(&member, path, json!({"metrics": "temp.c"})).await.unwrap_or_else(|e| panic!("{path}: {e:?}"));
+    }
+    let alarm = t.get(&member, &format!("/alarms/{clean_alarm}"), json!({})).await.unwrap();
+    assert_eq!((&alarm["status"], &alarm["notes"]), (&json!("Active"), &json!([])), "and nothing the outsider tried was done: {alarm}");
+    let overview = t.get(&t.admin, "/overview", json!({})).await.unwrap();
+    assert_eq!((overview["devices"].as_i64(), &overview["alarms"]), (Some(4), &json!({"Warning": 2})), "{overview}");
 }
