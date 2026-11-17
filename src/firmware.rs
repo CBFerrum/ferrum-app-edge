@@ -1,6 +1,6 @@
-//! New firmware for devices, a few at a time. Each device gets a command through the ledger, so what
-//! stops a person asking stops this, and it stops by itself when devices start to fail: firmware that
-//! bricks devices should reach as few of them as possible.
+//! New firmware for devices, a few at a time. Each device gets a command through the ledger, and only on
+//! a site open to whoever started the rollout, so what stops a person asking stops this, and it stops by
+//! itself when devices start to fail: firmware that bricks devices should reach as few of them as possible.
 //!
 //! It never reaches a robot, a controller, a machine or a fleet. Their firmware belongs to their
 //! makers and to safety assessments that nothing here is part of, so those kinds cannot be selected
@@ -139,9 +139,22 @@ async fn one(k: &Kernel, ctx: &Ctx, r: &Rollout) -> Result<()> {
         tx.commit().await?;
         return Ok(());
     }
+    // Only where whoever started it may reach now: a members-only site that does not list them is no more
+    // reached by their rollout than by a command of their own.
+    let open = match open_to(k, ctx, r.started_by.as_deref()).await {
+        Ok(open) => open,
+        Err(Error::Validation(_) | Error::Unauthorized(_)) => {
+            let why = "Whoever started it is no longer in this workspace, so nothing more goes out in their name. Whatever is under way carries on.";
+            stop(k, ctx, &mut tx, r.id, "Paused", Some(why.into())).await?;
+            tx.commit().await?;
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
     let candidates: Vec<Uuid> = sqlx::query_scalar(
         "select d.id from e_device d where d.tenant_id = $1 and d.edge_definition = $2 and d.kind = any($3) and d.lifecycle in ('Commissioned', 'Active') \
            and ($4::uuid is null or d.site = $4) \
+           and ($8::uuid[] is null or d.site is null or d.site = any($8)) \
            and ($5::text is null or ',' || replace(lower(d.edge_tags), ' ', '') || ',' like '%,' || lower($5) || ',%') \
            and not exists (select 1 from edge_rollout_device x where x.tenant_id = d.tenant_id and x.rollout_id = $6 and x.device_id = d.id) \
            and not exists (select 1 from edge_attribute a where a.tenant_id = d.tenant_id and a.device_id = d.id and a.key in ('current_fw_version', 'fw_version') and a.value #>> '{}' = $7) \
@@ -154,6 +167,7 @@ async fn one(k: &Kernel, ctx: &Ctx, r: &Rollout) -> Result<()> {
     .bind(r.tag.as_deref().filter(|t| !t.is_empty()))
     .bind(r.id)
     .bind(&r.version)
+    .bind(open.as_deref())
     .fetch_all(&mut *tx)
     .await?;
     let planned = (((reached as usize + candidates.len()) as f64) * r.percent.unwrap_or(100).clamp(1, 100) as f64 / 100.0).ceil() as usize;
@@ -192,6 +206,12 @@ async fn one(k: &Kernel, ctx: &Ctx, r: &Rollout) -> Result<()> {
     }
     tx.commit().await?;
     Ok(())
+}
+
+/// The sites the person with `email` may reach now, `None` for every one, by Operations' rule.
+async fn open_to(k: &Kernel, ctx: &Ctx, email: Option<&str>) -> Result<Option<Vec<Uuid>>> {
+    let user = k.member_by_email(ctx, email.unwrap_or_default()).await?;
+    ferrum_ops::site::open_sites(k, &k.load_ctx(ctx.tenant, user, None, ctx.request_id.clone()).await?).await
 }
 
 async fn stop(k: &Kernel, ctx: &Ctx, tx: &mut ferrum_kernel::Tx, id: Uuid, status: &str, note: Option<String>) -> Result<()> {

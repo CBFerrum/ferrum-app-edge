@@ -51,7 +51,9 @@ Rollout** takes it to devices a few at a time, and only:
   nothing here is part of.
 
 `percent` is the share of those devices it will ever reach, which is how a change is tried. `batch` is
-how many can be updating at once. It stops by itself at `stop_after` failures, and says so.
+how many can be updating at once. It stops by itself at `stop_after` failures, and says so. It reaches
+only the sites open to whoever started it, as they stand at each step, so a members-only site that does
+not list them is not reached; if they are no longer in the workspace, it pauses itself and says why.
 
 A gateway fetches a file once for its whole site, offers it only if the hash matches, and keeps it by
 hash. A device hears `fw_title`, `fw_version`, `fw_size`, `fw_checksum` and `fw_checksum_algorithm` as
