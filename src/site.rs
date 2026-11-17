@@ -91,8 +91,12 @@ const SETTLE: &[&str] = &["Edge Engineer", "Ops Manager"];
 /// What a device sends in one call, at most.
 const MAX_INGEST: usize = 256 << 10;
 
+/// The rule Operations keeps (its own is not public): an administrator reads and configures without the
+/// role, and settles only with it, which they can give themselves. `has_role` holds every role for an
+/// administrator, so the roles held are read here instead.
 fn may(ctx: &Ctx, roles: &[&str]) -> Result<()> {
-    if ctx.is_admin || roles.iter().any(|r| ctx.has_role(r)) {
+    let admin = ctx.is_admin && [READ, ENGINEER, FLOWS].contains(&roles);
+    if admin || roles.iter().any(|r| ctx.roles.iter().any(|held| held == r)) {
         return Ok(());
     }
     Err(Error::Forbidden(format!("this takes one of: {}", roles.join(", "))))

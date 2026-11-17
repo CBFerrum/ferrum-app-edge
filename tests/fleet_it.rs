@@ -368,4 +368,12 @@ async fn members_only() {
     let one = t.api(&listed, "PUT", &format!("/devices/{fan_c}/desired"), json!({"key": "speed", "value": 2})).await.expect("and asks one for a setting");
     assert_eq!(one["state"], "Queued", "{one}");
     assert_eq!(written(&t, fan_c).await, (2, Some(json!(2))));
+
+    // ───── an administrator sees every site, and asks only with the dispatch role ─────
+    let refused = t.api(&t.admin, "POST", "/fleet/command", json!({"select": {"ids": [fan_c]}, "operation": "fan.stop"})).await.unwrap();
+    assert!(refused["outcomes"][0]["refused"].as_str().is_some_and(|w| w.contains("Ops Dispatcher")), "{refused}");
+    t.k.set_user_roles(&t.admin, t.admin.user, &["Ops Dispatcher".to_string()]).await.unwrap();
+    let dispatcher = t.k.load_ctx(t.tenant, t.admin.user, None, "it".into()).await.unwrap();
+    let asked = t.api(&dispatcher, "POST", "/fleet/command", json!({"select": {"ids": [fan_c]}, "operation": "fan.stop"})).await.unwrap();
+    assert_eq!(outcomes(&asked), ["FAN-C Queued"], "and does, given it: {asked}");
 }

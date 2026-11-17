@@ -248,7 +248,7 @@ These show a workspace with a simulated plant: gateways, devices, a running flow
 | **Edge Engineer** | Writes and publishes definitions, rules, flows and exports, runs the fleet, and acknowledges alarms | 21 |
 | **Edge Reviewer** | Reviews flows drawn by others, and decides when they run | 9 |
 
-- **Asking equipment.** A command or a setting for devices, one or many, also takes Operations' Ops Dispatcher or Ops Manager and a site that admits the person, administrators included: the ledger decides, device by device.
+- **Asking equipment.** A command or a setting for devices, one or many, also takes Operations' Ops Dispatcher or Ops Manager and a site that admits the person, administrators included: the ledger decides, device by device. Settling a charging session takes Edge Engineer or Ops Manager, and an administrator needs one of them too; reading and configuring need no role of an administrator.
 - **Personal-data requests.** Customers' people and report recipients are found by their address in their rows; erasure removes those rows and leaves the customer and the schedule.
 - **Audit.** Each flow step through approval is in the audit trail; commands carry who asked.
 - **Support report.** The workspace's support report counts gateways in service that have spoken, those not heard from for five minutes, and those whose last word named problems, as counts only, so a partner or the control plane sees how they are and nothing else.
