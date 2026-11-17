@@ -5,6 +5,8 @@
 //! What a charger says about money is kept before it hears that it was heard, here in a real journal
 //! that is closed and opened again, the way a crash and a restart leave it.
 
+mod common;
+
 use chrono::{Duration, Utc};
 use ferrum_edge_contract::edge::{Credentials, DeviceLink};
 use ferrum_ops_contract::Command;
@@ -291,10 +293,7 @@ async fn a_charger_speaks_and_is_answered_in_either_version() {
 
 #[tokio::test]
 async fn a_charger_written_by_someone_else() {
-    let Ok(python) = std::env::var("FERRUM_TEST_PYTHON") else {
-        eprintln!("skipped: FERRUM_TEST_PYTHON is not set");
-        return;
-    };
+    let Some(python) = common::real_software("FERRUM_TEST_PYTHON") else { return };
     let plant = Plant::up(&[charger("CP_1", None, json!(["A1"]))], "?open=1").await;
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ocpp_station.py");
     let url = format!("ws://127.0.0.1:{}/ocpp/CP_1", plant.port);

@@ -8,7 +8,7 @@
 <br>
 
 [![CI](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.6.6-0369a1?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.7-0369a1?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server%20and%20gateway-b7410e?style=flat-square&logo=rust)
@@ -26,7 +26,7 @@ IoT Edge connects equipment to Ferrum without writing a driver. A device is a sh
 </div>
 
 > [!IMPORTANT]
-> **Nothing here has run on physical equipment.** Every protocol was tried against simulators, stand-ins and other people's software libraries and servers, in CI or by hand. No vendor's device, robot or PLC has been connected. Nothing is certified, and nothing here is a safety claim. [Compatibility](docs/compatibility.md) records what was tried on what, and what was not.
+> **Nothing here has run on physical equipment.** Every protocol was tried against simulators, stand-ins and other people's software libraries and servers, by hand or by tests that run only when that software is supplied (a plain `cargo test` supplies none; [parity](docs/parity.md) says which). No vendor's device, robot or PLC has been connected. Nothing is certified, and nothing here is a safety claim. [Compatibility](docs/compatibility.md) records what was tried on what, and what was not.
 
 Ferrum coordinates equipment and does not control it. Motion, machine sequencing and every safety function stay with their own controllers.
 
@@ -412,6 +412,7 @@ Notes: 🟡 for Ferrum means partly or by an external driver (machine learning r
 
 ### ✅ Recently shipped
 
+- [x] **0.6.7** `docs/parity.md` says what a plain test run proves and which rows need real software; `EDGE_REAL_SOFTWARE=1` makes a missing service fail a test instead of skipping it.
 - [x] **0.6.6** The package's SQL is one file; the lock file follows today's platform.
 - [x] **0.6.5** The portal's times on the workspace's clock; rebuilt on Ferrum-Frontend 06bd1a2 with `mountApp`.
 - [x] **0.6.4** Store-and-forward: a reading kept while an exchange is out is never deleted with it, and a row that does not read back holds up nothing else.
@@ -521,7 +522,7 @@ cargo test -p ferrum-site --features failpoints --test recovery_it
 
 The power-cut test of business-critical flows needs the same feature and database (`--test critical_it`). CI does not run it.
 
-CI creates both databases and, for the tests that meet other people's software, starts real services and installs clients: NATS, RabbitMQ, Kafka, InfluxDB, ClickHouse and moto (a stand-in for AWS), ThingsBoard's Python MQTT client, `ocpp`, `asyncua`, `pymodbus`, `mqtt-spb-wrapper` and Eclipse Leshan's demo client. It runs `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, the two failpoint test suites (`recovery_it`, `charger_it`), RustSec advisories (`cargo audit`), a check that every accepted advisory has an owner and a review date, and a license check of everything compiled in. Those tests run only when an environment variable (`FERRUM_TEST_PYTHON`, `FERRUM_TEST_LESHAN`, `FERRUM_TEST_NATS` and the like) names the service or client; without it a test prints "skipped" and passes, so a plain `cargo test` skips them. A second, frozen run uses the exact lockfile and frontend a release is built from.
+`.github/workflows/ci.yml` creates both databases and, for the tests that meet other people's software, starts real services and installs clients: NATS, RabbitMQ, Kafka, InfluxDB, ClickHouse and moto (a stand-in for AWS), ThingsBoard's Python MQTT client, `ocpp`, `asyncua`, `pymodbus`, `mqtt-spb-wrapper` and Eclipse Leshan's demo client. GitHub's workflows are off, so no routine check runs it: it is the recipe for a real-software run. It runs `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, the two failpoint test suites (`recovery_it`, `charger_it`), RustSec advisories (`cargo audit`), a check that every accepted advisory has an owner and a review date, and a license check of everything compiled in. Those tests run only when an environment variable (`FERRUM_TEST_PYTHON`, `FERRUM_TEST_LESHAN`, `FERRUM_TEST_NATS` and the like) names the service or client; without it a test prints "skipped" and passes, so a plain `cargo test` skips them. With `EDGE_REAL_SOFTWARE=1` set, a test whose variable is missing fails instead of skipping. A second, frozen run uses the exact lockfile and frontend a release is built from.
 
 The interface lives in `ui/` and builds with Ferrum-Frontend's packages:
 

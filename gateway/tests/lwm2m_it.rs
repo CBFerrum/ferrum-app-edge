@@ -2,6 +2,8 @@
 //! Eclipse Leshan's demo client, when `FERRUM_TEST_LESHAN` names its jar, proves someone else's device
 //! can register and be read.
 
+mod common;
+
 use chrono::Utc;
 use ferrum_edge_contract::edge::{Credentials, DeviceLink};
 use ferrum_ops_contract::Command;
@@ -114,10 +116,7 @@ async fn only_a_device_with_a_record_registers_and_is_then_watched() {
 
 #[tokio::test]
 async fn a_device_written_by_someone_else() {
-    let Ok(jar) = std::env::var("FERRUM_TEST_LESHAN") else {
-        eprintln!("skipped: FERRUM_TEST_LESHAN is not set");
-        return;
-    };
+    let Some(jar) = common::real_software("FERRUM_TEST_LESHAN") else { return };
     let (d, port) = plant("meter-1").await;
     let mut client = tokio::process::Command::new("java")
         .args(["-jar", &jar, "-n", "meter-1", "-u", &format!("coap://127.0.0.1:{port}")])
@@ -163,10 +162,7 @@ async fn a_device_written_by_someone_else() {
 /// it registers under, or it could speak for any device whose key it did not need.
 #[tokio::test]
 async fn a_device_written_by_someone_else_over_dtls() {
-    let Ok(jar) = std::env::var("FERRUM_TEST_LESHAN") else {
-        eprintln!("skipped: FERRUM_TEST_LESHAN is not set");
-        return;
-    };
+    let Some(jar) = common::real_software("FERRUM_TEST_LESHAN") else { return };
     let port = free_port();
     let bind = format!("127.0.0.1:{port}");
     let body = format!(
