@@ -52,8 +52,9 @@ impl Selection {
     }
 }
 
-/// `$2` to `$8`: what [`bind`] gives. A tag is one of a comma-separated list, and an asset takes in
-/// everything under it.
+/// `$2` to `$9`: what [`bind`] gives. A tag is one of a comma-separated list, and an asset takes in
+/// everything under it. `$9` is the sites open to whoever asks, null for every one: a members-only site
+/// is closed to everyone it does not list, whatever their roles, and a device of no site is everyone's.
 const CHOSEN: &str = "($2::uuid[] = '{}' or d.id = any($2)) \
    and ($3::text is null or d.device_code ilike '%' || $3 || '%' or d.device_name ilike '%' || $3 || '%') \
    and ($4::uuid is null or d.site = $4) \
@@ -64,15 +65,17 @@ const CHOSEN: &str = "($2::uuid[] = '{}' or d.id = any($2)) \
        union select a.id from e_edge_asset a join below b on a.parent = b.id where a.tenant_id = $1) select id from below)) \
    and ($8::uuid is null or d.id in ( \
      select r.to_device from e_edge_relation r where r.tenant_id = $1 and r.from_device = $8 \
-     union select r.from_device from e_edge_relation r where r.tenant_id = $1 and r.to_device = $8))";
+     union select r.from_device from e_edge_relation r where r.tenant_id = $1 and r.to_device = $8)) \
+   and ($9::uuid[] is null or d.site is null or d.site = any($9))";
 
 macro_rules! bind {
-    ($query:expr, $ctx:expr, $s:expr) => {
-        $query.bind($ctx.tenant).bind(&$s.ids).bind(&$s.q).bind($s.site).bind($s.definition).bind(&$s.tag).bind($s.asset).bind($s.related)
+    ($query:expr, $ctx:expr, $s:expr, $open:expr) => {
+        $query.bind($ctx.tenant).bind(&$s.ids).bind(&$s.q).bind($s.site).bind($s.definition).bind(&$s.tag).bind($s.asset).bind($s.related).bind($open)
     };
 }
 
 pub async fn list(k: &Kernel, ctx: &Ctx, s: &Selection) -> Result<Value> {
+    let open = ferrum_ops::site::open_sites(k, ctx).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let sql = format!(
         "select coalesce(jsonb_agg(r order by r.code), '[]') from ( \
@@ -86,7 +89,7 @@ pub async fn list(k: &Kernel, ctx: &Ctx, s: &Selection) -> Result<Value> {
            where d.tenant_id = $1 and d.lifecycle <> 'Retired' and d.kind <> 'Gateway' and {CHOSEN} \
            order by d.device_code limit {MAX_SELECTED}) r"
     );
-    let rows: Value = bind!(sqlx::query_scalar(sqlx::AssertSqlSafe(sql)), ctx, s).fetch_one(&mut *tx).await?;
+    let rows: Value = bind!(sqlx::query_scalar(sqlx::AssertSqlSafe(sql)), ctx, s, open.as_deref()).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(json!({"devices": rows}))
 }
@@ -95,12 +98,13 @@ pub async fn chosen(k: &Kernel, ctx: &Ctx, s: &Selection) -> Result<Vec<(Uuid, S
     if s.is_empty() {
         return Err(Error::invalid("say which devices"));
     }
+    let open = ferrum_ops::site::open_sites(k, ctx).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let sql = format!(
         "select d.id, d.device_code from e_device d where d.tenant_id = $1 and d.lifecycle <> 'Retired' and d.kind <> 'Gateway' and {CHOSEN} order by d.device_code limit {}",
         MAX_SELECTED + 1
     );
-    let rows: Vec<(Uuid, String)> = bind!(sqlx::query_as(sqlx::AssertSqlSafe(sql)), ctx, s).fetch_all(&mut *tx).await?;
+    let rows: Vec<(Uuid, String)> = bind!(sqlx::query_as(sqlx::AssertSqlSafe(sql)), ctx, s, open.as_deref()).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     if rows.len() as i64 > MAX_SELECTED {
         return Err(Error::invalid(format!("that is more than {MAX_SELECTED} devices: narrow it down")));
@@ -304,8 +308,10 @@ pub async fn availability(k: &Kernel, ctx: &Ctx, device: Uuid, days: i64) -> Res
     Ok(json!({"from": from, "percent": (total as f64 / so_far as f64 * 1000.0).round() / 10.0, "days": by_day}))
 }
 
-/// The whole fleet at a glance: how each definition and site stands, and what is running on it.
+/// The whole fleet at a glance: how each definition and site stands, and what is running on it, of the
+/// sites open to whoever looks.
 pub async fn health(k: &Kernel, ctx: &Ctx) -> Result<Value> {
+    let open = ferrum_ops::site::open_sites(k, ctx).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let group = |by: &str, join: &str| {
         format!(
@@ -315,7 +321,8 @@ pub async fn health(k: &Kernel, ctx: &Ctx) -> Result<Value> {
                from e_device d {join} \
                left join lateral (select exists (select 1 from op_rollup_minute r where r.tenant_id = d.tenant_id and r.device_id = d.id and r.minute > now() - interval '15 minutes') as heard) h on true \
                left join lateral (select count(*) as open from e_edge_alarm a where a.tenant_id = d.tenant_id and a.device = d.id and a.status <> 'Cleared') a on true \
-               where d.tenant_id = $1 and d.lifecycle <> 'Retired' and d.kind <> 'Gateway' group by 1) r"
+               where d.tenant_id = $1 and d.lifecycle <> 'Retired' and d.kind <> 'Gateway' \
+                 and ($2::uuid[] is null or d.site is null or d.site = any($2)) group by 1) r"
         )
     };
     let by_definition: Value = sqlx::query_scalar(sqlx::AssertSqlSafe(group(
@@ -323,18 +330,22 @@ pub async fn health(k: &Kernel, ctx: &Ctx) -> Result<Value> {
         "left join e_device_definition f on f.tenant_id = d.tenant_id and f.id = d.edge_definition",
     )))
     .bind(ctx.tenant)
+    .bind(open.as_deref())
     .fetch_one(&mut *tx)
     .await?;
     let by_site: Value = sqlx::query_scalar(sqlx::AssertSqlSafe(group("s.site_name", "left join e_site s on s.tenant_id = d.tenant_id and s.id = d.site")))
         .bind(ctx.tenant)
+        .bind(open.as_deref())
         .fetch_one(&mut *tx)
         .await?;
     let versions: Value = sqlx::query_scalar(
         "select coalesce(jsonb_agg(r order by r.devices desc), '[]') from ( \
-           select a.value #>> '{}' as version, count(*) as devices from edge_attribute a \
-           where a.tenant_id = $1 and a.key in ('fw_version', 'firmware') and a.value is not null group by 1) r",
+           select a.value #>> '{}' as version, count(*) as devices from edge_attribute a join e_device d on d.tenant_id = a.tenant_id and d.id = a.device_id \
+           where a.tenant_id = $1 and a.key in ('fw_version', 'firmware') and a.value is not null \
+             and ($2::uuid[] is null or d.site is null or d.site = any($2)) group by 1) r",
     )
     .bind(ctx.tenant)
+    .bind(open.as_deref())
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;

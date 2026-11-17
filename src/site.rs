@@ -8,20 +8,22 @@
 //! | `GET /templates` | Edge Viewer | definitions to start from |
 //! | `POST /definitions/try` | Edge Engineer | `{body, topic?, sample?, sample_hex?}`: checks a definition and reads a sample |
 //! | `POST /flows/try` | Edge Engineer or Reviewer | `{body, script?, until?}`: checks a flow and walks a script through it |
-//! | `GET /devices` | Edge Viewer | `?q=&site=&definition=&tag=&asset=`: what the gateways reach |
+//! | `GET /devices` | Edge Viewer | `?q=&site=&definition=&tag=&asset=`: what the gateways reach, on the sites open to whoever asks |
 //! | `POST /devices/claim` | Edge Engineer | `{code, secret}`: shows a person holds a device |
 //! | `GET /solutions` | Edge Viewer | what comes with this app |
 //! | `POST /solutions/install` | Edge Engineer | `{name}` or `{bundle}`, as drafts |
 //! | `GET /solutions/export` | Edge Engineer | what is here, as a bundle, with nothing secret in it |
 //! | `GET /rollouts/{id}` | Edge Viewer | how a rollout of firmware stands, device by device |
-//! | `GET /fleet` | Edge Viewer | how each definition and site stands, and the versions running |
+//! | `GET /charging` | Edge Viewer | `?device=`: charging sessions, newest first |
+//! | `POST /charging/{id}/settle` | Edge Engineer or Ops Manager | `{reference, energy_wh?, note?}`: a stopped session becomes money |
+//! | `GET /fleet` | Edge Viewer | how each definition and site stands, and the versions running, of the sites open to whoever asks |
 //! | `GET /devices/{id}/twin` | Edge Viewer | what was asked of it and what it reports |
 //! | `GET /devices/{id}/td` | Edge Viewer | a W3C Thing Description |
 //! | `GET /devices/{id}/aas` | Edge Viewer | an Asset Administration Shell |
 //! | `GET /devices/{id}/availability` | Edge Viewer | `?days=`: how much of each day it was heard |
 //! | `POST /devices/import` | Edge Engineer | `{csv, tokens?}`: many devices, each row on its own |
-//! | `POST /fleet/command` | who may ask one | `{select, operation, payload, expires_in_secs?}`: one command each, through the ledger |
-//! | `POST /fleet/desired` | who may ask one | `{select, key, value}`: the same for a setting |
+//! | `POST /fleet/command` | Edge Viewer | `{select, operation, payload, expires_in_secs?}`: one command each, through the ledger, which asks each for the dispatch role and an open site |
+//! | `POST /fleet/desired` | Edge Viewer | `{select, key, value}`: the same for a setting |
 //! | `GET /flows/{id}/versions` | Edge Viewer | every version that ran, newest first |
 //! | `GET /flows/{id}/traces` | Edge Viewer | `?since=`: what passed through a flow being watched |
 //! | `POST /flows/{id}/simulate` | Edge Engineer | `{script, until?}`: the same for what is saved, which is what lets it go for review |
@@ -32,7 +34,7 @@
 //! | `POST /boards/{id}/share` | Edge Engineer | a link for anyone, shown once, replacing the one before |
 //! | `DELETE /boards/{id}/share` | Edge Engineer | no link any more |
 //! | `GET /alarms` | Edge Viewer | `?all=1` for those cleared too: newest first |
-//! | `PUT /devices/{id}/desired` | Edge Engineer | `{key, value}`: asks for an attribute through the ledger |
+//! | `PUT /devices/{id}/desired` | Edge Viewer | `{key, value}`: asks for an attribute through the ledger, which asks for the dispatch role and an open site |
 //! | `POST /devices/{id}/token` | Edge Engineer | a token for a device that talks to us directly, shown once |
 //! | `GET /devices/{id}/connection` | Edge Viewer | how it connects: addresses and which proofs it has, and no secrets |
 //! | `POST /devices/{id}/credentials` | Edge Engineer | `{kind: token}`, `{kind: password, client_id?, username?}` or `{kind: certificate, certificate}`: a secret is shown once |
@@ -82,8 +84,9 @@ pub struct EdgeSite;
 const READ: &[&str] = &["Edge Viewer", "Edge Engineer", "Edge Reviewer"];
 const ENGINEER: &[&str] = &["Edge Engineer"];
 const FLOWS: &[&str] = &["Edge Engineer", "Edge Reviewer"];
-/// Asking many devices at once takes a person who may ask one: the ledger checks each.
-const OPERATE: &[&str] = &["Edge Engineer", "Ops Manager", "Ops Operator"];
+/// Making a charging session money. Asking equipment for anything takes no list here: the ledger asks
+/// whoever asks, device by device, for the dispatch role and a site that admits them.
+const SETTLE: &[&str] = &["Edge Engineer", "Ops Manager"];
 
 /// What a device sends in one call, at most.
 const MAX_INGEST: usize = 256 << 10;
@@ -603,7 +606,7 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
             crate::charging::list(k, ctx, device).await?
         }
         ("POST", ["charging", id, "settle"]) => {
-            may(ctx, OPERATE)?;
+            may(ctx, SETTLE)?;
             let b = body(req)?;
             let s = crate::charging::Settle {
                 reference: b["reference"].as_str().unwrap_or_default().to_string(),
@@ -647,11 +650,11 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
             fleet::import(k, ctx, &body(req)?).await?
         }
         ("POST", ["fleet", "command"]) => {
-            may(ctx, OPERATE)?;
+            may(ctx, READ)?;
             fleet::command(k, ctx, &body(req)?).await?
         }
         ("POST", ["fleet", "desired"]) => {
-            may(ctx, OPERATE)?;
+            may(ctx, READ)?;
             fleet::desire(k, ctx, &body(req)?).await?
         }
         ("GET", ["alarms"]) => {
@@ -683,7 +686,7 @@ async fn signed_in(k: &Kernel, ctx: &Ctx, req: &SiteRequest) -> Result<SiteRespo
             json!({"shared": false})
         }
         ("PUT", ["devices", id, "desired"]) => {
-            may(ctx, ENGINEER)?;
+            may(ctx, READ)?;
             let b = body(req)?;
             let key = b["key"].as_str().filter(|k| !k.is_empty() && k.len() <= 200).ok_or_else(|| Error::field("key", "which attribute?"))?;
             desire(k, ctx, uuid(id)?, key, &b["value"]).await?

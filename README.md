@@ -207,7 +207,7 @@ These show a workspace with a simulated plant: gateways, devices, a running flow
 - **Devices page.** Search and tags; `GET /devices` also takes `site`, `definition`, `asset` and `related`. Each device shows when it was last heard and whether it is connected.
 - **Edge Asset.** A thing that matters and is not a device, a building or a cold room. Assets sit inside each other, a device belongs to one, and an asset takes in everything under it.
 - **Edge Relation.** Any way two devices belong together beyond what assets say (this pump feeds that tank). It shows on both devices and finds them for a bulk ask. It moves nothing.
-- **Bulk commands and desired state.** Up to 500 devices at a time, each through the ledger as the person's own request. An empty selection is refused.
+- **Bulk commands and desired state.** Up to 500 devices at a time, each through the ledger as the person's own request, which takes Operations' Ops Dispatcher or Ops Manager and a site that admits them. A members-only site's devices are not listed or chosen for anyone it does not list. An empty selection is refused.
 - **Edge Schedule.** Ask a site's, definition's or tag's devices for something every N minutes or at a time on given days, as automation under an envelope.
 - **Firmware.** *Edge Firmware* says what a file is and its SHA-256. *Edge Rollout* takes it to devices a few at a time (`percent` of the fleet, `batch` at once), stopping by itself at `stop_after` failures. Only for devices of a definition that allows it, commissioned for `firmware.update`, of kind Sensor, Meter, Scanner or Station. **Never** a robot, a controller, a machine or a fleet. Devices fetch chunks over MQTT, HTTP or CoAP as ThingsBoard's clients expect.
 - **Solutions.** Definitions, rules, flows and dashboards that go together. *Cold rooms* and *Energy meters* come with the app; *Download what is here* makes one to take elsewhere, with no exports, secrets or tokens. They install as drafts.
@@ -248,6 +248,7 @@ These show a workspace with a simulated plant: gateways, devices, a running flow
 | **Edge Engineer** | Writes and publishes definitions, rules, flows and exports, runs the fleet, and acknowledges alarms | 21 |
 | **Edge Reviewer** | Reviews flows drawn by others, and decides when they run | 9 |
 
+- **Asking equipment.** A command or a setting for devices, one or many, also takes Operations' Ops Dispatcher or Ops Manager and a site that admits the person, administrators included: the ledger decides, device by device.
 - **Personal-data requests.** Customers' people and report recipients are found by their address in their rows; erasure removes those rows and leaves the customer and the schedule.
 - **Audit.** Each flow step through approval is in the audit trail; commands carry who asked.
 - **Support report.** The workspace's support report counts gateways in service that have spoken, those not heard from for five minutes, and those whose last word named problems, as counts only, so a partner or the control plane sees how they are and nothing else.
