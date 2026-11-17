@@ -8,7 +8,7 @@
 <br>
 
 [![CI](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.6.6-0369a1?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.7-0369a1?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server%20and%20gateway-b7410e?style=flat-square&logo=rust)
@@ -412,6 +412,7 @@ Notes: 🟡 for Ferrum means partly or by an external driver (machine learning r
 
 ### ✅ Recently shipped
 
+- [x] **0.6.7** `docs/parity.md` says what a plain test run proves and which rows need real software; `EDGE_REAL_SOFTWARE=1` makes a missing service fail a test instead of skipping it.
 - [x] **0.6.6** The package's SQL is one file; the lock file follows today's platform.
 - [x] **0.6.5** The portal's times on the workspace's clock; rebuilt on Ferrum-Frontend 06bd1a2 with `mountApp`.
 - [x] **0.6.4** Store-and-forward: a reading kept while an exchange is out is never deleted with it, and a row that does not read back holds up nothing else.

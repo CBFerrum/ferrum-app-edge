@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.7
+
+Needs the same platform as 0.6.6. No database change, no interface change. `docs/parity.md` no longer says "in CI" for
+rows whose tests need software that no routine check supplies (MQTT with ThingsBoard's client, Modbus, OPC UA events,
+Sparkplug with Tahu, OCPP, LwM2M with Leshan, Kafka, AMQP, NATS, InfluxDB, ClickHouse, S3, SQS and SNS): each says it is
+checked only when its `FERRUM_TEST_*` variable names the software, and a plain `cargo test` skips them and passes. The
+VDA 5050 row says 2.0 and 2.1 for the adapter and 3.0.0 as a template only. The README, `docs/compatibility.md` and
+`docs/gateway.md` no longer say that CI runs those tests. New: `EDGE_REAL_SOFTWARE=1` makes such a test fail when its variable is missing, so a
+run meant to prove those rows cannot pass by skipping.
+
 ## 0.6.6
 
 Needs the same platform as 0.6.5. Interface unchanged. Database change: the package's SQL is one file, `001_edge.sql`
