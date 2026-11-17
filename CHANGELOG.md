@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.8
+
+Needs Ferrum at `9b9f56bc` or later, whose command ledger asks anyone issuing in person, or an agent, for the dispatch
+role (Ops Dispatcher or Ops Manager, of an administrator too) and a site that admits them. No database change, no
+interface change.
+
+- Asking devices for something, one or many (`POST /fleet/command`, `POST /fleet/desired`, `PUT /devices/{id}/desired`),
+  is the ledger's to allow, device by device. IoT Edge's own lists for it are gone: the bulk asks took Edge Engineer,
+  Ops Manager or "Ops Operator" (a role nothing defines) and refused a dispatcher holding Edge Viewer and Ops
+  Dispatcher, and a setting for one device took Edge Engineer. Each now takes Edge Viewer, to see the devices; someone
+  without the dispatch role is refused for each device, and nothing is written for it.
+- A members-only site's devices are not listed (`GET /devices`), counted (`GET /fleet`) or chosen for a bulk ask for
+  anyone it does not list, so a bulk ask neither reaches nor names them. Administrators see every site, as in
+  Operations.
+- Settling a charging session takes Edge Engineer or Ops Manager, and an administrator needs one of them too, as
+  Operations asks of an administrator who dispatches, approves or settles. Reading and configuring need no role of an
+  administrator, as before.
+- A firmware rollout reaches only the sites open to whoever started it, as they stand at each step. One whose starter
+  is no longer in the workspace pauses itself and says why.
+- The gateway's charger and recovery tests give their administrator Ops Dispatcher, which the ledger now asks for.
+
 ## 0.6.7
 
 Needs the same platform as 0.6.6. No database change, no interface change. `docs/parity.md` no longer says "in CI" for
