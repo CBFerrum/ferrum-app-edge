@@ -1,6 +1,8 @@
 //! A gateway on both sides of Sparkplug, over a real broker (rumqttd): a primary host that follows
 //! nodes and asks them to start again, and an edge node a SCADA system could read.
 
+mod common;
+
 use ferrum_edge_contract::edge::{DeviceLink, Export};
 use ferrum_edge_contract::sparkplug;
 use ferrum_site::adapter::{Adapter, Reading};
@@ -181,10 +183,7 @@ async fn a_gateway_can_be_an_edge_node_for_someone_elses_scada() {
 /// Eclipse Tahu's own definitions, when `FERRUM_TEST_PYTHON` has mqtt_spb_wrapper, as CI's does.
 #[test]
 fn tahus_definitions_read_what_is_written_here_and_the_other_way() {
-    let Ok(python) = std::env::var("FERRUM_TEST_PYTHON") else {
-        eprintln!("skipped: FERRUM_TEST_PYTHON is not set");
-        return;
-    };
+    let Some(python) = common::real_software("FERRUM_TEST_PYTHON") else { return };
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/sparkplug_peer.py");
     let run = |args: &[&str]| {
         let out = std::process::Command::new(&python).arg("-W").arg("ignore").arg(script).args(args).output().unwrap();

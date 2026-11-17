@@ -45,7 +45,7 @@ being true of one says nothing about the next.
 | A robotic warehouse mission, end to end | Yes | Against a simulated fleet only | No | No | No |
 | A machine start, end to end | Yes | Against a simulated press only | No | No | No |
 
-A Yes in the independent-software column means a run against that software. Where a test here does it, the test runs only when the software is provided (`FERRUM_TEST_PYTHON` for the Python libraries, `FERRUM_TEST_LESHAN` for Leshan, `FERRUM_TEST_NATS`, `_AMQP`, `_KAFKA` and the like for services): without it the test prints "skipped" and passes, and a plain `cargo test` provides none of it. CI provides all of them. Where no test here does it, the row below says "by hand".
+A Yes in the independent-software column means a run against that software. Where a test here does it, the test runs only when the software is provided (`FERRUM_TEST_PYTHON` for the Python libraries, `FERRUM_TEST_LESHAN` for Leshan, `FERRUM_TEST_NATS`, `_AMQP`, `_KAFKA` and the like for services): without it the test prints "skipped" and passes, and a plain `cargo test` provides none of it. No routine check provides any of them (`.github/workflows/ci.yml` does, and GitHub does not run it), and `EDGE_REAL_SOFTWARE=1` makes a missing one fail instead of skip. Where no test here does it, the row below says "by hand".
 
 Nothing has reached the last two columns. A template in `templates` is a start for someone with the
 equipment, and no row here is a claim about any device.

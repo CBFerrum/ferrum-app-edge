@@ -3,6 +3,8 @@
 //! Python that has asyncua, as CI's does. What the other tests prove against async-opcua, which is both
 //! the client and the server here, could be a shared mistake. This could not.
 
+mod common;
+
 use chrono::{DateTime, Utc};
 use ferrum_edge_contract::edge::Export;
 use ferrum_site::adapters::transport::{self, Limits, Message, Out};
@@ -16,14 +18,6 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 const PEER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/opcua_peer.py");
-
-fn python() -> Option<String> {
-    let found = std::env::var("FERRUM_TEST_PYTHON").ok();
-    if found.is_none() {
-        eprintln!("skipped: FERRUM_TEST_PYTHON is not set");
-    }
-    found
-}
 
 fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
@@ -46,7 +40,7 @@ fn reading(value: f64, at: DateTime<Utc>) -> Vec<String> {
 
 #[tokio::test]
 async fn a_stranger_reads_a_gateway_and_cannot_write_to_it() {
-    let Some(python) = python() else { return };
+    let Some(python) = common::real_software("FERRUM_TEST_PYTHON") else { return };
     let bind = format!("127.0.0.1:{}", free_port());
     let dir = std::env::temp_dir().join(format!("ferrum-peer-{bind}"));
     let export = Export { name: "e".into(), to: format!("listen+opcua://{bind}"), topic: None, only: vec![], sign_with: None };
@@ -74,7 +68,7 @@ async fn a_stranger_reads_a_gateway_and_cannot_write_to_it() {
 
 #[tokio::test]
 async fn a_gateway_hears_a_strangers_events_and_reads_its_history() {
-    let Some(python) = python() else { return };
+    let Some(python) = common::real_software("FERRUM_TEST_PYTHON") else { return };
     let port = free_port();
     let (_child, mut lines) = peer(&python, &["server", &port.to_string()]);
     let node = next(&mut lines).await["ready"].as_str().unwrap().to_string();

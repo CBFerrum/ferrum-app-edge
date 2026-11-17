@@ -235,9 +235,10 @@ A secret is named by the export and kept in the site's `secrets`. An address wit
 refused when it is saved, because an export travels to every gateway and every backup. `allow` limits
 where these can go, as it does for anything a definition opens.
 
-NATS, Kafka, RabbitMQ, InfluxDB and ClickHouse run as real services in this repository's CI, and S3,
-SQS and SNS against moto, a stand-in for AWS. Those tests run only when the service is named by an
-environment variable (`FERRUM_TEST_NATS` and the like); without it they print "skipped" and pass. The signatures match Amazon's published examples. Google
+NATS, Kafka, RabbitMQ, InfluxDB and ClickHouse are tried as real services, and S3, SQS and SNS against moto,
+a stand-in for AWS, but only when the service is named by an environment variable (`FERRUM_TEST_NATS` and the like):
+without it the tests print "skipped" and pass, no routine check supplies them, and `EDGE_REAL_SOFTWARE=1` makes a
+missing one fail instead. The signatures match Amazon's published examples. Google
 and Azure are checked against the documented shape of the calls only: nothing here has been sent to
 their real services.
 

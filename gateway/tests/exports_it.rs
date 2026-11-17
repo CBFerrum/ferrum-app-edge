@@ -1,6 +1,9 @@
-//! Exports against the real thing. Each test names a service by an environment variable, and CI runs
-//! them all as containers (`.github/workflows`); without the variable it says so and passes, so that
-//! this file runs anywhere. What cannot run in a container is checked against a stand-in here.
+//! Exports against the real thing. Each test names a service by an environment variable, and
+//! `.github/workflows/ci.yml` shows how to run them all as containers. Without the variable a test says
+//! so and passes, so that this file runs anywhere, and with `EDGE_REAL_SOFTWARE=1` it fails instead.
+//! What cannot run in a container is checked against a stand-in here.
+
+mod common;
 
 use axum::Router;
 use axum::body::Bytes;
@@ -16,14 +19,6 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use uuid::Uuid;
-
-fn service(name: &str) -> Option<String> {
-    let found = std::env::var(name).ok();
-    if found.is_none() {
-        eprintln!("skipped: {name} is not set");
-    }
-    found
-}
 
 fn export(to: &str, topic: Option<&str>, sign_with: Option<&str>) -> Export {
     Export { name: "e".into(), to: to.into(), topic: topic.map(str::to_string), only: vec![], sign_with: sign_with.map(str::to_string) }
@@ -55,7 +50,7 @@ async fn aws_call(base: &str, service: &str, headers: &[(&str, &str)], body: &[u
 
 #[tokio::test]
 async fn nats_takes_a_batch() {
-    let Some(host) = service("FERRUM_TEST_NATS") else { return };
+    let Some(host) = common::real_software("FERRUM_TEST_NATS") else { return };
     let subject = format!("t{}", Uuid::now_v7().simple());
     let stream = TcpStream::connect(&host).await.unwrap();
     let mut reader = BufReader::new(stream);
@@ -84,7 +79,7 @@ async fn nats_takes_a_batch() {
 
 #[tokio::test]
 async fn nats_refuses_a_bad_token_out_loud() {
-    let Some(host) = service("FERRUM_TEST_NATS_TOKEN") else { return };
+    let Some(host) = common::real_software("FERRUM_TEST_NATS_TOKEN") else { return };
     let e = export(&format!("nats://{host}"), Some("x"), Some("token"));
     let refused = sender().deliver(&e, &readings(1), &json!({"token": "wrong"})).await;
     assert!(refused.unwrap_err().contains("-ERR"));
@@ -93,8 +88,8 @@ async fn nats_refuses_a_bad_token_out_loud() {
 
 #[tokio::test]
 async fn amqp_is_confirmed_by_the_broker() {
-    let Some(host) = service("FERRUM_TEST_AMQP") else { return };
-    let manager = service("FERRUM_TEST_AMQP_MANAGER").expect("the management address too");
+    let Some(host) = common::real_software("FERRUM_TEST_AMQP") else { return };
+    let manager = common::real_software("FERRUM_TEST_AMQP_MANAGER").expect("the management address too");
     let queue = format!("q{}", Uuid::now_v7().simple());
     let web = reqwest::Client::new();
     let created =
@@ -251,8 +246,8 @@ async fn a_table_of_someone_elses_takes_a_batch_once() {
 
 #[tokio::test]
 async fn a_queue_can_be_read_as_well() {
-    let Some(host) = service("FERRUM_TEST_AMQP") else { return };
-    let manager = service("FERRUM_TEST_AMQP_MANAGER").expect("the management address too");
+    let Some(host) = common::real_software("FERRUM_TEST_AMQP") else { return };
+    let manager = common::real_software("FERRUM_TEST_AMQP_MANAGER").expect("the management address too");
     let queue = format!("q{}", Uuid::now_v7().simple());
     let web = reqwest::Client::new();
     let created =
@@ -281,7 +276,7 @@ async fn a_queue_can_be_read_as_well() {
 #[tokio::test]
 async fn a_topic_can_be_read_as_well() {
     use rskafka::client::ClientBuilder;
-    let Some(host) = service("FERRUM_TEST_KAFKA") else { return };
+    let Some(host) = common::real_software("FERRUM_TEST_KAFKA") else { return };
     let topic = format!("t{}", Uuid::now_v7().simple());
     let client = ClientBuilder::new(vec![host.clone()]).build().await.unwrap();
     client.controller_client().unwrap().create_topic(&topic, 1, 1, 5_000).await.unwrap();
@@ -306,7 +301,7 @@ async fn a_topic_can_be_read_as_well() {
 async fn kafka_keeps_a_device_in_order() {
     use rskafka::client::ClientBuilder;
     use rskafka::client::partition::UnknownTopicHandling;
-    let Some(host) = service("FERRUM_TEST_KAFKA") else { return };
+    let Some(host) = common::real_software("FERRUM_TEST_KAFKA") else { return };
     let topic = format!("t{}", Uuid::now_v7().simple());
     let client = ClientBuilder::new(vec![host.clone()]).build().await.unwrap();
     client.controller_client().unwrap().create_topic(&topic, 2, 1, 5_000).await.unwrap();
@@ -332,7 +327,7 @@ async fn kafka_keeps_a_device_in_order() {
 
 #[tokio::test]
 async fn influx_stores_measurements() {
-    let Some(base) = service("FERRUM_TEST_INFLUX") else { return };
+    let Some(base) = common::real_software("FERRUM_TEST_INFLUX") else { return };
     let host = base.trim_start_matches("http://");
     let e = export(&format!("influx://{host}/?org=ferrum&bucket=readings"), None, Some("token"));
     sender().deliver(&e, &readings(3), &json!({"token": "ferrum-test-token"})).await.expect("written");
@@ -355,7 +350,7 @@ async fn influx_stores_measurements() {
 
 #[tokio::test]
 async fn clickhouse_stores_rows() {
-    let Some(base) = service("FERRUM_TEST_CLICKHOUSE") else { return };
+    let Some(base) = common::real_software("FERRUM_TEST_CLICKHOUSE") else { return };
     let web = reqwest::Client::new();
     let table = format!("t{}", Uuid::now_v7().simple());
     let run = async |sql: String| {
@@ -374,7 +369,7 @@ async fn clickhouse_stores_rows() {
 
 #[tokio::test]
 async fn s3_keeps_a_batch_as_one_object() {
-    let Some(base) = service("FERRUM_TEST_AWS") else { return };
+    let Some(base) = common::real_software("FERRUM_TEST_AWS") else { return };
     let bucket = format!("t{}", Uuid::now_v7().simple());
     let host = base.trim_start_matches("http://");
     let aws = Aws { access: "test", secret: "test", region: "us-east-1", service: "s3" };
@@ -406,7 +401,7 @@ async fn s3_keeps_a_batch_as_one_object() {
 
 #[tokio::test]
 async fn sqs_takes_more_than_one_call_can() {
-    let Some(base) = service("FERRUM_TEST_AWS") else { return };
+    let Some(base) = common::real_software("FERRUM_TEST_AWS") else { return };
     let queue = format!("q{}", Uuid::now_v7().simple());
     let target = |t: &'static str| [("content-type", "application/x-amz-json-1.0"), ("x-amz-target", t)];
     let made = aws_call(&base, "sqs", &target("AmazonSQS.CreateQueue"), json!({"QueueName": queue}).to_string().as_bytes()).await;
@@ -423,7 +418,7 @@ async fn sqs_takes_more_than_one_call_can() {
 
 #[tokio::test]
 async fn sns_publishes_in_tens() {
-    let Some(base) = service("FERRUM_TEST_AWS") else { return };
+    let Some(base) = common::real_software("FERRUM_TEST_AWS") else { return };
     let form = [("content-type", "application/x-www-form-urlencoded")];
     let name = format!("t{}", Uuid::now_v7().simple());
     let made = aws_call(&base, "sns", &form, format!("Action=CreateTopic&Version=2010-03-31&Name={name}").as_bytes()).await;

@@ -3,6 +3,8 @@
 //! for OPC UA and MQTT someone else's implementation at the far end, which is why those two are
 //! worth more than a stand-in (`docs/compatibility.md`). No vendor's device was involved.
 
+mod common;
+
 use chrono::{Duration, Utc};
 use ferrum_edge_contract::edge::DeviceLink;
 use ferrum_ops_contract::Command;
@@ -299,10 +301,7 @@ async fn a_burst_wakes_the_reader_rather_than_waiting_for_its_turn() {
 /// Someone else's Modbus at the far end, when `FERRUM_TEST_PYTHON` has pymodbus, as CI's does.
 #[tokio::test]
 async fn a_controller_written_by_someone_else_over_modbus_tcp() {
-    let Ok(python) = std::env::var("FERRUM_TEST_PYTHON") else {
-        eprintln!("skipped: FERRUM_TEST_PYTHON is not set");
-        return;
-    };
+    let Some(python) = common::real_software("FERRUM_TEST_PYTHON") else { return };
     use tokio::io::AsyncBufReadExt;
     let port = free_port();
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/modbus_peer.py");

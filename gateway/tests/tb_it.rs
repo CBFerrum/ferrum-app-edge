@@ -3,6 +3,8 @@
 //! the device API is checked with other clients in `devices_it`, so this is here for one claim: that
 //! something written for ThingsBoard needs nothing but a new address.
 
+mod common;
+
 use chrono::{Duration, Utc};
 use ferrum_edge_contract::edge::{Credentials, DeviceLink};
 use ferrum_ops_contract::Command;
@@ -146,17 +148,9 @@ fn metric(r: &Reading, code: &str, name: &str, want: f64) -> bool {
     matches!(r, Reading::Value { device, metric, value, .. } if device == code && metric == name && (*value - want).abs() < 1e-9)
 }
 
-fn python() -> Option<String> {
-    let found = std::env::var("FERRUM_TEST_PYTHON").ok();
-    if found.is_none() {
-        eprintln!("skipped: FERRUM_TEST_PYTHON is not set");
-    }
-    found
-}
-
 #[tokio::test]
 async fn thingsboards_device_client_needs_nothing_but_a_new_address() {
-    let Some(python) = python() else { return };
+    let Some(python) = common::real_software("FERRUM_TEST_PYTHON") else { return };
     let plant = Plant::up(&[link("PRESS-1")]).await;
     let (_child, mut lines) = peer(&python, "device", plant.port);
     assert_eq!(until(&mut lines, "connected").await, json!(true));
@@ -189,7 +183,7 @@ async fn thingsboards_device_client_needs_nothing_but_a_new_address() {
 
 #[tokio::test]
 async fn thingsboards_device_client_fetches_firmware_and_it_checks_out() {
-    let Some(python) = python() else { return };
+    let Some(python) = common::real_software("FERRUM_TEST_PYTHON") else { return };
     let image: Vec<u8> = (0..50_000u32).map(|i| b'a' + (i % 26) as u8).collect();
     let sha256 = hex::encode(Sha256::digest(&image));
     let served = image.clone();
@@ -212,7 +206,7 @@ async fn thingsboards_device_client_fetches_firmware_and_it_checks_out() {
 
 #[tokio::test]
 async fn thingsboards_gateway_client_too() {
-    let Some(python) = python() else { return };
+    let Some(python) = common::real_software("FERRUM_TEST_PYTHON") else { return };
     let pump = DeviceLink { code: "Pump 1".into(), definition: "devices".into(), via: Some("GW-1".into()), settings: json!({}), ..Default::default() };
     let plant = Plant::up(&[link("GW-1"), pump]).await;
     let (_child, mut lines) = peer(&python, "gateway", plant.port);
