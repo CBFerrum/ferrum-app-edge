@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0
+
+Needs Ferrum 0.4.0 (apps' upkeep runs one workspace at a time, on whichever replica is free).
+
+- **Upkeep is one workspace's.** `maintenance(k, tenant)` removes the workspace's old events, notices and flow traces, then watches its gateways, sends due notices, runs its flows, advances firmware and delivers reports; the list of workspaces and the installation check are the platform's, and the three deletes, which ran across every workspace, now run for the one.
+
+No database or interface change.
+
 ## 0.6.8
 
 Needs Ferrum at `9b9f56bc` or later, whose command ledger asks anyone issuing in person, or an agent, for the dispatch
