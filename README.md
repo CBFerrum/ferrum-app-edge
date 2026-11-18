@@ -8,7 +8,7 @@
 <br>
 
 [![CI](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-edge/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.6.8-0369a1?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.7.0-0369a1?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server%20and%20gateway-b7410e?style=flat-square&logo=rust)
@@ -51,7 +51,7 @@ Ferrum coordinates equipment and does not control it. Motion, machine sequencing
 | 📊 Reports | 3: Device Availability, Alarm History, Readings by the Hour |
 | 📣 Events | 4: Edge condition opened, held again, cleared, interrupted |
 | 🧩 Templates | 49 definitions to start from, and 2 solutions (Cold rooms, Energy meters) |
-| 🔗 Depends on | Ferrum `>=0.3, <0.4`; Operations (`ops`) `>=0.1` |
+| 🔗 Depends on | Ferrum `>=0.4.0, <0.5`; Operations (`ops`) `>=0.1` |
 | 🤝 Works with | Operations (command ledger, identity, telemetry), the workspace portal, Ferrum's assistant and MCP |
 | 🌍 Languages | English, Arabic and Hindi (translated by a model, to be reviewed by native speakers) |
 | 🧪 Tests | 420 Rust tests across app, gateway and contract; 8 interface test files |
@@ -414,6 +414,7 @@ Notes: 🟡 for Ferrum means partly or by an external driver (machine learning r
 
 ### ✅ Recently shipped
 
+- [x] **0.7.0**: Upkeep runs one workspace at a time, on whichever replica is free.
 - [x] **0.6.8** Asking equipment is the ledger's to allow, device by device; a members-only site shows nothing of itself, by list or by id, and its devices are not chosen or reached by a rollout, for anyone it does not list; an administrator settles a charging session only with the role.
 - [x] **0.6.7** `docs/parity.md` says what a plain test run proves and which rows need real software; `EDGE_REAL_SOFTWARE=1` makes a missing service fail a test instead of skipping it.
 - [x] **0.6.6** The package's SQL is one file; the lock file follows today's platform.

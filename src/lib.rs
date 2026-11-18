@@ -360,36 +360,29 @@ impl EventSink for Facts {
     }
 }
 
-/// Periodic upkeep: events older than this go, and with them whatever only they recorded.
-pub async fn maintenance(k: &Kernel) -> Result<()> {
-    let mut tx = k.db.system_tx().await?;
-    sqlx::query("delete from edge_event where at < now() - interval '90 days'").execute(&mut *tx).await?;
-    sqlx::query("delete from edge_notice where status in ('Sent', 'Dropped', 'Failed') and due_at < now() - interval '90 days'").execute(&mut *tx).await?;
-    sqlx::query("delete from edge_flow_trace where at < now() - interval '1 hour'").execute(&mut *tx).await?;
-    let tenants: Vec<Uuid> = sqlx::query_scalar("select id from tenant where status = 'active' order by id").fetch_all(&mut *tx).await?;
+/// Periodic upkeep of one workspace: events older than this go, and with them whatever only they recorded; then the
+/// gateways watched, notices sent, flows run, firmware advanced and reports delivered.
+pub async fn maintenance(k: &Kernel, tenant: Uuid) -> Result<()> {
+    let ctx = Ctx::system(tenant, k.registry.schema(tenant).await?);
+    let mut tx = k.db.tenant_tx(tenant).await?;
+    sqlx::query("delete from edge_event where tenant_id = $1 and at < now() - interval '90 days'").bind(tenant).execute(&mut *tx).await?;
+    sqlx::query("delete from edge_notice where tenant_id = $1 and status in ('Sent', 'Dropped', 'Failed') and due_at < now() - interval '90 days'")
+        .bind(tenant)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("delete from edge_flow_trace where tenant_id = $1 and at < now() - interval '1 hour'").bind(tenant).execute(&mut *tx).await?;
     tx.commit().await?;
     let mut first_error = None;
-    for tenant in tenants {
-        let schema = match k.registry.schema(tenant).await {
-            Ok(schema) if schema.packages.iter().any(|p| p == "edge") => schema,
-            Ok(_) => continue,
-            Err(e) => {
-                first_error.get_or_insert(e);
-                continue;
-            }
-        };
-        let ctx = Ctx::system(tenant, schema);
-        for outcome in [
-            facts::watch_gateways(k, &ctx).await,
-            notices::send_due(k, &ctx).await.map(drop),
-            platform_flows::run(k, &ctx).await,
-            firmware::advance(k, &ctx).await,
-            reports::deliver(k, &ctx).await,
-        ] {
-            if let Err(e) = outcome {
-                tracing::warn!(%tenant, "edge maintenance failed: {e}");
-                first_error.get_or_insert(e);
-            }
+    for outcome in [
+        facts::watch_gateways(k, &ctx).await,
+        notices::send_due(k, &ctx).await.map(drop),
+        platform_flows::run(k, &ctx).await,
+        firmware::advance(k, &ctx).await,
+        reports::deliver(k, &ctx).await,
+    ] {
+        if let Err(e) = outcome {
+            tracing::warn!(%tenant, "edge maintenance failed: {e}");
+            first_error.get_or_insert(e);
         }
     }
     first_error.map_or(Ok(()), Err)
